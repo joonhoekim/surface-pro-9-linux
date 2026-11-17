@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 12 Nov 2026 17:46:41 -0800
+Subject: [PATCH] platform/x86: int3472: Set the DSM clock frequency from the
+ SSDB
+
+When the INT3472 has no clock enable GPIO, the sensor clock is switched
+through the 82c0d13a-78c5-4244-9bb1-eb8b539a8d11 _DSM with the arguments
+{ clock source, enable, frequency }. The driver always passes 1 as the
+third argument, while it reports the SSDB mclkspeed as the clock rate.
+
+On Alder Lake the third argument is the frequency select bit of the PCH
+IMGCLKOUT control register: the DSDT of the Microsoft Surface Pro 9
+writes it unchanged into bit 0 of \_SB.ICLK.CLKn (CLKF), and coreboot's
+Alder Lake camera_clock_ctl.asl documents that bit as 0 = 24 MHz,
+1 = 19.2 MHz. The Windows control logic driver (iactrllogic64.sys) sets
+the argument to 1 for an SSDB mclkspeed of 19200000 and to 0 for
+24000000.
+
+The Surface Pro 9 IR sensor (SMO55F0) declares a 24 MHz clock in its
+SSDB, so it currently gets 19.2 MHz while the clock framework reports
+24 MHz. Pass 0 when the SSDB asks for 24 MHz and keep 1 otherwise, so
+sensors declaring 19.2 MHz are unaffected.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/platform/x86/intel/int3472/clk_and_regulator.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/platform/x86/intel/int3472/clk_and_regulator.c b/drivers/platform/x86/intel/int3472/clk_and_regulator.c
+index 9e052b164..8cf3a02d4 100644
+--- a/drivers/platform/x86/intel/int3472/clk_and_regulator.c
++++ b/drivers/platform/x86/intel/int3472/clk_and_regulator.c
+@@ -9,6 +9,7 @@
+ #include <linux/platform_data/x86/int3472.h>
+ #include <linux/regulator/driver.h>
+ #include <linux/slab.h>
++#include <linux/units.h>
+ 
+ /*
+  * 82c0d13a-78c5-4244-9bb1-eb8b539a8d11
+@@ -19,6 +20,10 @@ static const guid_t img_clk_guid =
+ 	GUID_INIT(0x82c0d13a, 0x78c5, 0x4244,
+ 		  0x9b, 0xb1, 0xeb, 0x8b, 0x53, 0x9a, 0x8d, 0x11);
+ 
++/* Third argument of the clock _DSM: IMGCLKOUT frequency select bit */
++#define INT3472_IMGCLK_FREQ_24MHZ	0
++#define INT3472_IMGCLK_FREQ_19_2MHZ	1
++
+ static void skl_int3472_enable_clk(struct int3472_clock *clk, int enable)
+ {
+ 	struct int3472_discrete_device *int3472 = to_int3472_device(clk);
+@@ -35,7 +40,9 @@ static void skl_int3472_enable_clk(struct int3472_clock *clk, int enable)
+ 	args[1].integer.type = ACPI_TYPE_INTEGER;
+ 	args[1].integer.value = enable;
+ 	args[2].integer.type = ACPI_TYPE_INTEGER;
+-	args[2].integer.value = 1;
++	args[2].integer.value = clk->frequency == 24 * HZ_PER_MHZ ?
++				INT3472_IMGCLK_FREQ_24MHZ :
++				INT3472_IMGCLK_FREQ_19_2MHZ;
+ 
+ 	argv4.type = ACPI_TYPE_PACKAGE;
+ 	argv4.package.count = 3;

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Joonhoe Kim
+[workspace]
+resolver = "2"
+members = ["crates/sp9-helper-core", "crates/sp9-helperd", "crates/sp9-ctl", "crates/sp9-settings"]
+# `cargo build`/`test` without -p or --workspace leaves out the GTK app, so the daemon and the CLI
+# build without GTK development libraries.
+default-members = ["crates/sp9-helper-core", "crates/sp9-helperd", "crates/sp9-ctl"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+serde_json = "1"
+libc = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

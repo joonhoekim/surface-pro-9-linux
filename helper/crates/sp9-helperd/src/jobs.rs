@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Joonhoe Kim
+//! Work that runs other programs: the post-install check (diagnostics), the panel ICC profile
+//! (tools/sdc-blob.py) and restarting iptsd after its drop-in changed. Called off the D-Bus
+//! executor (blocking::unblock).
+
+use sp9_helper_core::display;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn run(cmd: &mut Command) -> Result<String, String> {
+    let out = cmd.output().map_err(|e| format!("{:?}: {e}", cmd.get_program()))?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    if out.status.success() {
+        Ok(text)
+    } else {
+        Err(format!("{:?} failed ({}): {}", cmd.get_program(), out.status, text.lines().last().unwrap_or("")))
+    }
+}
+
+/// Restart every running iptsd instance (iptsd@<hidraw>.service) so it reads /etc/iptsd.d again.
+#[cfg(not(test))]
+pub fn restart_iptsd_blocking() -> Result<(), String> {
+    run(Command::new("systemctl").args(["try-restart", "iptsd@*.service"])).map(|_| ())
+}
+
+/// The tests drive SetIptsd and Reload as an ordinary user against fake files, but systemctl is
+/// the machine's own: there it raises a polkit dialog on the developer's desktop and, once that is
+/// answered, restarts the real touch daemon (touch and pen input stop for a moment).
+#[cfg(test)]
+pub fn restart_iptsd_blocking() -> Result<(), String> {
+    Ok(())
+}
+
+fn stamp() -> String {
+    let s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    s.to_string()
+}
+
+/// tools/linux/post-install-check.sh into STATE/diagnostics/check-<time>, packed as
+/// check-<time>.tar.gz (owned by `uid` when given). The script masks MACs, UUIDs and serials.
+pub fn diagnostics(data_dir: &Path, state_dir: &Path, uid: Option<u32>) -> Result<PathBuf, String> {
+    let script = data_dir.join("post-install-check.sh");
+    if !script.exists() {
+        return Err(format!("{} not installed", script.display()));
+    }
+    let base = state_dir.join("diagnostics");
+    std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
+    let name = format!("check-{}", stamp());
+    let dir = base.join(&name);
+    run(Command::new("bash").arg(&script).arg(&dir).env("LC_ALL", "C"))?;
+    let tar = base.join(format!("{name}.tar.gz"));
+    run(Command::new("tar").arg("-czf").arg(&tar).arg("-C").arg(&base).arg(&name))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    chown(&tar, uid);
+    Ok(tar)
+}
+
+/// The panel's native ICC profile from the UEFI calibration, at STATE/display/panel-native.icc.
+pub fn icc(python: &str, data_dir: &Path, state_dir: &Path, cal: &(PathBuf, Option<PathBuf>)) -> Result<PathBuf, String> {
+    let script = data_dir.join("sdc-blob.py");
+    if !script.exists() {
+        return Err(format!("{} not installed", script.display()));
+    }
+    let dir = state_dir.join("display");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let out = dir.join("panel-native.icc");
+    let argv = display::icc_command(python, &script.display().to_string(), cal, &out.display().to_string());
+    run(Command::new(&argv[0]).args(&argv[1..]))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644));
+    }
+    Ok(out)
+}
+
+#[cfg(unix)]
+fn chown(p: &Path, uid: Option<u32>) {
+    if let Some(u) = uid {
+        let _ = std::os::unix::fs::chown(p, Some(u), None);
+    }
+}
+
+#[cfg(not(unix))]
+fn chown(_p: &Path, _uid: Option<u32>) {}

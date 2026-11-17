@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Sun, 15 Nov 2026 18:03:09 -0800
+Subject: [PATCH] HID: surface: Ignore Fn usages and map Call Mute Toggle to
+ KEY_MICMUTE
+
+The Surface Pro 9 Type Cover keyboard (045E:09AE) has a System Control
+input report with three one-bit fields: System Function Shift (0x97),
+System Function Shift Lock (0x98) and System Function Shift Lock
+Indicator (0x99). Fn and Fn lock are handled by the cover firmware,
+which already switches the top row between F1-F12 and the media keys,
+and the host cannot set the lock state. hid-input does not know these
+usages and maps them to BTN_0, BTN_1 and BTN_2. Only BTN_0 is filtered
+by this driver, so Fn still emits BTN_1 and BTN_2, and if the firmware
+keeps the lock bits set while Fn lock is on, those buttons stay pressed.
+
+Do not map the three usages at all.
+
+The same keyboard has a one-bit Call Mute Toggle (Generic Desktop
+0xe1) in a Call State Management Control collection. hid-input has no
+mapping for it either and turns it into the next free BTN_* code. Map
+it to KEY_MICMUTE, the code hid-input uses for System Microphone Mute
+(0xa9).
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/hid/hid-surface.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/hid/hid-surface.c b/drivers/hid/hid-surface.c
+index a171ea656..5e4b6359a 100644
+--- a/drivers/hid/hid-surface.c
++++ b/drivers/hid/hid-surface.c
+@@ -12,6 +12,11 @@
+ 
+ #include "hid-ids.h"
+ 
++#define SURFACE_USAGE_FN_SHIFT		0x00010097
++#define SURFACE_USAGE_FN_LOCK		0x00010098
++#define SURFACE_USAGE_FN_LOCK_INDICATOR	0x00010099
++#define SURFACE_USAGE_CALL_MUTE_TOGGLE	0x000100e1
++
+ /*
+  * The Surface Aggregator Module firmware incorrectly reports the FN key
+  * as BTN_0 (button 256). This button can get stuck in pressed state,
+@@ -23,6 +28,16 @@ static int surface_input_mapping(struct hid_device *hdev, struct hid_input *hi,
+ 				  struct hid_field *field, struct hid_usage *usage,
+ 				  unsigned long **bit, int *max)
+ {
++	switch (usage->hid) {
++	case SURFACE_USAGE_FN_SHIFT:
++	case SURFACE_USAGE_FN_LOCK:
++	case SURFACE_USAGE_FN_LOCK_INDICATOR:
++		return -1;
++	case SURFACE_USAGE_CALL_MUTE_TOGGLE:
++		hid_map_usage_clear(hi, usage, bit, max, EV_KEY, KEY_MICMUTE);
++		return 1;
++	}
++
+ 	/*
+ 	 * Filter BTN_0 during input mapping in case it appears in the
+ 	 * HID descriptor (defense in depth).

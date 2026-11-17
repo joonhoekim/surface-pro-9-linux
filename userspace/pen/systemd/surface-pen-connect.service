@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+[Unit]
+Description=Keep Surface Slim Pen 2 trusted and reconnect it when the digitizer sees it
+# No ordering after iptsd: it runs as iptsd@<hidraw>.service, started by udev, so there is no
+# fixed unit name to wait for. The helper looks for the stylus evdev again until it exists.
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+ExecStart=/opt/surface-pen/surface-pen-connect run --trigger evdev,col07 --poll 300
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

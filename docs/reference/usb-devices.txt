@@ -1,0 +1,7 @@
+﻿
+Id                             Class     Name                           Service
+--                             -----     ----                           -------
+USB\VID_8087&PID_0033&REV_0000 Bluetooth Intel(R) Wireless Bluetooth(R) BTHUSB 
+
+
+

@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 12 Nov 2026 17:35:09 -0800
+Subject: [PATCH] media: ipu-bridge: Map SSDB VCM type 0x11 to dw9800k
+
+The rear OV13858 (OVTID858) of the Microsoft Surface Pro 9 reports VCM
+type 0x11 in its SSDB. ipu_vcm_types[] only knows types 1 to 9, so the
+bridge warns "Unknown VCM type 17", drops the VCM and the sensor gets no
+lens-focus link.
+
+The VCM table of the Windows ov13858 driver for this machine names type
+0x11 "DW9800". Types 0x0a-0x0e are "NoneVCM" there, followed by AK7371
+(0x0f), BU64297GWZ (0x10), DW9808 (0x12) and LC898217 (0x13), none of
+which has a matching Linux driver. The dw9719 driver handles the DW9800K
+with a fixed configuration, as the part has no ID register.
+
+Index ipu_vcm_types[] by the SSDB value instead of value - 1, so the
+table can have holes, add type 17 as "dw9800k", and treat any type
+without a name as unknown. The bound check becomes ">=" accordingly.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/media/pci/intel/ipu-bridge.c | 24 +++++++++++++-----------
+ 1 file changed, 13 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/media/pci/intel/ipu-bridge.c b/drivers/media/pci/intel/ipu-bridge.c
+index 2263722f5..4c0bce6d7 100644
+--- a/drivers/media/pci/intel/ipu-bridge.c
++++ b/drivers/media/pci/intel/ipu-bridge.c
+@@ -248,15 +248,16 @@ static const struct ipu_property_names prop_names = {
+ };
+ 
+ static const char * const ipu_vcm_types[] = {
+-	"ad5823",
+-	"dw9714",
+-	"ad5816",
+-	"dw9719",
+-	"dw9718",
+-	"dw9806b",
+-	"wv517s",
+-	"lc898122xa",
+-	"lc898212axb",
++	[1] = "ad5823",
++	[2] = "dw9714",
++	[3] = "ad5816",
++	[4] = "dw9719",
++	[5] = "dw9718",
++	[6] = "dw9806b",
++	[7] = "wv517s",
++	[8] = "lc898122xa",
++	[9] = "lc898212axb",
++	[17] = "dw9800k",
+ };
+ 
+ /*
+@@ -485,7 +486,8 @@ int ipu_bridge_parse_ssdb(struct acpi_device *adev, struct ipu_sensor *sensor)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (ssdb.vcmtype > ARRAY_SIZE(ipu_vcm_types)) {
++	if (ssdb.vcmtype >= ARRAY_SIZE(ipu_vcm_types) ||
++	    (ssdb.vcmtype && !ipu_vcm_types[ssdb.vcmtype])) {
+ 		dev_warn(ADEV_DEV(adev), "Unknown VCM type %d\n", ssdb.vcmtype);
+ 		ssdb.vcmtype = 0;
+ 	}
+@@ -502,7 +504,7 @@ int ipu_bridge_parse_ssdb(struct acpi_device *adev, struct ipu_sensor *sensor)
+ 	sensor->orientation = ipu_bridge_parse_orientation(adev);
+ 
+ 	if (ssdb.vcmtype)
+-		sensor->vcm_type = ipu_vcm_types[ssdb.vcmtype - 1];
++		sensor->vcm_type = ipu_vcm_types[ssdb.vcmtype];
+ 
+ 	return 0;
+ }

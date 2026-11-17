@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 12 Nov 2026 17:35:46 -0800
+Subject: [PATCH] platform/surface: platform_profile: Clear the minimum fan
+ speed at probe and resume
+
+The SAM fan controller accepts a minimum fan speed (FAN command 0x0b,
+"SetMinFanRpm" in the Windows SSH headers) that is kept across a warm
+reboot. The Windows fan client sets it, so after rebooting from Windows
+into Linux the fan of a Surface Pro 9 can keep spinning at about
+3800 rpm while the device is cool, until the next cold boot.
+
+The request is FAN TID 0x01 IID 0x01 CID 0x0b with a 16-bit
+little-endian rpm value and no response. A value of 0 hands the fan back
+to the SAM control loop; it was observed to stop the fan within a few
+seconds on a Surface Pro 11 (Intel) and to release the floor left
+behind by Windows on a Surface Pro 9.
+
+Send 0 at probe and again when resuming from system sleep, in case the
+firmware restores the floor across suspend, on devices with a fan. A
+failure is only logged. The command is only backed by traces from a
+Surface Pro 9 and a Surface Pro 11; other devices in the same node
+group get it untested.
+
+Link: https://github.com/linux-surface/linux-surface/issues/1726
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ .../surface/surface_platform_profile.c        | 27 +++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/drivers/platform/surface/surface_platform_profile.c b/drivers/platform/surface/surface_platform_profile.c
+index 203d21aa7..19768a556 100644
+--- a/drivers/platform/surface/surface_platform_profile.c
++++ b/drivers/platform/surface/surface_platform_profile.c
+@@ -73,6 +73,13 @@ SSAM_DEFINE_SYNC_REQUEST_W(__ssam_fan_state_set, u8, {
+ 	.instance_id = 0x01,
+ });
+ 
++SSAM_DEFINE_SYNC_REQUEST_W(__ssam_fan_min_rpm_set, __le16, {
++	.target_category = SSAM_SSH_TC_FAN,
++	.target_id = SSAM_SSH_TID_SAM,
++	.command_id = 0x0b,
++	.instance_id = 0x01,
++});
++
+ static int ssam_tmp_profile_get(struct ssam_device *sdev, enum ssam_tmp_profile *p)
+ {
+ 	struct ssam_tmp_profile_info info;
+@@ -107,6 +114,13 @@ static int ssam_fan_state_set(struct ssam_device *sdev, enum ssam_fan_state s)
+ 	return ssam_retry(__ssam_fan_state_set, sdev->ctrl, &state);
+ }
+ 
++static int ssam_fan_min_rpm_set(struct ssam_device *sdev, u16 rpm)
++{
++	const __le16 rpm_le = cpu_to_le16(rpm);
++
++	return ssam_retry(__ssam_fan_min_rpm_set, sdev->ctrl, &rpm_le);
++}
++
+ static int convert_ssam_tmp_to_profile(struct ssam_device *sdev, enum ssam_tmp_profile p)
+ {
+ 	switch (p) {
+@@ -239,6 +253,7 @@ static const struct platform_profile_ops ssam_platform_profile_ops = {
+ static int surface_platform_profile_probe(struct ssam_device *sdev)
+ {
+ 	struct ssam_platform_profile_device *tpd;
++	int status;
+ 
+ 	tpd = devm_kzalloc(&sdev->dev, sizeof(*tpd), GFP_KERNEL);
+ 	if (!tpd)
+@@ -249,6 +264,13 @@ static int surface_platform_profile_probe(struct ssam_device *sdev)
+ 
+ 	tpd->has_fan = device_property_read_bool(&sdev->dev, "has_fan");
+ 
++	if (tpd->has_fan) {
++		status = ssam_fan_min_rpm_set(sdev, 0);
++		if (status)
++			dev_warn(&sdev->dev, "failed to clear the minimum fan speed: %d\n",
++				 status);
++	}
++
+ 	tpd->ppdev = devm_platform_profile_register(&sdev->dev, "Surface Platform Profile",
+ 						    tpd, &ssam_platform_profile_ops);
+ 
+@@ -284,6 +306,11 @@ static void surface_platform_profile_pm_complete(struct device *dev)
+ 		status = ssam_fan_state_set(tpd->sdev, SSAM_FAN_STATE_NORMAL);
+ 		if (status)
+ 			dev_err(&tpd->sdev->dev, "pm: fan resume notification failed");
++
++		status = ssam_fan_min_rpm_set(tpd->sdev, 0);
++		if (status)
++			dev_warn(&tpd->sdev->dev, "pm: failed to clear the minimum fan speed: %d\n",
++				 status);
+ 	}
+ }
+ 

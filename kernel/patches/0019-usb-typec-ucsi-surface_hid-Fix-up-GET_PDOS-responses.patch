@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Tue, 17 Nov 2026 00:05:53 +0900
+Subject: [PATCH] usb: typec: ucsi: surface_hid: Fix up GET_PDOS responses
+
+On a Surface Pro 9 the source and sink capabilities of the ports are
+wrong: usb_power_delivery/pd0 lists a 3750 mV, 40 mA source PDO and four
+sink PDOs starting with 3750 mV, 120 mA. The ports actually advertise
+5 V, 3 A as a source and three sink PDOs (5 V fixed, 5-20 V battery,
+5-20 V variable).
+
+SAM puts the length of the PDO data in front of the PDOs of the
+connector and sets the CCI data length to that length plus four:
+
+  GET_PDOS, connector 1, source:  CCI 0x80000800
+    04 | 2c 91 01 26 | 00 ...
+  GET_PDOS, connector 1, sink:    CCI 0x80001000
+    0c | 2c 91 01 10 | f0 90 01 59 | 2c 91 01 99 | 00 00 00
+
+The UCSI core takes the number of PDOs from the CCI data length and
+reads them from byte 0, so every PDO is shifted by one byte and one PDO
+too many is registered. GET_CAPABILITY, GET_CONNECTOR_CAPABILITY and
+GET_CONNECTOR_STATUS are not affected.
+
+The PDOs of the partner have no such prefix, but SAM writes at most
+three of them per command and neither clears the rest of MESSAGE_IN nor
+sets the CCI data length for what it wrote. After a command with a
+16-byte response, the same GET_PDOS that otherwise returns 12 bytes
+returns 16, the last four being those of the earlier response:
+
+  GET_CAPABILITY:                 CCI 0x80001000
+    44 41 00 00 02 34 00 00 02 00 00 00 | 00 03 30 01
+  GET_PDOS, partner, source:      CCI 0x80001000
+    2c d1 02 00 2c c1 03 00 2c b1 04 00 | 00 03 30 01
+
+The core then registers the stale bytes as a fourth PDO and asks for
+three more.
+
+Fix up both in the cached report when a GET_PDOS command completes:
+strip the length byte and report the length it holds for the connector,
+and limit the length to three PDOs for the partner.
+
+The partner list also starts at the second PDO of the partner: with a
+charger whose request data object selects position 5, SAM returns 9 V,
+12 V, 15 V and, at offset 3, 20 V, and no 5 V PDO at all. The contract
+voltage can therefore still not be looked up from the list. That is not
+changed here.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/usb/typec/ucsi/ucsi_surface_hid.c | 48 +++++++++++++++++++++--
+ 1 file changed, 45 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/typec/ucsi/ucsi_surface_hid.c b/drivers/usb/typec/ucsi/ucsi_surface_hid.c
+index 45458788e..17729044e 100644
+--- a/drivers/usb/typec/ucsi/ucsi_surface_hid.c
++++ b/drivers/usb/typec/ucsi/ucsi_surface_hid.c
+@@ -13,6 +13,8 @@
+  * Copyright (C) 2026 Jairo Valdivia <valdiviaprado.ing@gmail.com>
+  */
+ 
++#include <linux/bitfield.h>
++#include <linux/bits.h>
+ #include <linux/build_bug.h>
+ #include <linux/hid.h>
+ #include <linux/kernel.h>
+@@ -30,6 +32,8 @@
+ #define SURFACE_UCSI_REPORT_ID_DATA		0x32
+ #define SURFACE_UCSI_REPORT_ID_CAPS		0x33
+ #define SURFACE_UCSI_MSG_SIZE			16
++#define SURFACE_UCSI_CCI_LENGTH			GENMASK(15, 8)
++#define SURFACE_UCSI_PARTNER_PDOS_MAX		3
+ 
+ struct surface_ucsi_hid_data_report {
+ 	u8 report_id;
+@@ -58,12 +62,43 @@ struct surface_ucsi_hid {
+ 	struct surface_ucsi_hid_data_report *io_buf;
+ 	struct surface_ucsi_hid_data_report rx_cache;
+ 	bool cache_valid;
+-	u8 last_cmd;
++	u64 last_cmd;
+ 
+ 	u8 msg_out[SURFACE_UCSI_MSG_SIZE];
+ 	size_t msg_out_len;
+ };
+ 
++/*
++ * SAM does not answer UCSI_GET_PDOS the way the UCSI core expects, which
++ * takes the number of PDOs from the CCI data length:
++ *
++ * - The PDOs of the connector itself are preceded by their length in bytes,
++ *   and the CCI data length is that length plus four. A single 5 V, 3 A
++ *   source PDO comes back as 04 2c 91 01 26 with a CCI data length of 8.
++ *   Drop the length byte and report the length it holds.
++ *
++ * - The PDOs of the partner start at byte 0, but at most three are written
++ *   per command. The rest of MESSAGE_IN and the CCI data length are left
++ *   over from earlier responses. Never report more than three PDOs.
++ */
++static u32 surface_ucsi_hid_fixup_pdos(struct surface_ucsi_hid *ush, u32 cci)
++{
++	u8 *msg = ush->rx_cache.message_in;
++	size_t len = UCSI_CCI_LENGTH(cci);
++
++	if (ush->last_cmd & UCSI_GET_PDOS_PARTNER_PDO(1)) {
++		len = min(len, SURFACE_UCSI_PARTNER_PDOS_MAX * sizeof(u32));
++	} else if (msg[0] && !(msg[0] % sizeof(u32)) &&
++		   len == msg[0] + sizeof(u32)) {
++		len = msg[0];
++		memmove(msg, msg + 1, SURFACE_UCSI_MSG_SIZE - 1);
++		msg[SURFACE_UCSI_MSG_SIZE - 1] = 0;
++	}
++
++	return (cci & ~SURFACE_UCSI_CCI_LENGTH) |
++	       FIELD_PREP(SURFACE_UCSI_CCI_LENGTH, len);
++}
++
+ static int surface_ucsi_hid_fetch_report(struct surface_ucsi_hid *ush, u32 *cci)
+ {
+ 	u32 cci_val;
+@@ -100,6 +135,13 @@ static int surface_ucsi_hid_fetch_report(struct surface_ucsi_hid *ush, u32 *cci)
+ 		ush->rx_cache.cci = cpu_to_le32(cci_val);
+ 	}
+ 
++	if (UCSI_COMMAND(ush->last_cmd) == UCSI_GET_PDOS &&
++	    (cci_val & UCSI_CCI_COMMAND_COMPLETE) &&
++	    !(cci_val & (UCSI_CCI_NOT_SUPPORTED | UCSI_CCI_ERROR))) {
++		cci_val = surface_ucsi_hid_fixup_pdos(ush, cci_val);
++		ush->rx_cache.cci = cpu_to_le32(cci_val);
++	}
++
+ 	ush->cache_valid = true;
+ 	if (cci)
+ 		*cci = cci_val;
+@@ -156,7 +198,7 @@ static int surface_ucsi_hid_read_message_in(struct ucsi *ucsi, void *val,
+ 		return -EINVAL;
+ 
+ 	mutex_lock(&ush->io_lock);
+-	if (ush->last_cmd == UCSI_GET_ALTERNATE_MODES &&
++	if (UCSI_COMMAND(ush->last_cmd) == UCSI_GET_ALTERNATE_MODES &&
+ 	    ush->rx_cache.message_in[0] == sizeof(struct ucsi_altmode)) {
+ 		/*
+ 		 * SAM prepends a 1-byte entry length (0x06) before the
+@@ -212,7 +254,7 @@ static int surface_ucsi_hid_async_control(struct ucsi *ucsi, u64 command)
+ 
+ 	mutex_lock(&ush->io_lock);
+ 
+-	ush->last_cmd = UCSI_COMMAND(command);
++	ush->last_cmd = command;
+ 
+ 	memset(ush->io_buf, 0, sizeof(*ush->io_buf));
+ 	ush->io_buf->report_id = SURFACE_UCSI_REPORT_ID_DATA;

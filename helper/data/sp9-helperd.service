@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Joonhoe Kim
+[Unit]
+Description=Surface Pro 9 device helper (performance limits, battery, keyboard backlight, touch, pen haptics)
+After=systemd-udev-trigger.service systemd-modules-load.service
+
+[Service]
+Type=dbus
+BusName=io.github.joonhoekim.OpenDeviceHelper1
+ExecStart=@LIBEXECDIR@/sp9-helperd
+Restart=on-failure
+RestartSec=2
+# /sys: RAPL, EPP, platform_profile, input inhibit, debugfs PSR; /etc/sp9 (created by systemd):
+# settings; /var/lib/sp9: diagnostics and the panel ICC profile; /etc/iptsd.d: the iptsd drop-in.
+ProtectSystem=strict
+ConfigurationDirectory=sp9
+StateDirectory=sp9
+ReadWritePaths=/sys -/etc/iptsd.d
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+# Reference repositories cloned for reading (linux-surface, iptsd, ...); not part of this repository.
+/external/
+
+# Device-unique data (serials, MAC addresses, battery report, raw instance IDs) written by the
+# collection tools: local only.
+/private/
+
+# Default output directory of the Windows collection tools (tools/windows/). The reviewed,
+# model-level copies that are published live in docs/reference/.
+/hw/
+
+# Build outputs
+out/
+*.img
+*.iso
+*.ko
+*.cpio.gz
+result
+result-*
+
+__pycache__/
+.DS_Store
+
+# Rust build output
+/helper/target/

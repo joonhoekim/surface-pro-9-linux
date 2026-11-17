@@ -1,0 +1,320 @@
+﻿## oem0.inf  (Surface 3.180.139.0)
+  device: Surface SMF Core Driver  [{16C280BF-D438-43C1-BBF3-688CA0D43E2F}\SurfaceSystemManagementFramework]
+  store:  surfacesystemmanagementframeworkdriver.inf_amd64_947bdc7a3ee6bca3
+  files:  surfacesystemmanagementframeworkdriver.inf (3213), SurfaceSystemManagementFrameworkDriver.sys (616248)
+
+## oem3.inf  (Intel Corporation 63.22000.10.17589)
+  device: Intel(R) Control Logic  [ACPI\VEN_INT&DEV_3472]
+  store:  iactrllogic64.inf_amd64_db150e2b4aabfa94
+  files:  iactrllogic64.inf (4598), iactrllogic64.sys (177784)
+
+## oem4.inf  (Surface 6.603.139.0)
+  device: Surface System Aggregator  [UEFI\RES_{72e2097b-1183-41d2-8fa2-a2cba7501584}&REV_6025B8B]
+  store:  surfacesam.inf_amd64_8d418ec78c3a08c5
+  files:  surfacesam.inf (2704), SurfaceSAM_6.603.139.bin (1695126)
+
+## oem9.inf  (Intel Corporation 63.22000.10.17589)
+  device: Camera Sensor OV13858  [ACPI\VEN_OVTI&DEV_D858&SUBSYS_MSHW0341]
+  store:  ov13858.inf_amd64_4382786dbe6d4ffa
+  files:  graph_settings_OV13858_YHCEU_ADL.xml (493912), graph_settings_OV13858_YHCEW_ADL.xml (493912), graph_settings_OV13858_YHCE_ADL.xml (976815), ov13858.inf (6052), ov13858.sys (223328), OV13858_YHCEU_ADL.aiqb (422096), OV13858_YHCEU_ADL.cpf (148), OV13858_YHCEU_M_ADL.aiqb (420440), OV13858_YHCEU_M_ADL.cpf (148), OV13858_YHCEU_S_ADL.aiqb (420440), OV13858_YHCEU_S_ADL.cpf (148), OV13858_YHCEW_ADL.aiqb (416756), OV13858_YHCEW_ADL.cpf (148), OV13858_YHCE_ADL.aiqb (416756), OV13858_YHCE_ADL.cpf (176)
+
+## oem11.inf  (Surface 10.105.10.0)
+  device: Surface System Telemetry Driver  [{C56EE0AC-55CF-4E64-B4FF-133FD7BC8E89}\SurfaceSystemTelemetryDriver]
+  store:  surfacesystemtelemetrydriver.inf_amd64_e3bef63cf1f4acf1
+  files:  surfacesystemtelemetrydriver.inf (2664), SurfaceSystemTelemetryDriver.sys (578168)
+
+## oem12.inf  (Intel Corporation 3.0.0.1400)
+  device: Intel(R) GNA Scoring Accelerator module  [PCI\VEN_8086&DEV_464F&SUBSYS_72708086&REV_04]
+  store:  gna.inf_amd64_19ceb7ce67a7cf8b
+  files:  gna.inf (8850), gna.sys (87208)
+
+## oem14.inf  (Surface 2.149.19.0)
+  device: Surface SPT Core  [{d69c83f8-149b-4fd3-9275-19762bd88160}\SurfacePowerTrackerCore]
+  store:  surfacepowertrackercore.inf_amd64_67dd5d449d73f2d7
+  files:  surfacepowertrackercore.inf (6694), SurfacePowerTrackerCore.sys (487272)
+
+## oem15.inf  (Intel 2603.9.4.0)
+  device: Intel(R) Management Engine Interface #1  [PCI\VEN_8086&DEV_51E0&SUBSYS_72708086&REV_01]
+  store:  heci.inf_amd64_67743058457f2f82
+  files:  heci.inf (15678), x64\TeeDriverW10x64.sys (338024)
+
+## oem16.inf  (Intel Corporation 30.100.2212.4)
+  device: Intel(R) Serial IO I2C Host Controller - 51D8  [PCI\VEN_8086&DEV_51D8&SUBSYS_72708086&REV_01]
+  device: Intel(R) Serial IO I2C Host Controller - 51E8  [PCI\VEN_8086&DEV_51E8&SUBSYS_72708086&REV_01]
+  device: Intel(R) Serial IO I2C Host Controller - 51EA  [PCI\VEN_8086&DEV_51EA&SUBSYS_72708086&REV_01]
+  device: Intel(R) Serial IO I2C Host Controller - 51EB  [PCI\VEN_8086&DEV_51EB&SUBSYS_72708086&REV_01]
+  store:  ialpss2_i2c_adl.inf_amd64_35ed2fd5a51c2bc2
+  files:  ialpss2_i2c_adl.inf (11246), iaLPSS2_I2C_ADL.sys (210608)
+
+## oem18.inf  (Intel Corporation 32.0.101.7085)
+  device: Intel(R) Graphics Software  [SWC\101.7085_VEN8086_IGS]
+  store:  igs.inf_amd64_11428b6a960eccf2
+  files:  igs.inf (3462)
+
+## oem20.inf  (Intel 3.0.0.279)
+  device: Intel(R) Precise Touch and Stylus (Intel(R) PTS) - Base Driver - Port #1  [PCI\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01]
+  store:  intelthcbase.inf_amd64_2812a3a8790ffe6b
+  files:  intelthcbase.inf (18438), IntelTHCBase.sys (189064)
+
+## oem21.inf  (Surface 2.117.139.0)
+  device: Surface Battery  [{BFD21D0B-D701-435B-AF19-4A20677898D3}\SurfaceBattery]
+  store:  surfacebattery.inf_amd64_5c1a67596cf7f35c
+  files:  surfacebattery.inf (5062), SurfaceBattery.sys (433048)
+
+## oem26.inf  (Surface 4.64.139.0)
+  device: Surface Button  [ACPI\VEN_MSHW&DEV_0040]
+  store:  surfacebutton.inf_amd64_27ccc57de18927c5
+  files:  surfacebutton.inf (2502), SurfaceButton.sys (437704)
+
+## oem28.inf  (Surface 6.35.4.0)
+  device: Surface Machine Learning Service Device  [{624C9537-FDD7-4EFF-8FB6-80962156E911}\SMLS_DEVICE]
+  store:  surfacemachinelearningservicenulldriver.inf_amd64_dfacf8ee92d05888
+  files:  surfacemachinelearningservicenulldriver.inf (3020), SurfaceMLService.exe (93320520)
+
+## oem29.inf  (Intel Corporation 63.22000.10.17589)
+  device: Camera Sensor VD55G0  [ACPI\VEN_SMO&DEV_55F0&SUBSYS_MSHW0342]
+  store:  vd55g0.inf_amd64_2b810928b82e0fa5
+  files:  graph_settings_vd55g0_ST_ADL.xml (16317), vd55g0.inf (5090), vd55g0.sys (253024), VD55G0_ST_ADL.aiqb (82748), VD55G0_ST_ADL.cpf (176)
+
+## oem31.inf  (Intel(R) Corporation 10.29.0.9947)
+  device: Intel® Smart Sound Technology for USB Audio  [INTELAUDIO\CTLR_DEV_51C8&LINKTYPE_06&DEVTYPE_06&VEN_8086&DEV_AE50&SUBSYS_72708086&REV_0001]
+  store:  intcusb.inf_amd64_bc398e7169495415
+  files:  intcusb.inf (123400), IntcUSB.sys (922712)
+
+## oem32.inf  (Surface 1.174.34.0)
+  device: Surface SMF CPU Client Driver  [{80499AFE-C9B5-4EF5-A3C9-B2D6304832D3}\SurfaceSmfAlderlakeClient]
+  store:  surfaceihvcpusmfclient.inf_amd64_a89d06101e4a864b
+  files:  surfaceihvcpusmfclient.inf (4265), SurfaceIhvCpuSmfClient.sys (490712)
+
+## oem37.inf  (Intel(R) Corporation 10.29.0.9947)
+  device: Intel® Smart Sound Technology BUS  [PCI\VEN_8086&DEV_51C8&SUBSYS_72708086&REV_01]
+  store:  intcaudiobus.inf_amd64_f3944111b216edaf
+  files:  intcaudiobus.inf (34684), IntcAudioBus.sys (331760)
+
+## oem38.inf  (Surface 1.0.22094.1249)
+  device: Surface Capture APO  [SWC\VEN_MSFT&PID_SURFACEAECAPO]
+  store:  surfacecaptureaposwcinstaller.inf_amd64_47dc32378ec8ed37
+  files:  NOTICE.txt (22608), SurfaceCaptureAPO.dll (1019864), surfacecaptureaposwcinstaller.inf (9448)
+
+## oem39.inf  (INTEL 10.1.36.7)
+  device: Intel(R) LPC Controller - 5182  [PCI\VEN_8086&DEV_5182&SUBSYS_72708086&REV_01]
+  device: Intel(R) Shared SRAM - 51EF  [PCI\VEN_8086&DEV_51EF&SUBSYS_72708086&REV_01]
+  device: Intel(R) SPI (flash) Controller - 51A4  [PCI\VEN_8086&DEV_51A4&SUBSYS_72708086&REV_01]
+  store:  alderlakepch-psystem.inf_amd64_c27bc8858e991c72
+  files:  alderlakepch-psystem.inf (13439)
+
+## oem41.inf  (Intel Corporation 23.160.0.9)
+  device: Intel(R) Wireless Bluetooth(R)  [USB\VID_8087&PID_0033&REV_0000]
+  store:  ibtusb.inf_amd64_f6428d2adc4233d3
+  files:  ibtusb.inf (38278), ibtusb.sys (15869872)
+
+## oem45.inf  (Realtek Semiconductor Corp. 6.0.9681.3)
+  device: Surface High Definition Audio  [INTELAUDIO\FUNC_01&VEN_10EC&DEV_0274&SUBSYS_10EC1284&REV_1000]
+  store:  ehdxsstmd3a4.inf_amd64_daa1b2b779c60f86
+  files:  ehdxsstmd3a4.inf (227804), RTAIODAT.DAT (428082), RtCOM64.dll (1260880), RtkApi64U.dll (895288), RtkAudUService64.exe (835952), RtkCfg64.dll (297384), RTKVHD64.sys (6187304)
+
+## oem48.inf  (Surface 3.206.1.0)
+  device: Surface Hot Plug - KIP  [ACPI\VEN_MSHW&DEV_0153]
+  device: Surface Hot Plug - SAM  [{9086E8DA-C79D-4B1D-9B5A-9A7001F136CC}\Target_SAM&Category_HostRegister]
+  store:  surfacehotplug.inf_amd64_99bbb88ef4492402
+  files:  surfacehotplug.inf (2942), SurfaceHotPlug.sys (497152)
+
+## oem50.inf  (Surface 3.10.0.0)
+  device: Surface PD Controller  [UEFI\RES_{ab738ce5-6a72-4bc7-95f1-b9ce63e1a095}&REV_3000A00]
+  store:  surfacepd.inf_amd64_4b130055c25691f1
+  files:  surfacepd.inf (2662), SurfacePD_3.10.0.bin (29320)
+
+## oem54.inf  (Surface 93.0.0.49)
+  device: Surface SMF  [UEFI\RES_{01378db9-22e1-44fb-a061-a1864493ae1a}&REV_5D000031]
+  store:  surfacesmf_ix.inf_amd64_b8d5ef7fc0906526
+  files:  Smf_iX_93.0.0.49.bin (9607), surfacesmf_ix.inf (1178)
+
+## oem59.inf  (Intel Corporation 30.100.2212.4)
+  device: Intel(R) Serial IO UART Host Controller - 51A8  [PCI\VEN_8086&DEV_51A8&SUBSYS_72708086&REV_01]
+  store:  ialpss2_uart2_adl.inf_amd64_cafb511c07eb2595
+  files:  ialpss2_uart2_adl.inf (10412), iaLPSS2_UART2_ADL.sys (319672)
+
+## oem63.inf  (Surface 93.52.12.0)
+  device: Surface Integration  [ACPI\VEN_MSHW&DEV_0343]
+  store:  surfaceintegrationdriver.inf_amd64_1679d553f73ef7cf
+  files:  Surface.Power.Policy.Defaults.ppkg (23478), Surface.Power.Policy.WIN10.Defaults.ppkg (23313), surfaceintegrationdriver.inf (7076), SurfaceIntegrationDriver.sys (466600)
+
+## oem64.inf  (Surface 2.23.139.0)
+  device: Surface Pen Cfu Over Ble LC Connection  [HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col0A]
+  store:  surfacepencfuoverblelc.inf_amd64_9ce79c2534b8d403
+  files:  SurfacePenCfuOverBleLc.dll (333200), surfacepencfuoverblelc.inf (6072)
+
+## oem65.inf  (Intel Corporation 63.22000.10.17589)
+  device: Intel(R) Imaging Signal Processor  [PCI\VEN_8086&DEV_465D&SUBSYS_72708086&REV_04]
+  store:  iaisp64.inf_amd64_d2b7382a5720d9a5
+  files:  iaisp64.inf (7900), iaisp64.sys (50296), iaisptrustlet64.dll (872152)
+
+## oem68.inf  (Surface 3.10.0.3)
+  device: Surface Retimer  [UEFI\RES_{225cda32-018b-400f-aa49-de1eaf919be6}&REV_3100003]
+  store:  surfaceretimer.inf_amd64_efdf646e4149134a
+  files:  surfaceretimer.inf (1186), SurfaceRetimer_3.10.0.3.bin (240169)
+
+## oem70.inf  (Intel Corporation 2.1123.505.3)
+  device: Intel(R) Connectivity Performance Suite  [{1392777D-8FD5-4F17-B1BD-A03F96DBFF19}\INTEL_ICPS]
+  store:  icpscomponent.inf_amd64_a8b09c29f8c31ecf
+  files:  CustomizeInstallFirstRun.exe (699592), CustomizeUninstallFirstRun.exe (267464), DevExpress.Data.Desktop.v20.2.dll (455408), DevExpress.Data.v20.2.dll (5036224), DevExpress.Sparkline.v20.2.Core.dll (111808), DevExpress.Utils.v20.2.dll (17736432), DevExpress.XtraEditors.v20.2.dll (7458032), EnableStartService.exe (41672), icpscomponent.inf (36017), IDBWM.exe (1354480), IDBWMService.exe (88304), IDBWMService.xml (667), IntcCo10X64.sys (220912), IntcCo11X64.sys (223984), IntelAnalyticsEventLogMessages.dll (68848), IntelAnalyticsService.exe (2098928), IntelConnect.exe (3471088), IntelConnectAPI.dll (172272), IntelConnectivityCInstallEventLogMessages.dll (68896), IntelConnectivityEventLogMessages.dll (68848), IntelConnectivityNetworkService.exe (2597104), IntelConnectService.exe (88304), IntelConnectService.xml (624), IntelProviderDataHelperService.exe (714992), LicenseAttribution.txt (45044), oem.xml (182), rn.stg (1114112), user.xml (182), WifiCredentialPrompter.exe (31379696)
+
+## oem72.inf  (INTEL 10.1.45.9)
+  device: Intel(R) Host Bridge/DRAM Registers - 4601  [PCI\VEN_8086&DEV_4601&SUBSYS_72708086&REV_04]
+  device: Intel(R) PEG60 - 464D  [PCI\VEN_8086&DEV_464D&SUBSYS_72708086&REV_04]
+  device: Intel(R) TypeC PCIe - 461F  [PCI\VEN_8086&DEV_461F&SUBSYS_72708086&REV_04]
+  device: Intel(R) TypeC PCIe - 462F  [PCI\VEN_8086&DEV_462F&SUBSYS_72708086&REV_04]
+  store:  alderlakesystem.inf_amd64_0565e3956cec3231
+  files:  alderlakesystem.inf (11909)
+
+## oem79.inf  (Intel(R) Corporation 10.29.0.9947)
+  device: Intel® Smart Sound Technology OED  [INTELAUDIO\DSP_CTLR_DEV_51C8&VEN_8086&DEV_0222&SUBSYS_72708086&REV_0001]
+  store:  intcoed.inf_amd64_29fd1afabcf5470c
+  files:  intcoed.inf (76382), IntcOED.sys (1279472), AS\DLLs\IntelAcaDll.dll (45656), AS\DLLs\IntelAcaDll.NetFull.dll (33880), AS\DLLs\IntelAudioDll_x64.dll (389208), AS\DLLs\IntelMultiPaSetupDll.dll (144472), AS\IAS\ControlModule.dll (961112), AS\IAS\IntelAudioService.exe (530520), AS\IAS\IntelAudioService.exe.config (160), AS\IAS\IntelSSTPreprocStreamer.dll (39555160), AS\IAS\NativeApiAdapter.dll (112216), AS\IAS\RpcServer.dll (159832), AS\IAS\WppLoggerDll.dll (425560), AS\IAS\Cfg\aec_asr_str_def_1ch_in.tf (4944), AS\IAS\Cfg\aec_asr_str_def_2ch_in.tf (4944), AS\IAS\Cfg\aec_asr_str_def_2ch_in_gna.tf (4944), AS\IAS\Cfg\aec_asr_str_def_4ch_in.tf (4944), AS\IAS\Cfg\aec_asr_str_def_4ch_in_gna.tf (4944), AS\IAS\Cfg\aec_dns_str_def_1ch_in_48k_gna.tf (4944), AS\IAS\Cfg\aec_dns_str_def_1ch_in_gna.tf (4944), AS\IAS\Cfg\aec_dns_str_def_2ch_in_48k_gna.tf (4944), AS\IAS\Cfg\aec_dns_str_def_2ch_in_gna.tf (4944), AS\IAS\Cfg\aec_wov_str_def_1ch_in.tf (4944), AS\IAS\Cfg\aec_wov_str_def_2ch_in.tf (4944), AS\IAS\Cfg\aec_wov_str_def_2ch_in_gna.tf (4944), AS\IAS\Cfg\aec_wov_str_def_4ch_in.tf (4944), AS\IAS\Cfg\aec_wov_str_def_4ch_in_gna.tf (4944), AS\IAS\Cfg\DefaultConfigs.xml (995), AS\IAS\Cfg\str_1ch_in_1_out_bypass.tf (3752), AS\IAS\Cfg\str_2ch_in_1_out_bypass.tf (3752), AS\IAS\Cfg\str_4ch_in_1_out_bypass.tf (3752), AS\MultiPaOemDll\IntelHwKws_v2.dll (1194072), AS\MultiPaOemDll\settingsHwKws.xml (391), AS\MultiPaOemDll\WweConfigurationDll.dll (397912), Fw\dsp_fw_adl-n_release.bin (653444), Fw\dsp_fw_adl_release.bin (653444), Fw\dsp_fw_tgl_release.bin (649348), Libs\dsp_lib_intel_wov_adl-n_release.bin (102524), Libs\dsp_lib_intel_wov_adl_release.bin (102524), Libs\dsp_lib_intel_wov_tgl_release.bin (102524), Libs\dsp_lib_whm_adl-n_release.bin (118952), Libs\dsp_lib_whm_adl_release.bin (118952), Libs\dsp_lib_whm_tgl_release.bin (118952), Topology\IntcOEDTopology.oec (58449), Topology\IntcOEDTopology.xml (45592), WoV\intelwov_data_manifest.txt (12), WoV\model_metadata_ADL.xml (24550), WoV\model_metadata_RPL.xml (24550), WoV\model_metadata_TGL.xml (24550), WoV\Alefuj\m\ja-JP\alefuj_ja-JP_hq.dsp (169888), WoV\Alefuj\m\ja-JP\alefuj_ja-JP_hq_echo.th (3), WoV\Alefuj\m\ja-JP\alefuj_ja-JP_hq_fuj.th (3), WoV\Alenec\m\ja-JP\alenec_ja-JP_hq.dsp (170764), WoV\Alenec\m\ja-JP\alenec_ja-JP_hq_echo.th (3), WoV\Alenec\m\ja-JP\alenec_ja-JP_hq_nec.th (4), WoV\Echo\m\de-AT\echo_de-AT_ex.alco (24), WoV\Echo\m\de-AT\echo_de-AT_ex.eth (4), WoV\Echo\m\de-AT\echo_de-AT_ex.hsc (3721606), WoV\Echo\m\de-AT\echo_de-AT_ex.th (4), WoV\Echo\m\de-AT\echo_de-AT_hq.dsp (169668), WoV\Echo\m\de-AT\echo_de-AT_hq.th (3), WoV\Echo\m\de-DE\echo_de-DE_ex.alco (24), WoV\Echo\m\de-DE\echo_de-DE_ex.eth (4), WoV\Echo\m\de-DE\echo_de-DE_ex.hsc (3721606), WoV\Echo\m\de-DE\echo_de-DE_ex.th (4), WoV\Echo\m\de-DE\echo_de-DE_hq.dsp (169668), WoV\Echo\m\de-DE\echo_de-DE_hq.th (3), WoV\Echo\m\en-AU\echo_en-AU_ex.alco (24), WoV\Echo\m\en-AU\echo_en-AU_ex.eth (4), WoV\Echo\m\en-AU\echo_en-AU_ex.hsc (3738246), WoV\Echo\m\en-AU\echo_en-AU_ex.th (4), WoV\Echo\m\en-AU\echo_en-AU_hq.dsp (170068), WoV\Echo\m\en-AU\echo_en-AU_hq.th (3), WoV\Echo\m\en-CA\echo_en-CA_ex.alco (24), WoV\Echo\m\en-CA\echo_en-CA_ex.eth (2), WoV\Echo\m\en-CA\echo_en-CA_ex.hsc (3721606), WoV\Echo\m\en-CA\echo_en-CA_ex.th (2), WoV\Echo\m\en-CA\echo_en-CA_hq.dsp (169960), WoV\Echo\m\en-CA\echo_en-CA_hq.th (1), WoV\Echo\m\en-GB\echo_en-GB_ex.alco (24), WoV\Echo\m\en-GB\echo_en-GB_ex.eth (4), WoV\Echo\m\en-GB\echo_en-GB_ex.hsc (3738246), WoV\Echo\m\en-GB\echo_en-GB_ex.th (4), WoV\Echo\m\en-GB\echo_en-GB_hq.dsp (170068), WoV\Echo\m\en-GB\echo_en-GB_hq.th (3), WoV\Echo\m\en-IE\echo_en-IE_ex.alco (24), WoV\Echo\m\en-IE\echo_en-IE_ex.eth (4), WoV\Echo\m\en-IE\echo_en-IE_ex.hsc (3738246), WoV\Echo\m\en-IE\echo_en-IE_ex.th (4), WoV\Echo\m\en-IE\echo_en-IE_hq.dsp (170068), WoV\Echo\m\en-IE\echo_en-IE_hq.th (4), WoV\Echo\m\en-IN\echo_en-IN_ex.alco (24), WoV\Echo\m\en-IN\echo_en-IN_ex.eth (3), WoV\Echo\m\en-IN\echo_en-IN_ex.hsc (2988094), WoV\Echo\m\en-IN\echo_en-IN_ex.th (3), WoV\Echo\m\en-IN\echo_en-IN_hq.dsp (169668), WoV\Echo\m\en-IN\echo_en-IN_hq.th (3), WoV\Echo\m\en-NZ\echo_en-NZ_ex.alco (24), WoV\Echo\m\en-NZ\echo_en-NZ_ex.eth (4), WoV\Echo\m\en-NZ\echo_en-NZ_ex.hsc (3738246), WoV\Echo\m\en-NZ\echo_en-NZ_ex.th (4), WoV\Echo\m\en-NZ\echo_en-NZ_hq.dsp (170068), WoV\Echo\m\en-NZ\echo_en-NZ_hq.th (3), WoV\Echo\m\en-US\echo_en-US_ex.alco (24), WoV\Echo\m\en-US\echo_en-US_ex.eth (2), WoV\Echo\m\en-US\echo_en-US_ex.hsc (3738246), WoV\Echo\m\en-US\echo_en-US_ex.th (2), WoV\Echo\m\en-US\echo_en-US_hq.dsp (169960), WoV\Echo\m\en-US\echo_en-US_hq.th (3), WoV\Echo\m\es-ES\echo_es-ES_ex.alco (24), WoV\Echo\m\es-ES\echo_es-ES_ex.eth (4), WoV\Echo\m\es-ES\echo_es-ES_ex.hsc (3721606), WoV\Echo\m\es-ES\echo_es-ES_ex.th (4), WoV\Echo\m\es-ES\echo_es-ES_hq.dsp (168300), WoV\Echo\m\es-ES\echo_es-ES_hq.th (3), WoV\Echo\m\es-MX\echo_es-MX_ex.alco (24), WoV\Echo\m\es-MX\echo_es-MX_ex.eth (4), WoV\Echo\m\es-MX\echo_es-MX_ex.hsc (3721606), WoV\Echo\m\es-MX\echo_es-MX_ex.th (4), WoV\Echo\m\es-MX\echo_es-MX_hq.dsp (168300), WoV\Echo\m\es-MX\echo_es-MX_hq.th (3), WoV\Echo\m\es-US\echo_es-US_ex.alco (24), WoV\Echo\m\es-US\echo_es-US_ex.eth (3), WoV\Echo\m\es-US\echo_es-US_ex.hsc (3721606), WoV\Echo\m\es-US\echo_es-US_ex.th (3), WoV\Echo\m\es-US\echo_es-US_hq.dsp (168300), WoV\Echo\m\es-US\echo_es-US_hq.th (3), WoV\Echo\m\fr-CA\echo_fr-CA_ex.alco (24), WoV\Echo\m\fr-CA\echo_fr-CA_ex.eth (2), WoV\Echo\m\fr-CA\echo_fr-CA_ex.hsc (3721606), WoV\Echo\m\fr-CA\echo_fr-CA_ex.th (2), WoV\Echo\m\fr-CA\echo_fr-CA_hq.dsp (165692), WoV\Echo\m\fr-CA\echo_fr-CA_hq.th (3), WoV\Echo\m\fr-FR\echo_fr-FR_ex.alco (24), WoV\Echo\m\fr-FR\echo_fr-FR_ex.eth (4), WoV\Echo\m\fr-FR\echo_fr-FR_ex.hsc (3721606), WoV\Echo\m\fr-FR\echo_fr-FR_ex.th (4), WoV\Echo\m\fr-FR\echo_fr-FR_hq.dsp (165692), WoV\Echo\m\fr-FR\echo_fr-FR_hq.th (3), WoV\Echo\m\it-IT\echo_it-IT_ex.alco (24), WoV\Echo\m\it-IT\echo_it-IT_ex.eth (4), WoV\Echo\m\it-IT\echo_it-IT_ex.hsc (3721606), WoV\Echo\m\it-IT\echo_it-IT_ex.th (4), WoV\Echo\m\it-IT\echo_it-IT_hq.dsp (167076), WoV\Echo\m\it-IT\echo_it-IT_hq.th (1), WoV\Echo\m\ja-JP\echo_ja-JP_ex.alco (24), WoV\Echo\m\ja-JP\echo_ja-JP_ex.eth (3), WoV\Echo\m\ja-JP\echo_ja-JP_ex.hsc (9997802), WoV\Echo\m\ja-JP\echo_ja-JP_ex.th (3), WoV\Echo\m\ja-JP\echo_ja-JP_hq.dsp (166492), WoV\Echo\m\ja-JP\echo_ja-JP_hq.th (3), WoV\Echo\m\pt-BR\echo_pt-BR_ex.alco (24), WoV\Echo\m\pt-BR\echo_pt-BR_ex.eth (4), WoV\Echo\m\pt-BR\echo_pt-BR_ex.hsc (3738246), WoV\Echo\m\pt-BR\echo_pt-BR_ex.th (4), WoV\Echo\m\pt-BR\echo_pt-BR_hq.dsp (168520), WoV\Echo\m\pt-BR\echo_pt-BR_hq.th (4), WoV\Fuj\m\ja-JP\fuj_ja-JP_ex.alco (24), WoV\Fuj\m\ja-JP\fuj_ja-JP_ex.eth (3), WoV\Fuj\m\ja-JP\fuj_ja-JP_ex.hsc (3845446), WoV\Fuj\m\ja-JP\fuj_ja-JP_ex.th (4), WoV\Fuj\m\ja-JP\fuj_ja-JP_hq.dsp (166456), WoV\Fuj\m\ja-JP\fuj_ja-JP_hq.th (3), WoV\Leno2\m\zh-CN\leno2_zh-CN_ex.alco (24), WoV\Leno2\m\zh-CN\leno2_zh-CN_ex.eth (4), WoV\Leno2\m\zh-CN\leno2_zh-CN_ex.hsc (1589506), WoV\Leno2\m\zh-CN\leno2_zh-CN_ex.th (3), WoV\Leno2\m\zh-CN\leno2_zh-CN_hq.dsp (172148), WoV\Leno2\m\zh-CN\leno2_zh-CN_hq.th (3), WoV\Ms\m\en-US\ms_en-US_ex.alco (24), WoV\Ms\m\en-US\ms_en-US_ex.eth (5), WoV\Ms\m\en-US\ms_en-US_ex.hsc (3721612), WoV\Ms\m\en-US\ms_en-US_ex.th (5), WoV\Ms\m\en-US\ms_en-US_hq.dsp (140708), WoV\Ms\m\en-US\ms_en-US_hq.th (3), WoV\Mslexa\m\en-US\mslexa_en-US_hq.dsp (173904), WoV\Mslexa\m\en-US\mslexa_en-US_hq_echo.th (3), WoV\Mslexa\m\en-US\mslexa_en-US_hq_ms.th (3), WoV\Nec\m\ja-JP\nec_ja-JP_ex.alco (24), WoV\Nec\m\ja-JP\nec_ja-JP_ex.eth (2), WoV\Nec\m\ja-JP\nec_ja-JP_ex.hsc (3845434), WoV\Nec\m\ja-JP\nec_ja-JP_ex.th (4), WoV\Nec\m\ja-JP\nec_ja-JP_hq.dsp (167612), WoV\Nec\m\ja-JP\nec_ja-JP_hq.th (4), WoV\Service\MultiChannelWoV.dll (898136), WoV\Service\MultichannelWoVCfg.dll (302680), WoV\Tencent\m\zh-CN\tencent_zh-CN_ex.alco (24), WoV\Tencent\m\zh-CN\tencent_zh-CN_ex.eth (3), WoV\Tencent\m\zh-CN\tencent_zh-CN_ex.hsc (2999638), WoV\Tencent\m\zh-CN\tencent_zh-CN_ex.th (3), WoV\Tencent\m\zh-CN\tencent_zh-CN_hq.dsp (169600), WoV\Tencent\m\zh-CN\tencent_zh-CN_hq.th (3), WoV\Xiaomi\m\zh-CN\xiaomi_zh-CN_ex.alco (24), WoV\Xiaomi\m\zh-CN\xiaomi_zh-CN_ex.eth (2), WoV\Xiaomi\m\zh-CN\xiaomi_zh-CN_ex.hsc (1929454), WoV\Xiaomi\m\zh-CN\xiaomi_zh-CN_ex.th (2), WoV\Xiaomi\m\zh-CN\xiaomi_zh-CN_hq.dsp (139632), WoV\Xiaomi\m\zh-CN\xiaomi_zh-CN_hq.th (3), WoV\Yoga\m\zh-CN\yoga_zh-CN_ex.alco (24), WoV\Yoga\m\zh-CN\yoga_zh-CN_ex.eth (2), WoV\Yoga\m\zh-CN\yoga_zh-CN_ex.hsc (3758810), WoV\Yoga\m\zh-CN\yoga_zh-CN_ex.th (2), WoV\Yoga\m\zh-CN\yoga_zh-CN_hq.dsp (181332), WoV\Yoga\m\zh-CN\yoga_zh-CN_hq.th (3)
+
+## oem80.inf  (Surface 5.65.139.0)
+  device: Surface Firmware Update  [HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col08]
+  store:  surfacecfuoverhid.inf_amd64_be4eafc268bc67e3
+  files:  SurfaceCFUOverHid.dll (328176), surfacecfuoverhid.inf (6876)
+
+## oem81.inf  (Surface 1.9.139.0)
+  device: Surface SMF Sensor Client Driver  [{2683FA3B-3E0B-4EA5-9F3F-A8CEA5A069DA}\SurfaceSmfSensorClient]
+  store:  surfacesmfsensorclient.inf_amd64_e3fe9eda16833212
+  files:  SurfaceSmfSensorClient.dll (296856), surfacesmfsensorclient.inf (2594)
+
+## oem84.inf  (Surface 1.192.137.0)
+  device: Microsoft Surface APO  [SWC\VEN_MSFT&PID_SURFACEAPO]
+  store:  surfaceaposwcinstaller.inf_amd64_9c2e0c06130f6751
+  files:  NOTICE.txt (9023), SurfaceAPO.dll (2213320), surfaceaposwcinstaller.inf (13111)
+
+## oem85.inf  (Dolby 3.30704.740.0)
+  device: DolbyAPO Software Device (HSA)  [SWC\VEN_DOLBY&PID_DAX3HSA_DolbyAccessOEM]
+  store:  dax3_swc_hsa.inf_amd64_f89a4e9189aba835
+  files:  dax3_swc_hsa.inf (17214)
+
+## oem87.inf  (Intel Corporation 30.100.2212.4)
+  device: Intel(R) Serial IO GPIO Host Controller - INTC1055  [ACPI\VEN_INTC&DEV_1055]
+  store:  ialpss2_gpio2_adl.inf_amd64_0e92b4646ab70162
+  files:  ialpss2_gpio2_adl.inf (7168), iaLPSS2_GPIO2_ADL.sys (140976)
+
+## oem91.inf  (Surface 8.127.139.0)
+  device: Surface SMF Client Driver  [{C65C8174-D19C-444B-95D4-40257DB51D7C}\SurfaceSmfFanClient]
+  device: Surface Thermal Zone Sensor Driver  [ACPI\VEN_MSHW&DEV_0188]
+  store:  surfacesmfclient.inf_amd64_fb869ec9417eee98
+  files:  surfacesmfclient.inf (3118), SurfaceSmfClient.sys (376344)
+
+## oem96.inf  (Surface 3.19.139.0)
+  device: Surface Power State Driver  [{4047F442-B3B0-4517-8C6F-9EEA770022B1}\SurfacePowerStateDriver]
+  store:  surfacepowerstate.inf_amd64_0481bcd6adf3d446
+  files:  surfacepowerstate.inf (4474), SurfacePowerStateDriver.sys (298800)
+
+## oem99.inf  (Surface 3.98.5.0)
+  device: Surface Hid Mini Driver  [{2DEDC554-A829-42AB-90E9-E4E4B4772981}\Target_KIP&Category_HID]
+  store:  surfacehidminidriver.inf_amd64_3a74a01af187e817
+  files:  surfacehidminidriver.inf (5212), SurfaceHidMiniDriver.sys (359240)
+
+## oem100.inf  (Intel 63.22000.10.17589)
+  device: Intel(R) AVStream Camera  [VIDEO\VEN_8086&DEV_46A8&SUBSYS_00631414&REV_0C&INT3480]
+  store:  iacamera64.inf_amd64_f5bd627220875420
+  files:  burstisp_ipux.dll (4106360), cpd_component_signed.bin (462848), cpd_component_signed_adln.bin (462848), cpd_component_signed_rpl.bin (462848), evcp.dll (42604152), graph_descriptor.xml (1114648), graph_settings_TPG1_INTEL_DEFAULT.xml (211421), graph_settings_TPG2_INTEL_DEFAULT.xml (225401), iacamera64.inf (93854), iacamera64.sys (10147936), IntelDeviceMFT64.dll (10861176), libia_cp64.dll (31316600), mute-mirror.bmp (14454), mute.bmp (14454), pvl64.dll (32300664), pvl_perspective_control64.dll (964216), pvl_skin_smoothing64.dll (1094240), subway_blazeface_tracking.dll (9232992), subway_centernet_tracking.dll (8074336), subway_user_framing.dll (30634592), tnr7_cm.dll (1164896), TPG1_INTEL.aiqb (319972), TPG1_INTEL.cpf (317544), TPG1_INTEL_SVE.cpf (162696), TPG2_INTEL.aiqb (319972), TPG2_INTEL.cpf (317544), TPG2_INTEL_rgbir.cpf (329156)
+
+## oem103.inf  (Realtek 13.1.6000.1076)
+  device: Realtek Audio Effects Component  [SWC\VEN_10EC&AID_0001]
+  store:  realtekapo.inf_amd64_1da730680654d2d7
+  files:  realtekapo.inf (72990), RltkAPOU64.dll (8374336)
+
+## oem105.inf  (Surface 3.55.3.0)
+  device: Surface Pen BLE LC Adaptation Driver  [HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col07]
+  store:  surfacepenblelcaddradaptationdriver.inf_amd64_1ab186533b51d2bd
+  files:  surfacepenblelcaddradaptationdriver.inf (8096), SurfacePenBleLcAddrAdaptationDriver.sys (320728)
+
+## oem108.inf  (Surface 6.215.59.0)
+  device: Surface Integration Service  [{98DE32A9-5D44-419E-B67D-66072BCEF58B}\SISD_DEVICE]
+  store:  surfaceservicenulldriver.inf_amd64_16c2919550c9cabd
+  files:  SurfaceBtleLcPenTelemetry.dll (335752), SurfaceService.exe (2488200), surfaceservicenulldriver.inf (2978), SurfaceServiceSensors.dll (727416)
+
+## oem111.inf  (Surface 3.100.139.0)
+  device: Surface Radio Monitor  [{98DE32A9-5D44-419E-B67D-66072BCEF58B}\SurfaceSarManager]
+  store:  surfacesarmanager.inf_amd64_383587256c9f3830
+  files:  SurfaceSarManager.dll (442920), surfacesarmanager.inf (2547)
+
+## oem113.inf  (Surface 161.33.3.35)
+  device: Surface TCON  [UEFI\RES_{4216782b-d09a-42cb-83a0-c01919f9505b}&REV_A1210323]
+  store:  surfacetcon.inf_amd64_40d7b3e2ea2c6708
+  files:  surfacetcon.inf (2648), SurfaceTCON_161.33.3.35.bin (31273)
+
+## oem114.inf  (Intel 23.160.0.4)
+  device: Intel(R) Wi-Fi 6E AX211 160MHz  [PCI\VEN_8086&DEV_51F0&SUBSYS_00948086&REV_01]
+  store:  netwtw6e.inf_amd64_d488480304e1f365
+  files:  IntelIHVRouter14.dll (1628064), IntelIHVRouter16.dll (1628088), IntelIHVRouter18.dll (1627576), Netwaw14.sys (5612984), Netwaw18.sys (5965216), netwfw14.dat (16865944), netwfw16.dat (6769268), netwfw18.dat (12825452), Netwtw14.sys (5566368), Netwtw16.sys (5941152), Netwtw18.sys (5923256), netwtw6e.inf (698592)
+
+## oem115.inf  (Surface 6.137.139.0)
+  device: Surface Panel  [MONITOR\LGD0719]
+  store:  surfaceoempanel.inf_amd64_de89465d851f1d57
+  files:  ColorCalibrationComputation.dll (788864), SurfaceEnhanced.icm (8884), SurfaceOemPanel.dll (773512), surfaceoempanel.inf (16664), SurfacesRGB.icm (7200)
+
+## oem119.inf  (Intel(R) Corporation 10.29.0.9947)
+  device: Intel® Smart Sound Technology for Bluetooth® Audio  [INTELAUDIO\CTLR_DEV_51C8&LINKTYPE_03&DEVTYPE_00&VEN_8086&DEV_AE30&SUBSYS_72708086&REV_0001]
+  store:  intcbtau.inf_amd64_507580b744203d47
+  files:  intcbtau.inf (123510), IntcBTAu.sys (893936)
+
+## oem124.inf  (Intel Corporation 32.0.101.7085)
+  device: Intel(R) Iris(R) Xe Graphics  [PCI\VEN_8086&DEV_46A8&SUBSYS_00631414&REV_0C]
+  store:  iigd_dch.inf_amd64_01747d5b5ef96be5
+  files:  clangFEWrapper.dll (41281896), ControlLib.dll (351296), ControlLib32.dll (298184), cpa_32.vp (1125), cpa_64.vp (1125), cp_resources.bin (2572396), c_32.cpa (1361159), c_64.cpa (1376256), dev_32.vp (57143), dev_64.vp (56359), DnnlPlugin.dll (19665248), dxg_on_android.cab (54967915), enctools32.dll (7923152), enctools64.dll (9072192), iga32.dll (2929888), iga64.dll (3633496), igc32.dll (79005928), igc64.dll (88375840), igd10iumd32.dll (5374472), igd10iumd64.dll (5512576), igd10mg32.dll (1532008), igd10mg64.dll (1611376), igd10um32xe.dll (17456288), igd10um64xe.dll (18407024), igd10umt32xe.dll (28051912), igd10umt64xe.dll (29452456), igd11dxva32.dll (3883688), igd11dxva64.dll (4964008), igd12dxva32.dll (3081240), igd12dxva64.dll (3609408), igd12um32xel.dll (10981112), igd12um64xel.dll (37431552), igd12umd32.dll (410560), igd12umd64.dll (491560), igd9dxva32.dll (23622024), igd9dxva64.dll (25169096), igd9trinity32.dll (27432792), igd9trinity64.dll (28855392), igdail32.dll (287392), igdail64.dll (312992), igdde32.dll (369656), igdde64.dll (442144), igddxvacommon32.dll (22023896), igddxvacommon64.dll (23339232), igdext32.dll (483152), igdext64.dll (575032), igdfcl32.dll (1174176), igdfcl64.dll (1216096), igdgmm2_32.dll (327504), igdgmm2_64.dll (374360), igdgmm32.dll (4444768), igdgmm64.dll (6131592), igdgmmstaging_32.dll (137304), igdgmmstaging_64.dll (156160), igdinfo32.dll (169800), igdinfo64.dll (194624), igdkmdn64.sys (63189152), igdmd32.dll (17508792), igdmd64.dll (23198456), igdml32.dll (1422712), igdml64.dll (1777896), igdrcl32.dll (19153576), igdrcl64.dll (21163168), igdumdim32.dll (2968136), igdumdim64.dll (2829504), igfx11cmrt32.dll (210920), igfx11cmrt64.dll (254496), igfxcmrt32.dll (213488), igfxcmrt64.dll (256656), iglhxa64.cpa (1376256), iglhxa64.vp (1125), iglhxc64.vp (44194), iglhxc64_dev.vp (43214), iglhxg64.vp (43760), iglhxg64_dev.vp (43732), iglhxo64.vp (42513), iglhxo64_dev.vp (43143), iglhxsn64.vp2 (11900), igmlsblob64xeh.dll (44347128), igmlsblob64xel.dll (13347448), igvk32.dll (25741864), igvk32.json (141), igvk64.dll (26851216), igvk64.json (141), igvkMedia32.dll (1202560), igvkMedia64.dll (1509456), igxell.dll (393448), igxelpicd32.dll (17836192), igxelpicd64.dll (21311144), igxess.dll (89688696), igxess2.dll (71933696), igxess_fg.dll (29120560), iigd_dch.inf (333328), IntelControlLib.dll (779384), IntelControlLib32.dll (690288), IntelCpHDCPSvc.exe (375456), intel_gfx_api-x64.dll (624960), intel_gfx_api-x86.dll (483968), Intel_OpenCL_ICD32.dll (393376), Intel_OpenCL_ICD64.dll (512672), libigc.so (67681952), libigd12dxva64.so (29934424), libigd12um64xel.so (8877352), libigd12umd64.so (55608), libigdfcl.so (784336), libigdgmm2_w.so.2 (198952), libigdgmmstaging_w.so.0 (18232), libigdgmm_w.so.12 (2607784), libLLVM-14.so (34729048), libmfx32-gen.dll (24083664), libmfx64-gen.dll (25835192), libmfxhw32.dll (27641560), libmfxhw64.dll (29211296), libopencl-clang2.so.14 (164604448), libUniversalAdapter64.so (251968), libwsl_compute_helper.so (550968), media_bin_32.dll (29826624), media_bin_64.dll (35346984), mfxplugin32_av1e_gacc.dll (8710040), mfxplugin32_hw.dll (20711080), mfxplugin64_av1e_gacc.dll (12684352), mfxplugin64_hw.dll (27987104), mfx_loader_dll_hw32.dll (741040), mfx_loader_dll_hw64.dll (982304), mfx_media_merit_32.dll (1318008), mfx_media_merit_32.vp (11182), mfx_media_merit_64.dll (1471624), mfx_media_merit_64.vp (3164), mfx_mft_av1hve_32.dll (1605416), mfx_mft_av1hve_64.dll (2120464), mfx_mft_encrypt_32.dll (1446072), mfx_mft_encrypt_64.dll (1932528), mfx_mft_h264ve_32.dll (1591888), mfx_mft_h264ve_64.dll (2104784), mfx_mft_h265ve_32.dll (1606440), mfx_mft_h265ve_64.dll (2120976), mfx_mft_mjpgvd_32.dll (1456280), mfx_mft_mjpgvd_64.dll (1933984), mfx_mft_vp9ve_32.dll (1600696), mfx_mft_vp9ve_64.dll (2116768), msvcp140.dll (621784), opencl-clang232.dll (123564560), opencl-clang264.dll (151069176), OSSCOPYRIGHT.txt (1372), UMED.dll (176784), UniversalAdapter32.dll (574520), UniversalAdapter64.dll (673768), vcruntime140.dll (140584), vcruntime140_1.dll (79064), vpl_dispatcher_32.dll (698080), vpl_dispatcher_64.dll (820000), vulkan-1-32.dll (1446048), vulkan-1-64.dll (1639584), vulkaninfo-32.exe (1907880), vulkaninfo-64.exe (2399392), VulkanRT-EULA.txt (4008), XeFX.dll (166216), ze_intel_gpu64.dll (31653208), ze_intel_gpu_raytracing.dll (2098128), ze_loader.dll (977088), ze_tracing_layer.dll (698992), ze_validation_layer.dll (1126776)
+
+## oem125.inf  (Surface 8.85.139.0)
+  device: Surface Thermal Policy Driver  [ACPI\VEN_MSHW&DEV_0187]
+  store:  surfacethermalpolicy.inf_amd64_d30965280376555d
+  files:  surfacethermalpolicy.inf (2543), SurfaceThermalPolicy.sys (339368)
+
+## oem126.inf  (Surface 9.32.137.0)
+  device: Surface SMF Display Client Driver  [{A1B1D6F0-64EE-4B00-B2B4-F8EA484AAA50}\SurfaceSmfDisplayClient]
+  store:  surfacesmfdisplayclient.inf_amd64_1e70493c5bcabb57
+  files:  surfacesmfdisplayclient.inf (2663), SurfaceSmfDisplayClient.sys (315752)
+
+## oem131.inf  (Microsoft Corporation 1.0.4.7057)
+  device: Voice Clarity  [SWC\VEN_MSFT&AUDIO_EFFECTPACK_VOICECLARITY]
+  store:  voiceclarityep_audio_component.inf_amd64_d5f0f6f169848993
+  files:  voiceclaritycpuapo.dll (11713528), voiceclarityep_audio_component.inf (11468)
+
+## oem132.inf  (Dolby 3.30704.742.0)
+  device: DolbyAPO SWC Device  [SWC\VEN_DOLBY&PID_DAX3APOSVC]
+  store:  dax3_swc_aposvc.inf_amd64_f99162a78d742d5a
+  files:  CaptureStreamMonitor.dll (719488), DAX3API.exe (2732672), Dax3DapControl.dll (569448), Dax3Ref.dll (703616), dax3_swc_aposvc.inf (198930), DAXSSID.dll (368744), default_settings.json (6056), Default_settings.xml (5362), DolbyAPONs.dll (1404448), DolbyAPONs30.dll (2334144), DolbyAPOv2100.dll (2605360), DolbyAPOv251.dll (2170512), DolbyAPOvlldp.dll (1505840), DolbyAPOvlldp120.dll (1627776), DolbyAPOvlldp130.dll (1940752), DolbyAPOvlldp140.dll (1977408), DolbyAPOvlldp150.dll (1981024), DolbyAPOVR.dll (3261904), DolbyDax3Apo.dll (1233056)
+
+## oem137.inf  (Surface 1.10.139.0)
+  device: Storage Firmware Update Samsung MZ9L4256HCJQ-00BMV  [SWC\StorageFwUpdate_MZ9L4256HCJQ_00B_]
+  store:  surfacestoragefwupdatemz9l4256hcjq00bmv.inf_amd64_94c75669d638da4f
+  files:  HXC75M0Q_noFormat.bin (2097152), surfacestoragefwupdatemz9l4256hcjq00bmv.inf (2274)
+
+## oem140.inf  (Intel Corporation 63.22000.10.17589)
+  device: Camera Sensor OV5693  [ACPI\VEN_OVTI&DEV_5693&SUBSYS_MSHW0340]
+  store:  ov5693.inf_amd64_e536eece2320831e
+  files:  graph_settings_ov5693_13P2BA540_ADL.xml (68739), ov5693.inf (5008), ov5693.sys (211552), OV5693_13P2BA540_ADL.aiqb (474124), OV5693_13P2BA540_ADL.cpf (120)
+
+## oem141.inf  (Surface 2.44.139.0)
+  device: Surface UCM UCSI HID Client  [HID\Target_SAM&Category_HID]
+  store:  surfaceucmucsihidclient.inf_amd64_d18250980193a7e9
+  files:  surfaceucmucsihidclient.inf (1854), SurfaceUcmUcsiHidClient.sys (291728)
+
+## oem142.inf  (Surface 3.40.137.0)
+  device: Surface ACPI Platform Extension Driver  [ACPI\VEN_MSHW&DEV_0299]
+  store:  surfaceacpiplatformextensiondriver.inf_amd64_151c14702b170a0b
+  files:  surfaceacpiplatformextensiondriver.inf (3173), SurfaceAcpiPlatformExtensionDriver.sys (375272)
+
+## oem145.inf  (Surface 9.166.37.0)
+  device: Surface Serial Hub Driver  [ACPI\VEN_MSHW&DEV_0084]
+  store:  surfaceserialhubdriver.inf_amd64_705b8f3c22f61737
+  files:  surfaceserialhubdriver.inf (2565), SurfaceSerialHubDriver.sys (487248)
+
+## oem149.inf  (Surface 1.42.2872.1)
+  device: Surface ME  [UEFI\RES_{4cd455d7-c3d7-4df2-88d4-1a62e2488594}&REV_AA2CE01]
+  store:  surfaceme.inf_amd64_d33d0fa31ba2658e
+  files:  SurfaceME.inf (1205), SurfaceME_1.42.2872.1.bin (3708727)
+
+## oem150.inf  (Surface 24.103.143.0)
+  device: Surface UEFI  [UEFI\RES_{f914f92a-9061-4f1a-95a5-edccd5ce0e09}&REV_1800678F]
+  store:  surfaceuefi.inf_amd64_de4702667fed067c
+  files:  SurfaceUEFI.inf (2115), SurfaceUEFI_24.103.143_0.bin (7867099), SurfaceUEFI_24.103.143_0_integrity.bin (5174), SurfaceUEFI_24.103.143_1.bin (7867099), SurfaceUEFI_24.103.143_1_integrity.bin (5174)
+

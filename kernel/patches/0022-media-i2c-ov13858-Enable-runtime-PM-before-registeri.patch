@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Tue, 17 Nov 2026 05:55:07 +0900
+Subject: [PATCH] media: i2c: ov13858: Enable runtime PM before registering the
+ subdev
+
+On the Surface Pro 9 the rear camera sometimes comes up without its lens
+actuator (no dw9800k VCM, no focus control) and the kernel logs
+
+  ov13858 i2c-OVTID858:00: Error -13 runtime-resuming sensor, cannot instantiate VCM
+
+Registering the subdev can complete the IPU bridge notifier at once when
+the ISYS driver is already bound. Its bound callback schedules
+ipu_bridge_instantiate_vcm_work(), which resumes the sensor with
+pm_runtime_get_sync(). probe() enables runtime PM only after the
+registration, so when the work runs first the resume fails with -EACCES
+and the VCM client is never created. Whether probe() or the work wins
+depends on timing: of two boots of the same kernel series one
+instantiated the VCM and one did not.
+
+Enable runtime PM before the subdev is registered and undo it when the
+registration fails.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/media/i2c/ov13858.c | 18 ++++++++++++------
+ 1 file changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/media/i2c/ov13858.c b/drivers/media/i2c/ov13858.c
+index 015493a16..e23e8362c 100644
+--- a/drivers/media/i2c/ov13858.c
++++ b/drivers/media/i2c/ov13858.c
+@@ -1856,21 +1856,27 @@ static int ov13858_probe(struct i2c_client *client)
+ 		goto error_handler_free;
+ 	}
+ 
+-	ret = v4l2_async_register_subdev_sensor(&ov13858->sd);
+-	if (ret < 0)
+-		goto error_media_entity;
+-
+ 	/*
+ 	 * Device is already turned on by i2c-core with ACPI domain PM.
+-	 * Enable runtime PM and turn off the device.
++	 * Enable runtime PM before the subdev is registered: registration can
++	 * complete the bridge's notifier, whose VCM instantiation work resumes
++	 * the sensor and fails with -EACCES while runtime PM is disabled.
+ 	 */
+ 	pm_runtime_set_active(ov13858->dev);
+ 	pm_runtime_enable(ov13858->dev);
++
++	ret = v4l2_async_register_subdev_sensor(&ov13858->sd);
++	if (ret < 0)
++		goto error_pm_disable;
++
++	/* Turn off the device. */
+ 	pm_runtime_idle(ov13858->dev);
+ 
+ 	return 0;
+ 
+-error_media_entity:
++error_pm_disable:
++	pm_runtime_disable(ov13858->dev);
++	pm_runtime_set_suspended(ov13858->dev);
+ 	media_entity_cleanup(&ov13858->sd.entity);
+ 
+ error_handler_free:

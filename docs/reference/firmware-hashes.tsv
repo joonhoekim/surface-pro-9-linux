@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Joonhoe Kim
+# SPDX-License-Identifier: CC-BY-SA-4.0
+#
+# sha256 and size of firmware-derived files that are not published in this repository,
+# taken from one Surface Pro 9 (Intel, SKU Surface_Pro_9_2038) with Surface UEFI 24.103.143.
+# Compare your own dumps with `sha256sum`. Columns are tab-separated.
+sha256	size	name	description
+b3cd9df463e5bd7e59786692ec08be2ee1b7ce02bc5985c3b1380c9051bcbf07	476	acpi/apic.dat	ACPI APIC table (tools/windows/dump-acpi.ps1)
+1a8b1a56c89c34b4692f91e2c1c328b93589a2c6fa223eb615533a0429cfc4ec	56	acpi/bgrt.dat	ACPI BGRT table (tools/windows/dump-acpi.ps1)
+b3971d9287cb98465bbf16bc99a596bc2a8dfb8efda60b15f633bc73eb5cb430	160	acpi/dmar.dat	ACPI DMAR table (tools/windows/dump-acpi.ps1)
+41c551f5a979dcc988547b6f29597b836b28285dd0ec7a699c308e965c98758a	182634	acpi/dsdt.dat	ACPI DSDT as dumped on Windows (tools/windows/dump-acpi.ps1). The firmware rewrites a few bytes at boot (checksum and NVS region addresses), so a dump from another boot or from Linux can differ in those bytes
+7f188b5dc73b7da7cf1030e344d981aa3b7d66251eef2efc674309f44298ef15	276	acpi/facp.dat	ACPI FACP table (tools/windows/dump-acpi.ps1)
+2f25fdeab894b3c3ac31a6f211dd92e3cb404b3bf701def83b5cbb4c794fede7	52	acpi/fpdt.dat	ACPI FPDT table (tools/windows/dump-acpi.ps1)
+4c9b79647fda7c66b625d65a90fd99a509b387ec14ea590f3dce161c9b91f5a3	56	acpi/hpet.dat	ACPI HPET table (tools/windows/dump-acpi.ps1)
+4904cd5a9871e3dd07da9d0e070e15aaa2f410dc5ca3370ee3bbe875e9120b36	148	acpi/lpit.dat	ACPI LPIT table (tools/windows/dump-acpi.ps1)
+0531620d7b935c16131f3508cb406377da5f276c53ddb01178378a7bba3883bd	60	acpi/mcfg.dat	ACPI MCFG table (tools/windows/dump-acpi.ps1)
+795b1da5f7467ecfd870928f5a6b5f959e9212041610ded674a63f42a22dbc0e	753	acpi/nhlt.dat	ACPI NHLT table (tools/windows/dump-acpi.ps1)
+0bb3a334fdd23b7808d4540e3fd5e433b9ca555cb8d81e7d96125cd8c7123cec	23860	acpi/ssdt-cpussdt.dat	ACPI SSDT, OEM table ID CPUSSDT (tools/windows/dump-acpi.ps1)
+b89535e903e57275f5316f454150d866f2ccca88e0128e9a37c227921a52b516	13289	acpi/ssdt-igfxssdt.dat	ACPI SSDT, OEM table ID IGFXSSDT (tools/windows/dump-acpi.ps1)
+081c67668406ee779a58686b6b36fe03e5792b142fc7566ce842382414bd3ebc	336	acpi/ssdt-ipussdt.dat	ACPI SSDT, OEM table ID IPUSSDT (tools/windows/dump-acpi.ps1)
+193de7d3be1e707fdc31ecac122bc31fdaee3e73708c7f32b4a3ec20d911c754	5395	acpi/ssdt-rtd3.dat	ACPI SSDT, OEM table ID RTD3 (tools/windows/dump-acpi.ps1)
+5a79d380cbbbfec85599c77824dad60570afdcf72faa9b6a8ceb2c56c7f64e1b	11304	acpi/ssdt-sassdt.dat	ACPI SSDT, OEM table ID SASSDT (tools/windows/dump-acpi.ps1)
+5d46d30c3560bb3e32f77d1dd12634aafa8a40670058fa6a34407715fd6fe481	14810	acpi/ssdt-soccmn.dat	ACPI SSDT, OEM table ID SOCCMN (tools/windows/dump-acpi.ps1)
+c31def862352aa66daf4410b9ccabae950b893579aa54c9b037dc6b82a38f2cd	14810	acpi/ssdt-socgpe.dat	ACPI SSDT, OEM table ID SOCGPE (tools/windows/dump-acpi.ps1)
+07cfc8e33837f899acee2383dbfdfdac6419207fbaea9da33ba262378bbfd1b5	1792	acpi/ssdt-ssdtpld.dat	ACPI SSDT, OEM table ID SSDTPLD (tools/windows/dump-acpi.ps1)
+894b797b81711c6f2bb9a9e7da223daa5f0f08eb94a7d3d996affe0e3068c9c1	4488	acpi/ssdt-ssdtsurf.dat	ACPI SSDT, OEM table ID SSDTSURF (tools/windows/dump-acpi.ps1)
+67535bb54e04f2e88fbb018d8bedc5bad7e193ba8f090b98c8bd4fc9218dc7f8	35179	acpi/ssdt-tcssssdt.dat	ACPI SSDT, OEM table ID TCSSSSDT (tools/windows/dump-acpi.ps1)
+20249a13292caf835b3929270625779176c162152ed85662023456bb232e94a0	1396	acpi/ssdt-tpm2tabl.dat	ACPI SSDT, OEM table ID TPM2TABL (tools/windows/dump-acpi.ps1)
+104611ca1afb5b8bf256cb57d92c166d527ce51ce75ccd0683ba189568f705be	52	acpi/tpm2.dat	ACPI TPM2 table (tools/windows/dump-acpi.ps1)
+bc8210daa36df831911745cb2d25c7e9298ed1b37a4c3c4bce057665a2c54ad4	40	acpi/wsmt.dat	ACPI WSMT table (tools/windows/dump-acpi.ps1)
+eb0062ebc10b52f6b9066a5cf598be23996077b51c32f7d8ed480317d9c51388	8701	vbt/surfaceuefi-24.103.143-vbt0.bin	Intel VBT, first copy found in the Surface UEFI 24.103.143 firmware image (tools/vbt-extract.py); length is the VBT's own size field, without the zero padding debugfs adds
+7049f7d814e53e2ac7bc508f1e4a40874da1aafa0f606e6a6e267510eaadc441	8701	vbt/surfaceuefi-24.103.143-vbt1.bin	Intel VBT, second copy found in the Surface UEFI 24.103.143 firmware image (tools/vbt-extract.py)
+0555ee353738675a13d4b19f390e56c8752936b2ba893e5b1f9c331d6817f168	256	edid.bin	Internal panel EDID, base block and one extension block. The block contains a serial field that may differ per unit, so a mismatch does not by itself mean a different panel model
+f0949e6f389d5b1338e6c44157734c835a657e3fb1746088d57a39e30ab55b76	128	edid-block0.bin	Internal panel EDID, base block only (first 128 bytes of edid.bin). Contains the same serial field that may differ per unit
+d9219fbb2be83cf6f3c2e0f317edf9ac4311c74965f77832517d122cbc2c9af5	10780	display/SurfacesRGB.icm	ICC profile installed by the Windows Surface panel driver package, sRGB mode
+7e985dba4ed07154db55f8734bdcfbbff0b30436fb17de4b3ebeafb4df76ee8c	10784	display/SurfaceVivid.icm	ICC profile installed by the Windows Surface panel driver package, Vivid mode

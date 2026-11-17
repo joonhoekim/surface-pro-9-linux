@@ -1,0 +1,50 @@
+# Provenance
+
+Where each patch in `patches/` comes from. The series is applied with `git am` on the base below.
+Imported patches keep their original author (`From:`) and `Signed-off-by`. Upstream backports carry
+`(cherry picked from commit …)` and this repository's `Signed-off-by`; patches taken from the
+linux-surface/kernel PR carry a `Link:`.
+
+## Base
+
+| What | Where |
+|---|---|
+| Upstream | stable `v7.3.4` = `7595a62d45ee1a2297eafa5f2ef5d0a45142d84d` |
+| linux-surface | `linux-surface/linux-surface` `ea852b4eff5ed641571e13766bda5bd9cf121983`, `patches/7.3/*.patch` (not copied) |
+| Configuration | `configs/surface-7.3.config` of the same commit + [`config/sp9.config`](config/sp9.config) |
+
+## Status
+
+| Status | Meaning |
+|---|---|
+| upstream (v7.4) | Merged into mainline (v7.4-rc). Dropped when the base moves to v7.4 or later |
+| pending (linux-surface/kernel#N) | Someone else's PR, not merged yet |
+| local | A patch of this repository. Not sent upstream or to linux-surface |
+| local, unverified | As above, and the only evidence for the request format is observations from other devices and other users |
+
+## Patches
+
+| File | Subject | Origin, author | Status | Evidence |
+|---|---|---|---|---|
+| 0001 | media: ipu-bridge: Add ipu_bridge_get_ipu6() | torvalds/linux `eda381fd8c0c`, Sakari Ailus. Taken for the `ipu6-pci-table.h` include of 0004 | upstream (v7.4) | [camera.md](../docs/research/gaps/camera.md) difference 1 |
+| 0002 | media: ipu-bridge: Assign endpoint property indices dynamically | `3436405beac8`, Fernando Rimoli | upstream (v7.4) | same |
+| 0003 | media: ipu-bridge: Match sensor configs per IPU and add config flags | `b883954d842f`, Fernando Rimoli | upstream (v7.4) | same |
+| 0004 | media: ipu-bridge: Request non-continuous clock for ov5693 on IPU6 | `8e3def7bf410`, Fernando Rimoli. Position of the `OVTI5693` entry adjusted to linux-surface | upstream (v7.4), modified backport | same |
+| 0005 | media: ipu-bridge: Keep the clock-noncontinuous property name out of rodata | `a20c843c9bc4`, Fernando Rimoli (Fixes for 0004) | upstream (v7.4) | same |
+| 0006 | media: i2c: ov5693: Gate the MIPI clock lane for non-continuous clock | `0e12587945f6`, Fernando Rimoli, Arsalan Naeem. The same fix as linux-surface/kernel#180 (which is a HID-based workaround) | upstream (v7.4) | same. `0x4800=0x2d` in the register table of the Windows `ov5693.sys` |
+| 0007 | HID: Assign HID_GROUP_SURFACE_UCSI to Microsoft Surface UCSI collections | linux-surface/kernel#184 `7d5b2289aa63`, Jairo Valdivia | pending (linux-surface/kernel#184) | [sam-platform.md](../docs/research/gaps/sam-platform.md) G1 |
+| 0008 | usb: typec: ucsi: Add Microsoft Surface HID transport driver | #184 `353873373421`, Jairo Valdivia | pending (linux-surface/kernel#184) | G1 |
+| 0009 | power: supply: surface_charger: Fix positive return value in spwr_ac_get_property() | #184 `925be86626f9`, Jairo Valdivia | pending (linux-surface/kernel#184) | G9 |
+| 0010 | power: supply: surface_charger: Expose connected adapter power rating | #184 `aa4c309df17c`, Jairo Valdivia | pending (linux-surface/kernel#184) | G9. Known issue: if the Artg request fails once while AC is connected, `input_power_limit` becomes 0 and a change event is raised (low severity; to be decided after confirmation on the device) |
+| 0011 | media: ipu-bridge: Map SSDB VCM type 0x11 to dw9800k | Joonhoe Kim | local. The type mapping is confirmed from the Windows table; that DW9800 is compatible with the DW9800K configuration of dw9719 is inferred | [camera.md](../docs/research/gaps/camera.md) difference 4 |
+| 0012 | platform/surface: aggregator_registry: Add RTC node to the Surface Pro 9 group | Joonhoe Kim | local | [sam-platform.md](../docs/research/gaps/sam-platform.md) G5 |
+| 0013 | platform/surface: platform_profile: Clear the minimum fan speed at probe and resume | Joonhoe Kim. The request format is the `ctrl.py` command from linux-surface#1726 (SP9 trace, tested on SP11 Intel). It is also sent on SP10, SP11 and SP12, which use the same node, but a failure only leaves a warning | local, unverified | G2 |
+| 0014 | drm/i915/display: Disable PSR2 on the Microsoft Surface Pro 9 | Joonhoe Kim | local. Windows `PSR2Disable=1` is confirmed; that PSR2 is the cause of the flicker is inferred | [display-power.md](../docs/research/gaps/display-power.md) difference 1 |
+| 0015 | platform/x86: int3472: Set the DSM clock frequency from the SSDB | Joonhoe Kim | local. The meaning of the argument is confirmed from coreboot ADL `camera_clock_ctl.asl` and the Windows `iactrllogic64.sys`; the 24 MHz output is not measured (there is no IR driver to use it) | [camera.md](../docs/research/gaps/camera.md) difference 9 |
+| 0016 | HID: surface: Ignore Fn usages and map Call Mute Toggle to KEY_MICMUTE | Joonhoe Kim. On top of `hid-surface.c` from linux-surface `0015-hid-surface.patch` | local, unverified. The usages are confirmed from the Windows report layout; the Linux input device, the `BTN_*` numbers and the Call Mute key are unverified | [typecover.md](../docs/research/control/typecover.md) sections 2, 5 |
+| 0017 | HID: surface: Add keyboard backlight LED for the Type Cover | Joonhoe Kim. Same driver | local, unverified. Report layout, levels and key behaviour are confirmed from Windows recordings; on Linux the format of the GET_FEATURE response (whether it includes the report ID) and the level update at the time of the key notification are unverified. Measured on the patched kernel: the LED `surface::kbd_backlight` exists with `max_brightness` 3 and a written 0/1/2/3 is read back from `brightness`; the backlight is off at 0 and on at 3 (observed) | [typecover.md](../docs/research/control/typecover.md) sections 4, 6.1 |
+| 0018 | HID: ithc: Match feature responses to the requested report ID | Joonhoe Kim. On top of `ithc-hid.c` from linux-surface `0006-ithc.patch` | local, unverified. That a second response containing only the ID byte follows a Feature 17 GET is measured on the device (13/13); why the firmware sends it is unverified. Upstream (quo/ithc-linux, mainline quickspi) has no equivalent fix. Measured on the patched kernel: in a test that reads Features 17 and 112 back to back, every response belongs to the requested report and the kernel log has 0 lines of `hid_input_report failed` or `too short` | [pen-touch.md](../docs/research/gaps/pen-touch.md) difference 11 |
+| 0019 | usb: typec: ucsi: surface_hid: Fix up GET_PDOS responses | Joonhoe Kim. On top of 0008 | local, unverified. That SAM prepends a length byte to the port PDOs and writes at most 3 partner PDOs per command is confirmed from raw bytes read through hidraw. Not in linux-surface/kernel#184. Not fixed: the partner list starts at the second PDO, so the 5 V entry is missing and `voltage_now` is 0. Measured on the patched kernel: the source of both ports is a single 5 V 3 A, the sink is 5 V 3 A fixed, 5–20 V 60 W battery and 5–20 V 3 A variable, the charger's source is the three 9/12/15 V 3 A | [sam-platform.md](../docs/research/gaps/sam-platform.md) G1 |
+| 0020 | media: i2c: ov5693: Do not offer the binned mode on non-continuous clock links | Joonhoe Kim | local, unverified. In the binned 1296x972 mode every buffer is `Frame sync error` as soon as either flip is on (measured); without flip 20/20. Because of the 180 rotation libcamera turns both flips on. The cause is unverified, so the mode is not fixed but withheld: requests of 720p and below go to the full mode (28.6 fps). What is lost: binned 57 fps without flip. See linux-surface#2234, #2252. Measured on the patched kernel: a front 1280x720 request goes to the sensor's 2592x1944 mode and gives 120/120 frames (28.6 fps), 640x480 30/30, 0 lines of `Frame sync error` | [test-results.md](../docs/test-results.md) CAM-2, CAM-3 |
+| 0021 | media: i2c: dw9719: Power up on the first focus write, not on open | Joonhoe Kim | local, unverified. An open handle holds a runtime PM reference, and the devlink from `ipu-bridge` wakes the sensor, so the rear sensor's rails and clock stay on while WirePlumber holds the lens node open (measured: 5211/5226 s active). The mainline VCM drivers (dw9714, dw9768, ak7375) take the reference in open, so this departs from the convention. Without a focus write the VCM stays off even while streaming. Measured on the patched kernel: idle with the lens node held open by WirePlumber, sensor and VCM are both `suspended`; rear 1080p 45/45 frames; `focus_absolute=900` reads back from the VCM register as `03 84`. After a focus write both stay active until WirePlumber closes the node. Image quality without a focus write is unverified (the test scene was too dark to tell sharpness apart) | [test-results.md](../docs/test-results.md) CAM-4; [camera.md](../docs/research/gaps/camera.md) section 5.1 |
+| 0022 | media: i2c: ov13858: Enable runtime PM before registering the subdev | Joonhoe Kim | local, unverified. The probe enables runtime PM after it registers the subdev, so when the registration completes the IPU bridge notifier right away, `pm_runtime_get_sync` in the VCM creation work fails with -EACCES and no VCM is created (`Error -13 runtime-resuming sensor, cannot instantiate VCM`). It failed in one of two boots of the same kernel line (measured). That the VCM was created after loading the fixed module is confirmed, but that sequence (ISYS loaded later) does not reproduce the race: whether the race is gone has to be seen over several boots | Kernel log; [test-results.md](../docs/test-results.md) CAM-4 |

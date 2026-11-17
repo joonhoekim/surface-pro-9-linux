@@ -1,0 +1,44 @@
+surface-pro-9-linux
+https://github.com/joonhoekim/surface-pro-9-linux
+
+Linux support for the Microsoft Surface Pro 9 with an Intel CPU
+(SKU Surface_Pro_9_2038).
+
+This is an independent project. It is not affiliated with, sponsored by or
+endorsed by Microsoft, Intel, Realtek or the linux-surface project.
+
+Built on linux-surface
+----------------------
+
+The kernel this repository builds is Linux v7.3.4 with the linux-surface patch
+series for 7.3 and this repository's patches on top:
+
+  https://github.com/linux-surface/linux-surface
+  commit ea852b4eff5ed641571e13766bda5bd9cf121983 (the pin in flake.nix)
+
+linux-surface is not copied into this repository; it is fetched at that commit
+when the kernel is built and stays under its own licences.
+
+Patches from other authors
+--------------------------
+
+kernel/patches/0001 to 0010 were not written for this repository. They come
+from upstream Linux and from pull requests to the linux-surface kernel tree,
+as kernel/PROVENANCE.md records patch by patch. They keep their authors and
+sign-offs unchanged:
+
+  0001        Sakari Ailus
+  0002-0006   Fernando Rimoli (0006 also signed off by Arsalan Naeem)
+  0007-0010   Jairo Valdivia
+
+All kernel patches are licensed GPL-2.0-only, as the Linux kernel is.
+
+Trademarks
+----------
+
+Microsoft, Surface and Windows are trademarks of the Microsoft group of
+companies. Intel and Iris are trademarks of Intel Corporation or its
+subsidiaries. Realtek is a trademark of Realtek Semiconductor Corp. Linux is
+the registered trademark of Linus Torvalds. All other trademarks belong to
+their owners. The names are used here only to identify the hardware and
+software this repository works with.

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 Joonhoe Kim -->
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  Actions of sp9-helperd (io.github.joonhoekim.OpenDeviceHelper1 on the Surface Pro 9). The daemon
+  runs as root, so passwords are a policy choice: everyday controls are allowed for the active local
+  user; experimental embedded-controller requests, debugfs writes and reloading ask for authentication.
+  Override with rules in /etc/polkit-1/rules.d/ if needed.
+-->
+<policyconfig>
+  <vendor>surface-pro-9-linux</vendor>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.reload">
+    <description>Reload the device helper settings</description>
+    <message>Authentication is required to reload the device helper settings</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.performance">
+    <description>Change the performance profile and whether its limits are applied</description>
+    <message>Authentication is required to change the performance profile</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.performance-limits">
+    <description>Change the power limits of a performance profile (bounded by the Windows policy)</description>
+    <message>Authentication is required to change the power limits</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.skin-guard">
+    <description>Switch the skin-temperature guard (experimental)</description>
+    <message>Authentication is required to switch the skin-temperature guard</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.fan-control">
+    <description>Request a fan speed from the embedded controller (experimental)</description>
+    <message>Authentication is required to control the fan</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.smart-charging">
+    <description>Charge the battery to 100 % once (release smart charging)</description>
+    <message>Authentication is required to release smart charging</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.display-psr">
+    <description>Change panel self refresh by power source (debugfs)</description>
+    <message>Authentication is required to change panel self refresh</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.display-icc">
+    <description>Write the panel colour profile from the factory calibration</description>
+    <message>Authentication is required to write the panel colour profile</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.keyboard-backlight">
+    <description>Change the Type Cover keyboard backlight</description>
+    <message>Authentication is required to change the keyboard backlight</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.touch">
+    <description>Change touchscreen settings (touch off with the display, iptsd thresholds)</description>
+    <message>Authentication is required to change touchscreen settings</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.pen">
+    <description>Change pen haptics</description>
+    <message>Authentication is required to change pen haptics</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.diagnostics">
+    <description>Run the hardware check and pack its report</description>
+    <message>Authentication is required to run the hardware check</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+</policyconfig>

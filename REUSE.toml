@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+#
+# Licensing of every file in this repository (https://reuse.software). A file's own SPDX header
+# and the entry here agree; where several entries match a path, the last one applies.
+
+version = 1
+
+# Tools, platform files, pen tools, Nix code, CI and repository metadata.
+[[annotations]]
+path = [
+  "tools/**", "userspace/**", "nix/**", ".github/**",
+  "flake.nix", "flake.lock", ".gitignore", ".gitattributes", "NOTICE", "LICENSE", "REUSE.toml",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim"
+SPDX-License-Identifier = "MIT"
+
+# Device helper (sp9-helperd, sp9-ctl, sp9-settings), its data files and lock file.
+[[annotations]]
+path = "helper/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# Kernel config fragment.
+[[annotations]]
+path = "kernel/config/**"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+# Kernel patches. They are changes to the Linux kernel and carry its licence. Each patch names its
+# author in From: and everyone who signed it off in Signed-off-by:; kernel/PROVENANCE.md records
+# where 0001-0010 were taken from (upstream Linux and linux-surface/kernel pull requests).
+# "override": a patch that adds a kernel source file contains that file's own SPDX line (0008 has
+# the kernel's older spelling "GPL-2.0", the same licence), which is not a header of the patch file.
+[[annotations]]
+path = "kernel/patches/0001-*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "Sakari Ailus <sakari.ailus@linux.intel.com>"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = [
+  "kernel/patches/0002-*.patch", "kernel/patches/0003-*.patch", "kernel/patches/0004-*.patch",
+  "kernel/patches/0005-*.patch", "kernel/patches/0006-*.patch",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Fernando Rimoli <fernandorimoli11@gmail.com>"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = [
+  "kernel/patches/0007-*.patch", "kernel/patches/0008-*.patch", "kernel/patches/0009-*.patch",
+  "kernel/patches/0010-*.patch",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "Jairo Valdivia <valdiviaprado.ing@gmail.com>"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = [
+  "kernel/patches/0011-*.patch", "kernel/patches/0012-*.patch", "kernel/patches/0013-*.patch",
+  "kernel/patches/0014-*.patch", "kernel/patches/0015-*.patch", "kernel/patches/0016-*.patch",
+  "kernel/patches/0017-*.patch", "kernel/patches/0018-*.patch", "kernel/patches/0019-*.patch",
+  "kernel/patches/0020-*.patch", "kernel/patches/0021-*.patch", "kernel/patches/0022-*.patch",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim <26rote@gmail.com>"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+# Documentation and reference data: every Markdown file in the tree and everything under docs/.
+# Code and commands quoted inside documents may also be used under MIT (see LICENSE).
+[[annotations]]
+path = ["**/*.md", "docs/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim"
+SPDX-License-Identifier = "CC-BY-SA-4.0"

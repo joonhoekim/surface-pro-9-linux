@@ -1,0 +1,49 @@
+# /etc/sp9/helper.toml -- sp9-helperd settings. The daemon writes this file when settings change
+# through D-Bus (sp9-ctl, front-ends); after editing it by hand run `sp9-ctl reload`.
+# Every key is optional; these are the defaults.
+
+[performance]
+# Apply the profile's RAPL PL1/PL2/tau on every platform_profile or power source change.
+follow_profile = true
+# Write the profile's energy_performance_preference too, and write it again when something else
+# (power-profiles-daemon) replaces it within 5 s of that write. Off leaves the EPP to others.
+epp = true
+# Experimental: lower PL1/PL2 by the skin temperature. skin_sensor is a channel of the
+# surface_thermal hwmon (temp9 = SAM sensor 9 = VTS1); a label works only where labels are
+# unique, and on this device temp9 and temp1 are both labelled I_RTS1.
+skin_guard = false
+skin_sensor = "temp9"
+
+# Overrides of the table (docs/helper-reference.md). Bounds: PL1 5-35 W, PL1 <= PL2 <= 60 W,
+# tau 1-28 s, EPP 0-255. Keys: "<profile>.ac" / "<profile>.dc".
+# [performance.limits."performance.ac"]
+# pl1_w = 35.0
+# pl2_w = 60.0
+# tau_s = 28.0
+# epp = 64
+
+[fan]
+# Experimental: allow the SAM FAN 0x0b rpm request (sp9-ctl fan request RPM, 1600-7500). The
+# firmware follows it only while it is not driving the fan itself; suspend and a daemon restart
+# cancel it. The request itself is not stored here.
+allow_rpm_request = false
+
+[display]
+# PSR by power source through debugfs i915_edp_psr_debug: "default" (never written), "off", "psr1".
+psr_ac = "default"
+psr_dc = "default"
+
+[input]
+# Inhibit iptsd's virtual touchscreen while the eDP connector is off.
+touch_off_when_display_off = false
+
+# Values over the platform preset (24 / 20, DisableOnStylus = true); absent = preset.
+[input.iptsd]
+# activation_threshold = 24.0
+# deactivation_threshold = 20.0
+# disable_on_stylus = true
+
+[pen]
+# Windows-style inking haptics: start on tip down, stop on tip up.
+ink_feedback = false
+intensity = 127

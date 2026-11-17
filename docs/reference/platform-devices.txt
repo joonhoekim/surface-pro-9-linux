@@ -1,0 +1,86 @@
+﻿
+Class                   FriendlyName                                                             Service                             Id                                                
+-----                   ------------                                                             -------                             --                                                
+HIDClass                GPIO Laptop or Slate Indicator Driver                                    msgpiowin32                         ACPI\VEN_MSHW&DEV_0005                            
+HIDClass                Surface HID Consumer Control Device                                                                          HID\ConvertedDevice&Col02                         
+HIDClass                Surface HID System Controller                                                                                HID\ConvertedDevice&Col03                         
+HIDClass                Portable Device Control device                                           buttonconverter                     HID\HID_DEVICE_SYSTEM_VHF&Col01                   
+HIDClass                Surface HID Consumer Control Device                                                                          HID\HID_DEVICE_SYSTEM_VHF&Col02                   
+HIDClass                Surface HID Consumer Control Device                                                                          HID\HID_DEVICE_SYSTEM_VHF&Col02                   
+HIDClass                Surface HID Color                                                                                            HID\Target_KIP&Category_HID&Col01                 
+HIDClass                Surface HID Touchpad                                                                                         HID\Target_KIP&Category_HID&Col02                 
+HIDClass                Surface HID Pen Bluetooth OOB Coupling                                                                       HID\Target_KIP&Category_HID&Col02                 
+HIDClass                Surface HID System Controller                                                                                HID\Target_KIP&Category_HID&Col02                 
+HIDClass                Surface HID Digitizer Device Configuration                               MTConfig                            HID\Target_KIP&Category_HID&Col03                 
+HIDClass                Surface Pen BLE LC Adaptation Driver                                     SurfacePenBleLcAddrAdaptationDriver HID\Target_KIP&Category_HID&Col03                 
+HIDClass                Surface HID USP Encapsulation                                                                                HID\Target_KIP&Category_HID&Col03                 
+HIDClass                Surface HID Consumer Control Device                                                                          HID\Target_KIP&Category_HID&Col03                 
+HIDClass                HID-compliant device                                                                                         HID\Target_KIP&Category_HID&Col04                 
+HIDClass                Surface Navigation Accessory                                                                                 HID\Target_KIP&Category_HID&Col04                 
+HIDClass                Surface HID USP Encapsulation                                                                                HID\Target_KIP&Category_HID&Col05                 
+HIDClass                HID-compliant device                                                                                         HID\Target_KIP&Category_HID&Col05                 
+HIDClass                Surface Touch Utility                                                                                        HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col01
+HIDClass                Surface Touch Utility                                                                                        HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col02
+HIDClass                Surface Touch Communications                                                                                 HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col03
+HIDClass                Surface Touch Pen Processor                                                                                  HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col04
+HIDClass                Surface Digitizer Utility                                                                                    HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col05
+HIDClass                Surface Touch Screen Device                                                                                  HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col06
+HIDClass                Surface Pen BLE LC Adaptation Driver                                     SurfacePenBleLcAddrAdaptationDriver HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col07
+HIDClass                Surface Touch Pen Device                                                                                     HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col09
+HIDClass                Surface HID Pen ID                                                                                           HID\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01&Col0B
+HIDClass                Intel(R) Precise Touch and Stylus (Intel(R) PTS) - Base Driver - Port #1 IntelTHCBase                        PCI\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01      
+Sensor                  HID Sensor Collection V2                                                 WUDFRd                              HID\Target_SAM&Category_HID                       
+SurfaceSystemManagement Surface Thermal Policy Driver                                            SurfaceThermalPolicy                ACPI\VEN_MSHW&DEV_0187                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+SurfaceSystemManagement Surface Thermal Zone Sensor Driver                                       SurfaceSmfClient                    ACPI\VEN_MSHW&DEV_0188                            
+System                  ACPI Processor Aggregator                                                acpipagr                            ACPI\VEN_ACPI&DEV_000C                            
+System                  Surface ACPI Wake Alarm                                                  acpitime                            ACPI\VEN_ACPI&DEV_000E&SUBSYS_MSHW0217            
+System                  Intel(R) Power Engine Plug-in                                            intelpep                            ACPI\VEN_INT&DEV_33A1                             
+System                  Intel(R) Control Logic                                                   iactrllogic                         ACPI\VEN_INT&DEV_3472                             
+System                  Intel(R) Control Logic                                                   iactrllogic                         ACPI\VEN_INT&DEV_3472                             
+System                  Intel(R) Control Logic                                                   iactrllogic                         ACPI\VEN_INT&DEV_3472                             
+System                  Intel(R) Serial IO GPIO Host Controller - INTC1055                       iaLPSS2_GPIO2_ADL                   ACPI\VEN_INTC&DEV_1055                            
+System                  Surface Button                                                           SurfaceButton                       ACPI\VEN_MSHW&DEV_0040                            
+System                  Surface Serial Hub Driver                                                SurfaceSerialHubDriver              ACPI\VEN_MSHW&DEV_0084                            
+System                  Surface Hot Plug - KIP                                                   SurfaceHotPlug                      ACPI\VEN_MSHW&DEV_0153                            
+System                  Surface ACPI Platform Extension Driver                                   SurfaceAcpiPlatformExtensionDriver  ACPI\VEN_MSHW&DEV_0299                            
+System                  Surface Integration                                                      SurfaceIntegrationDriver            ACPI\VEN_MSHW&DEV_0343                            
+System                  Surface Camera Front                                                     ov5693                              ACPI\VEN_OVTI&DEV_5693&SUBSYS_MSHW0340            
+System                  Surface Camera Rear                                                      ov13858                             ACPI\VEN_OVTI&DEV_D858&SUBSYS_MSHW0341            
+System                  PCI Express Root Complex                                                 pci                                 ACPI\VEN_PNP&DEV_0A08                             
+System                  Motherboard resources                                                                                        ACPI\VEN_PNP&DEV_0C02                             
+System                  Motherboard resources                                                                                        ACPI\VEN_PNP&DEV_0C02                             
+System                  Motherboard resources                                                                                        ACPI\VEN_PNP&DEV_0C02                             
+System                  Motherboard resources                                                                                        ACPI\VEN_PNP&DEV_0C02                             
+System                  ACPI Fan                                                                                                     ACPI\VEN_PNP&DEV_0C0B                             
+System                  ACPI Lid                                                                                                     ACPI\VEN_PNP&DEV_0C0D                             
+System                  Surface IR Camera Front                                                  vd55g0                              ACPI\VEN_SMO&DEV_55F0&SUBSYS_MSHW0342             
+System                  Intel(R) Host Bridge/DRAM Registers - 4601                                                                   PCI\VEN_8086&DEV_4601&SUBSYS_72708086&REV_04      
+System                  Intel(R) TypeC PCIe - 461F                                               pci                                 PCI\VEN_8086&DEV_461F&SUBSYS_72708086&REV_04      
+System                  Intel(R) TypeC PCIe - 462F                                               pci                                 PCI\VEN_8086&DEV_462F&SUBSYS_72708086&REV_04      
+System                  Intel(R) PEG60 - 464D                                                    pci                                 PCI\VEN_8086&DEV_464D&SUBSYS_72708086&REV_04      
+System                  Intel(R) GNA Scoring Accelerator module                                  IntelGNA                            PCI\VEN_8086&DEV_464F&SUBSYS_72708086&REV_04      
+System                  Intel(R) Imaging Signal Processor                                        iaisp64                             PCI\VEN_8086&DEV_465D&SUBSYS_72708086&REV_04      
+System                  Intel(R) Platform Monitoring Technology Driver                           IntelPMT                            PCI\VEN_8086&DEV_467D&SUBSYS_72708086&REV_01      
+System                  Intel(R) LPC Controller - 5182                                           msisadrv                            PCI\VEN_8086&DEV_5182&SUBSYS_72708086&REV_01      
+System                  Intel(R) SPI (flash) Controller - 51A4                                                                       PCI\VEN_8086&DEV_51A4&SUBSYS_72708086&REV_01      
+System                  Intel(R) Serial IO UART Host Controller - 51A8                           iaLPSS2_UART2_ADL                   PCI\VEN_8086&DEV_51A8&SUBSYS_72708086&REV_01      
+System                  Intel® Smart Sound Technology BUS                                        IntcAudioBus                        PCI\VEN_8086&DEV_51C8&SUBSYS_72708086&REV_01      
+System                  Intel(R) Serial IO I2C Host Controller - 51D8                            iaLPSS2_I2C_ADL                     PCI\VEN_8086&DEV_51D8&SUBSYS_72708086&REV_01      
+System                  Intel(R) Management Engine Interface #1                                  MEIx64                              PCI\VEN_8086&DEV_51E0&SUBSYS_72708086&REV_01      
+System                  Intel(R) Serial IO I2C Host Controller - 51E8                            iaLPSS2_I2C_ADL                     PCI\VEN_8086&DEV_51E8&SUBSYS_72708086&REV_01      
+System                  Intel(R) Serial IO I2C Host Controller - 51EA                            iaLPSS2_I2C_ADL                     PCI\VEN_8086&DEV_51EA&SUBSYS_72708086&REV_01      
+System                  Intel(R) Serial IO I2C Host Controller - 51EB                            iaLPSS2_I2C_ADL                     PCI\VEN_8086&DEV_51EB&SUBSYS_72708086&REV_01      
+System                  Intel(R) Shared SRAM - 51EF                                                                                  PCI\VEN_8086&DEV_51EF&SUBSYS_72708086&REV_01      
+
+
+

@@ -1,0 +1,28 @@
+﻿
+HID                                       Sub       N Class                   Name                                               Service                            Status
+---                                       ---       - -----                   ----                                               -------                            ------
+ACPI000C                                            1 System                  ACPI Processor Aggregator                          acpipagr                           OK    
+ACPI000E                                  MSHW0217  1 System                  Surface ACPI Wake Alarm                            acpitime                           OK    
+GenuineIntel_-_Intel64_Family_6_Model_154          12 Processor               12th Gen Intel(R) Core(TM) i5-1235U                intelppm                           OK    
+INT33A1                                             1 System                  Intel(R) Power Engine Plug-in                      intelpep                           OK    
+INT3472                                             3 System                  Intel(R) Control Logic                             iactrllogic                        OK    
+INTC1055                                            1 System                  Intel(R) Serial IO GPIO Host Controller - INTC1055 iaLPSS2_GPIO2_ADL                  OK    
+INTC6001                                            1 SecurityDevices         Trusted Platform Module 2.0                        TPM                                OK    
+MSHW0005                                            1 HIDClass                GPIO Laptop or Slate Indicator Driver              msgpiowin32                        OK    
+MSHW0040                                            1 System                  Surface Button                                     SurfaceButton                      OK    
+MSHW0084                                            1 System                  Surface Serial Hub Driver                          SurfaceSerialHubDriver             OK    
+MSHW0153                                            1 System                  Surface Hot Plug - KIP                             SurfaceHotPlug                     OK    
+MSHW0187                                            1 SurfaceSystemManagement Surface Thermal Policy Driver                      SurfaceThermalPolicy               OK    
+MSHW0188                                           11 SurfaceSystemManagement Surface Thermal Zone Sensor Driver                 SurfaceSmfClient                   OK    
+MSHW0299                                            1 System                  Surface ACPI Platform Extension Driver             SurfaceAcpiPlatformExtensionDriver OK    
+MSHW0343                                            1 System                  Surface Integration                                SurfaceIntegrationDriver           OK    
+OVTI5693                                  MSHW0340  1 System                  Surface Camera Front                               ov5693                             OK    
+OVTID858                                  MSHW0341  1 System                  Surface Camera Rear                                ov13858                            OK    
+PNP0A08                                             1 System                  PCI Express Root Complex                           pci                                OK    
+PNP0C02                                             4 System                  Motherboard resources                                                                 OK    
+PNP0C0B                                             1 System                  ACPI Fan                                                                              OK    
+PNP0C0D                                             1 System                  ACPI Lid                                                                              OK    
+SMO55F0                                   MSHW0342  1 System                  Surface IR Camera Front                            vd55g0                             OK    
+
+
+

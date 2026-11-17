@@ -1,0 +1,14 @@
+﻿
+
+Name                        : Intel(R) Iris(R) Xe Graphics
+DriverVersion               : 32.0.101.7085
+VideoProcessor              : Intel(R) Iris(R) Xe Graphics Family
+AdapterRAM                  : 2147479552
+CurrentHorizontalResolution : 2880
+CurrentVerticalResolution   : 1920
+CurrentRefreshRate          : 60
+MaxRefreshRate              : 120
+
+
+
+

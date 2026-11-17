@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Tue, 17 Nov 2026 00:01:04 +0900
+Subject: [PATCH] HID: ithc: Match feature responses to the requested report ID
+
+The driver completes a pending GET_FEATURE request with whatever
+feature response arrives next, and passes a feature response that
+nobody is waiting for to hid_input_report().
+
+The touch controller of the Surface Pro 9 (045E:0C52, legacy mode)
+answers a GET_FEATURE for report 17 with two responses: the 64-byte
+report, immediately followed by a second response that contains only
+the report ID. Of the ten feature reports read on this device (5, 6,
+9, 17, 35, 72, 86, 102, 112, 115) only report 17 does this, on every
+request. Why the firmware sends the second response is not known.
+
+Depending on when the next request is made, the extra response either
+arrives with no request pending and is rejected by the HID core,
+
+  hid-generic 0001:045E:0C52.0001: Event data for report 17 was too short (63 vs 0)
+  ithc 0000:00:10.6: ithc_hid_process_data: hid_input_report failed with -22
+
+or it completes the next request, so that e.g. HIDIOCGFEATURE for
+report 112 returns the single byte 0x11 instead of the report, without
+any error.
+
+Both the legacy and the HIDSPI decoders hand over feature responses
+with the report ID in the first byte. Remember the ID of the pending
+request and complete the request only with a response that starts with
+that ID. Requests for report ID 0 (devices without report IDs) accept
+any response as before.
+
+Drop responses that do not match instead of passing them to
+hid_input_report(). No request is waiting for them, and a response that
+is long enough to be accepted there would be delivered to hidraw
+readers such as iptsd as if it were an input report.
+
+A request for the same report made right after the first one can still
+be completed by the extra response; it then returns one byte, which
+the caller can tell from the length.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/hid/ithc/ithc-hid.c | 18 ++++++++++++++----
+ drivers/hid/ithc/ithc-hid.h |  1 +
+ 2 files changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/hid/ithc/ithc-hid.c b/drivers/hid/ithc/ithc-hid.c
+index 065646ab4..edc2a7cfa 100644
+--- a/drivers/hid/ithc/ithc-hid.c
++++ b/drivers/hid/ithc/ithc-hid.c
+@@ -59,6 +59,7 @@ static int ithc_hid_raw_request(struct hid_device *hdev, unsigned char reportnum
+ 		// Prepare for response.
+ 		mutex_lock(&ithc->hid.get_feature_mutex);
+ 		ithc->hid.get_feature_buf = buf;
++		ithc->hid.get_feature_id = reportnum;
+ 		ithc->hid.get_feature_size = len;
+ 		mutex_unlock(&ithc->hid.get_feature_mutex);
+ 
+@@ -132,9 +133,16 @@ void ithc_hid_process_data(struct ithc *ithc, struct ithc_data *d)
+ 	case ITHC_DATA_GET_FEATURE:
+ 	{
+ 		// Response to a 'get feature' request sent by ithc_hid_raw_request().
++		// The data starts with the report ID. Only a response for the report that is
++		// being waited for completes the request: devices can send more than one
++		// response per request (the SP9 touch controller follows the response for
++		// report 17 with a second one containing only the ID), and the extra one
++		// would otherwise be returned as the data of the next request.
++		// (Report ID 0 means the device doesn't use report IDs, so we can't check.)
+ 		bool done = false;
+ 		mutex_lock(&ithc->hid.get_feature_mutex);
+-		if (ithc->hid.get_feature_buf) {
++		if (ithc->hid.get_feature_buf && (!ithc->hid.get_feature_id ||
++				(d->size && *(u8 *)d->data == ithc->hid.get_feature_id))) {
+ 			if (d->size < ithc->hid.get_feature_size)
+ 				ithc->hid.get_feature_size = d->size;
+ 			memcpy(ithc->hid.get_feature_buf, d->data, ithc->hid.get_feature_size);
+@@ -146,9 +154,11 @@ void ithc_hid_process_data(struct ithc *ithc, struct ithc_data *d)
+ 			wake_up(&ithc->hid.wait_get_feature);
+ 		} else {
+ 			// Received data without a matching request, or the request already
+-			// timed out. (XXX What's the correct thing to do here?)
+-			CHECK(hid_input_report, ithc->hid.dev, HID_FEATURE_REPORT,
+-				NOCONST(d->data), d->size, 1);
++			// timed out. Drop it: nobody is waiting for it, and passing it to
++			// hid_input_report() would deliver it to hidraw readers as if it were
++			// an input report (or fail with -EINVAL if it is shorter than the report).
++			pci_dbg(ithc->pci, "dropped unexpected feature response (size %u, report ID 0x%02x)\n",
++				d->size, d->size ? *(u8 *)d->data : 0);
+ 		}
+ 		return;
+ 	}
+diff --git a/drivers/hid/ithc/ithc-hid.h b/drivers/hid/ithc/ithc-hid.h
+index 599eb912c..0b8d4a943 100644
+--- a/drivers/hid/ithc/ithc-hid.h
++++ b/drivers/hid/ithc/ithc-hid.h
+@@ -24,6 +24,7 @@ struct ithc_hid {
+ 	wait_queue_head_t wait_get_feature;
+ 	struct mutex get_feature_mutex;
+ 	void *get_feature_buf;
++	u8 get_feature_id;
+ 	size_t get_feature_size;
+ };
+ 

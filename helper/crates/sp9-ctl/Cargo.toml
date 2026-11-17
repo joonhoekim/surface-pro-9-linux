@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Joonhoe Kim
+[package]
+name = "sp9-ctl"
+description = "Command-line client for sp9-helperd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+zbus = { workspace = true, features = ["blocking-api"] }
+serde_json.workspace = true

@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jairo Valdivia <valdiviaprado.ing@gmail.com>
+Date: Mon, 2 Nov 2026 08:46:50 -0700
+Subject: [PATCH] power: supply: surface_charger: Fix positive return value in
+ spwr_ac_get_property()
+
+spwr_ac_update_unlocked() returns 1 when ac->state changes, 0 when
+unchanged, and a negative errno on failure. Checking if (status) in
+spwr_ac_get_property() causes the first property read observing a state
+transition (such as initial registration when AC is connected) to abort
+without populating val->intval and return +1 to power_supply_sysfs.
+
+Check for status < 0 and normalize status to 0 before reading the
+requested property.
+
+Fixes: e61ffb344591 ("power: supply: Add AC driver for Surface Aggregator Module")
+Signed-off-by: Jairo Valdivia <valdiviaprado.ing@gmail.com>
+Patchset: surface-sam
+Link: https://github.com/linux-surface/kernel/pull/184
+---
+ drivers/power/supply/surface_charger.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/surface_charger.c b/drivers/power/supply/surface_charger.c
+index d4bba6b41..6346cdf7a 100644
+--- a/drivers/power/supply/surface_charger.c
++++ b/drivers/power/supply/surface_charger.c
+@@ -145,8 +145,9 @@ static int spwr_ac_get_property(struct power_supply *psy, enum power_supply_prop
+ 	mutex_lock(&ac->lock);
+ 
+ 	status = spwr_ac_update_unlocked(ac);
+-	if (status)
++	if (status < 0)
+ 		goto out;
++	status = 0;
+ 
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_ONLINE:

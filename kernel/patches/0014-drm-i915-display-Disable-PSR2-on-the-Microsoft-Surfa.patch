@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 12 Nov 2026 17:35:54 -0800
+Subject: [PATCH] drm/i915/display: Disable PSR2 on the Microsoft Surface Pro 9
+
+The Windows graphics driver package for this machine carries a Surface
+specific extension INF that matches only PCI\VEN_8086&DEV_46A8&
+SUBSYS_00631414 and sets PSR2Disable=1 (and PsrDisableInAc=1), so
+Windows never runs the LG LP129WT2 panel (EDID LGD 0x0719) in PSR2.
+
+The VBT enables PSR, and i915 goes on to PSR2 when the sink reports it.
+Screen flicker on this machine is a known problem, and the common
+workaround, i915.enable_psr=0, also gives up PSR1.
+
+Match what Windows does and disable PSR2 for this subsystem ID, keeping
+PSR1.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/gpu/drm/i915/display/intel_quirks.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/display/intel_quirks.c b/drivers/gpu/drm/i915/display/intel_quirks.c
+index 7d7db774d..e8822481c 100644
+--- a/drivers/gpu/drm/i915/display/intel_quirks.c
++++ b/drivers/gpu/drm/i915/display/intel_quirks.c
+@@ -262,6 +262,9 @@ static struct intel_quirk intel_quirks[] = {
+ 
+ 	/* Xiaomi Book Pro 14 2026 */
+ 	{ 0xb081, 0x1d72, 0x2424, quirk_disable_psr2 },
++
++	/* Microsoft Surface Pro 9 (Intel) */
++	{ 0x46a8, 0x1414, 0x0063, quirk_disable_psr2 },
+ };
+ 
+ static const struct intel_dpcd_quirk intel_dpcd_quirks[] = {

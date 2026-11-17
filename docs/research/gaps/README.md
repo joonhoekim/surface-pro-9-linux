@@ -1,0 +1,59 @@
+# Gaps between the Windows baseline and Linux
+
+The Windows drivers, firmware and ACPI tables are taken as the baseline, and linux-surface (7.3 patches, base v7.3.4) and iptsd are compared against it.
+Where a document gives a "confidence" of confirmed, the item was checked against both the Windows-side value and the Linux source.
+
+The Linux side was measured on NixOS, booted with this repository's kernel (7.3.4 = v7.3.4 + linux-surface 7.3 + `kernel/patches`). Part of the measurements were taken unattended on a kernel with patches 0001–0017;
+load, suspend, lid, pen and helper were measured on a kernel that also carries 0018–0022. Where the patch range affects a result, the range is given.
+The results are in each document's "On Linux" column and in its section on Linux checks. **Measured** means read from logs or numbers, **observed** means seen or felt by a person,
+**inferred** means derived without running the cause or the effect, and **unverified** means it can only be settled by a person handling, watching or listening to the device. What a person has done so far is the pen (drawing, pairing,
+tail button, haptics), opening and closing the lid, flicker during use, and the keyboard backlight. Touch, operating the buttons, cover and charger, and listening judgements have not been done. The record per test ID is in [docs/test-results.md](../../test-results.md).
+
+| Area | Document |
+|---|---|
+| Pen and touch | [pen-touch.md](pen-touch.md) |
+| Cameras | [camera.md](camera.md) |
+| SAM and platform | [sam-platform.md](sam-platform.md) |
+| Audio | [audio.md](audio.md) |
+| Display, graphics and power | [display-power.md](display-power.md) |
+| Pen BLE trace (Windows ETW) | [pen-ble-trace.md](pen-ble-trace.md) |
+
+The tests a person runs are in [../../test-plan.md](../../test-plan.md); automatic collection is [`tools/linux/post-install-check.sh`](../../../tools/linux/post-install-check.sh). The pen user-space prototype is in [userspace/pen/](../../../userspace/pen/README.md).
+
+## Order of closing the gaps
+
+Cheapest first, among those whose basis is confirmed.
+
+| Order | Gap | How to close it | Kind | Confidence | On Linux 7.3.4 |
+|---|---|---|---|---|---|
+| 1 | Front camera OV5693 does not work: Windows writes `0x4800=0x2d` (MIPI control) and Linux does not | Set bit 5 before starting the stream. linux-surface/kernel#180, backport of upstream media `next` 0e12587945f6 | Kernel patch | Confirmed | Measured: 90/90 frames in the front 2592x1944 mode, `0x4800`=0x20 while streaming. No comparison against a kernel without the patch was made. In the binned 1296x972 mode every frame is a `Frame sync error` as soon as either flip is on (measured, cause unverified). Patch 0020 does not offer that mode, so requests for 720p and below also go to the 2592x1944 mode and frames arrive (measured: 1280x720 120/120) |
+| 2 | No rear autofocus: `ipu-bridge` does not know SSDB VCM type 0x11 (DW9800) | Add 0x11 → `dw9800k` to `ipu_vcm_types` | Kernel patch | Mapping confirmed, compatibility inferred | Measured: `Instantiated dw9800k VCM`, `focus_absolute` 0–1023 appears and the image changes over DAC 400–800. With patch 0021 an open lens node no longer keeps the rear sensor powered (sensor and VCM are `suspended` when idle). Without patch 0022 the lens device is missing on one boot in two; with it the device appeared on the first boot of that kernel (1/1). Whether focus is actually reached is unverified |
+| 3 | PSR2: Windows turns PSR2 off on this panel and turns PSR off entirely on AC | `i915.enable_psr=1`, later `quirk_disable_psr2` in `intel_quirks.c` | Kernel parameter → patch | Windows setting confirmed, cause of flicker inferred | Measured: booted without the parameter, the quirk of patch 0014 alone gives PSR1 (`tainted` 0; passing the parameter taints the kernel). The parameter is not needed on this kernel. No flicker was noticed during use (observed). A 10-minute static-screen test and a test split by AC and battery are unverified |
+| 4 | The minimum fan RPM survives a reboot from Windows (#1726) | Send 0 to FAN command 0x0b at probe ([control/power-thermal.md](../control/power-thermal.md) 1.4) | Kernel patch | Inferred (another person's trace) | Measured: 0 RPM in all 12 idle samples, no warning from the patch in the log. 0x0b sets the speed of a fan that SAM has stopped (requests of 1500–7500 give 1588–7407 rpm, 0 stops the fan) and is ignored while SAM is driving the fan itself. 0x0c does nothing. No Windows round trip was made, so the effect of clearing the floor is unverified |
+| 5 | iptsd has no SP9 (0x0C52) preset, and the default thresholds differ from the wiki values | Preset conf (thresholds 24/20/5 and so on) | Configuration | Confirmed | Measured: the preset is loaded and there are 0 ghost touches in 150 seconds without contact. A comparison of missed taps and swipes is unverified |
+| 6 | No audio codec fixup (PCI 8086:7270, codec SSID 10ec:1284) | Pin patch file built from the Windows verb table (`hda-jack-retask`/`patch=`), then a quirk once the effect is confirmed | Configuration → patch | Values confirmed, need inferred | Measured: the BIOS pin values all equal the Windows table, so no pin patch is needed. The driver is legacy `snd_hda_intel`. The coefficients were not compared |
+| 7 | No speaker correction or protection (Windows has the Surface APO: HPF, EQ, 4-band DRC, limiter) | PipeWire filter-chain with the APO values | User space | Values confirmed | Measured: the filter chain comes up as the default sink and the 40 Hz and 3.7 kHz bands are reduced. A full-scale input at 100 Hz–1 kHz has the same level and THD after the filter. The raw sink behind the filter is raised to 100 % every time WirePlumber starts (left at WirePlumber's 40 % it holds the amplifier at −23.9 dB). How it sounds is unverified |
+| 8 | The `rtc-surface` node is missing from the SP9 group | Add the RTC node to `ssam_node_group_sp9` | Kernel patch | Confirmed | Measured: `rtc1` (surface_rtc) appears and its time is within 1 second of system UTC. There is no alarm (`wakealarm`) |
+| 9 | No driver for USB-C UCSI (SAM HID IID 7) | Apply linux-surface/kernel#184 | Kernel patch (external) | Confirmed | Measured: `typec` port0 and port1 and the partner (PD) appear. Without patch 0019 the port's own PDOs come out wrong because of a length byte that SAM puts in front of the response (confirmed from the raw bytes); with it they read correctly (port source 5 V 3 A, charger source 9/12/15 V 3 A). What remains: the partner list has no 5 V entry and `voltage_now` is 0 |
+| 10 | No automatic bonding and no connection keeping for Slim Pen 2 (#1656) | A daemon that bonds through the Col07 features and BlueZ | User space | Structure confirmed, effect inferred | Measured + observed: manual pairing works (2/2, battery 96 %). Automatic bonding does not work: a SET of Features 86 and 112 on the digitizer leaves the values unchanged and Inputs 84 and 110 never arrive. Connection keeping does not work either: once the pen disconnects by itself after about 80 s idle it does not advertise again, and the daemon's `Connect()` ends in a timeout. Whether the vendor GATT exchange Windows performs on reconnection is the condition is inferred ([userspace/pen/](../../../userspace/pen/README.md)) |
+| 11 | 120 Hz exists only in DisplayID, so every 60↔120 switch is a full modeset | Check the VRR path (MSA ignore DPCD) | Investigation | Inferred | Measured: `vrr_capable`=1, range 30–120 Hz, DPCD `0x007` bit 6. Switching and enabling VRR are unverified |
+| 9b | No power-limit or skin-temperature management (Windows SMF keeps adjusting the MCHBAR PLs and the fan rpm) | RAPL/EPP profile hook + VTS1 skin daemon; an MCHBAR driver if there is no MMIO | User space → kernel | Path confirmed, effect on Linux inferred | Measured: without the helper only `low-power` differs in power (6 W under the same load, 33 W for the other three), and under a 10-minute load the surface sensor (temp9) rises to 51 °C (Windows lowers PL1 at 47–48 °C). With the helper running, PL1/PL2/EPP are written per profile (35/60 W·64, 28/45·115, 28/35·153, 10/11·184). `intel-rapl-mmio` does not exist, so only the MSR side is written. A load comparison in that state and the skin-temperature protection are unverified. The `surface_thermal` hwmon has no `VTS1` label, so the channel is picked by number (temp9) |
+| 12 | Host thermal and power management (MSHW0188 thermal zones, SAPD MSHW0299, SMF PL adjustment), DPST, pen haptics, IR camera VD55G0 | Large work. To be decided from measurements on the installed system | Driver/daemon | Mostly inferred | Measured: no ACPI thermal zone is created; the thermal zones are `x86_pkg_temp` and `iwlwifi_1` only. The IR sensor (0x60) does not respond because no driver powers it. Of the pen haptics only the click is felt; continuous vibration arrives, weakly, only when written as Auto Trigger (observed) |
+
+Submitting to external repositories (PRs) has low priority. The patches and settings are kept and used in this repository.
+
+The kernel patches for orders 1, 2, 3, 4, 8 and 9 are in [kernel/](../../../kernel/README.md) (0001–0014 and, on top of them, 0019–0022; provenance in [PROVENANCE.md](../../../kernel/PROVENANCE.md)). The kernel built with Nix boots on this device,
+and all 22 patches are in the running kernel. The on-device measurements for 0018–0022 are in PROVENANCE.md. "The code is in" and
+"the function works" are different things: for whether a function works, read the last column of the table above and the individual documents.
+
+Items 3, 5, 6 and 7 and the wiki workarounds (hpiosize, pinctrl_tigerlake) exist as files in [userspace/platform/](../../../userspace/platform/README.md) (item 6 is opt-in).
+Item 6 has no use on this device: the pin values are already right and the path is legacy, not SOF ([audio.md](audio.md) 2.1, G2). The I/O range that `pci=hpiosize=0` was meant to keep clear
+is reserved by `PCHRESV` on 7.3.4 (measured). Booted without the parameter, the bridge I/O windows lie outside that range, and there are no GPE errors over s2idle and 4 lid close/open cycles (measured, [display-power.md](display-power.md) difference 7).
+`i915.enable_psr=1` of item 3 is not needed on this repository's kernel either (table above). The two parameters are for use with a distribution kernel.
+
+Further camera results: an INT3472 `_DSM` clock-frequency patch (0015, 24 MHz for the IR camera). VD55G0 has a different register map from vd55g1, so a driver has to be written from scratch. For the OV5693 binned mode the link frequency was derived as 358.4 MHz, and there is no patch that fixes the mode: on the device it fails with a `Frame sync error` on every frame once a flip is on. Patch 0020 does not offer the mode, so
+applications that request 720p or below also receive frames from the front camera ([camera.md](camera.md) section 3 item 2, section 4).
+
+9b (RAPL/EPP profiles, the VTS1 skin-protection experiment), the keyboard backlight, touch while the screen is off, and pen haptics (part of item 12) are covered in user space by the device helper ([docs/helper.md](../../helper.md)).
+With the helper running on the device, the per-profile power limits and the keyboard backlight are confirmed; skin protection, touch while the screen is off, and pen haptics through the helper are unverified.
+Continuation of touchpad two-finger scrolling at the edge is handled by the compositor, not the helper: only the compositor knows the scroll-direction setting ([control/typecover.md](../control/typecover.md) section 3).
