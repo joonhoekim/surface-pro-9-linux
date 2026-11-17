@@ -235,6 +235,7 @@ in
     pen = {
       enable = lib.mkEnableOption "pen-haptic and surface-pen-connect in PATH (prototypes, userspace/pen)";
       connectService = lib.mkEnableOption "the surface-pen-connect system service (implies pen.enable)";
+      feedbackService = lib.mkEnableOption "the surface-pen-feedback system service: pen speed to the digitizer, which the Slim Pen 2 needs for its continuous haptic waveforms, and inking haptics on contact (implies pen.enable)";
     };
 
     helper.enable = lib.mkEnableOption ''
@@ -334,7 +335,7 @@ in
         platform + "/optional/sleep.conf.d/sp9-hibernate-reboot.conf";
     })
 
-    (lib.mkIf (cfg.pen.enable || cfg.pen.connectService) {
+    (lib.mkIf (cfg.pen.enable || cfg.pen.connectService || cfg.pen.feedbackService) {
       environment.systemPackages = [ penTools ];
     })
 
@@ -354,6 +355,11 @@ in
         ];
         environment.SP9_PYTHON = "${pkgs.python3}/bin/python3";
       };
+    })
+
+    (lib.mkIf cfg.pen.feedbackService {
+      systemd.packages = [ penTools ];
+      systemd.services.surface-pen-feedback.wantedBy = [ "multi-user.target" ];
     })
 
     (lib.mkIf cfg.pen.connectService {

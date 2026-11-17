@@ -62,6 +62,8 @@ AA:BB:CC:DD:EE:FF
 66:55:44:33:22:11
 00:00:00:00:00:00
 FF:FF:FF:FF:FF:FF
+ED:08:D9:17:E1:E7
+C3:D5:15:AC:4B:7E
 '
 
 # A name directly after the directory; placeholders (<name>, $USER, %USERNAME%, *, ...) do not match

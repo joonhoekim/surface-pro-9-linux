@@ -67,6 +67,7 @@
                   audio = { legacy = true; codecPatch = "pins"; };
                   hibernateReboot = true;
                   pen.connectService = true;
+                  pen.feedbackService = true;
                   helper.enable = true;
                 };
               }

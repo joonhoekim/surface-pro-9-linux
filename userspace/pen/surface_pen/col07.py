@@ -2,6 +2,7 @@
 # Copyright (C) 2026 Joonhoe Kim
 """THC digitizer collection FFF4:0001 (pen BLE address adaptation), as seen on Windows as Col07."""
 
+import hashlib
 from dataclasses import dataclass
 
 from . import hiddesc, hidraw
@@ -25,6 +26,27 @@ FEATURE_AB_CAPABILITY = 112
 FEATURE_115 = 115
 
 DIGITIZER_IDS = (0x045E, 0x0C52)
+
+
+# The pen has a second address for the host it is coupled with through the cover slot. Windows'
+# SurfacePenBleLcAddrAdaptationDriver derives it; the constant is in that driver's .rdata.
+_COUPLED_CONST = bytes.fromhex("f876af012e1c2840918f6f605e6b1fd6")
+_ADDR_MASK = (1 << 46) - 1
+_ADDR_STATIC = 0xC00000000000
+
+
+def coupled_address(pen_id, host_addr=None):
+    """Static random address the pen uses toward the host it is coupled with (out-of-band, cover slot).
+
+    pen_id: the four FF0F:0050 bytes as they are in the input report. host_addr: 'AA:BB:..' of the adapter,
+    as written to Feature 86; None for the variant without a host (input report 84 or flag 0012 clear).
+    Returns 'AA:BB:CC:DD:EE:FF'.
+    """
+    h = hashlib.sha1(_COUPLED_CONST + bytes(pen_id)[::-1]).digest()
+    q = (int.from_bytes(h[:8], "little") & _ADDR_MASK) | _ADDR_STATIC
+    q = ~q if host_addr is None else q ^ int(host_addr.replace(":", ""), 16)
+    q = (q & _ADDR_MASK) | _ADDR_STATIC
+    return ":".join("%02X" % b for b in q.to_bytes(6, "big"))
 
 
 def find_nodes(sys_root=hidraw.SYS_HIDRAW):

@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from surface_pen import col07, connect, haptic, hiddesc, hidraw  # noqa: E402
+from surface_pen import col07, connect, feedback, haptic, hiddesc, hidraw  # noqa: E402
 
 # Slim Pen 2 BLE report descriptor posted in linux-surface/linux-surface#1066.
 PEN_DESC = bytes.fromhex(
@@ -213,6 +213,37 @@ class Col07Report(unittest.TestCase):
 
 
 class Misc(unittest.TestCase):
+    def test_coupled_address(self):
+        # SHA1(driver constant + pen id reversed), 46 bits, static random; XOR with the host address,
+        # or inverted when there is no host. Checked against a pen coupled by Windows.
+        pid = bytes([1, 2, 3, 4])
+        self.assertEqual(col07.coupled_address(pid, "11:22:33:44:55:66"), "ED:08:D9:17:E1:E7")
+        self.assertEqual(col07.coupled_address(pid), "C3:D5:15:AC:4B:7E")
+        self.assertEqual(int(col07.coupled_address(pid)[:2], 16) >> 6, 3)
+
+    def test_digitizer_feedback(self):
+        # The buffers that were sent to the digitizer when the continuous waveforms played.
+        self.assertEqual(feedback.pen_feedback(1, 0x143, 10, True).hex(),
+                         "098ea501020000000000000000000000000000000000000000000000000000000000000000ff0100"
+                         "43010001000a005206" + "00" * 15)
+        self.assertEqual(feedback.display_states(0x143).hex(),
+                         "098ea10100900100" + "00" * 33 + "4301" + "00" * 21)
+        m = feedback.pen_feedback(0, 0x143)
+        self.assertEqual((m[38], m[43], m[45], m[47:49]), (0, 0, 0xFF, bytes([0x52, 0x02])))
+        self.assertEqual(feedback.pen_feedback(0, 0x143, 5, pen_id=1)[47:49], bytes([0xD3, 0x06]))
+
+    def test_pen_speed(self):
+        e = feedback.SpeedEstimator()
+        v = 0
+        for i in range(20):
+            v = e.add(i * 0.0077, i * 0.77, 0)      # 100 mm/s
+        self.assertAlmostEqual(v, 100.0, delta=0.5)
+        self.assertEqual(feedback.quantize(v, 860), 7)
+        self.assertEqual(feedback.quantize(5000, 860), 63)
+        self.assertEqual(feedback.quantize(0, 860), 0)
+        e.reset()
+        self.assertEqual(e.value(), 0.0)
+
     def test_mask(self):
         self.assertEqual(hidraw.mask_addr("11:22:33:44:55:66"), "XX:XX:XX:XX:XX:66")
         self.assertEqual(hidraw.mask_addr("11:22:33:44:55:66", True), "11:22:33:44:55:66")

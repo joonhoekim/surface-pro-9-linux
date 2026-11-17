@@ -1,0 +1,264 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Wed, 18 Nov 2026 00:00:58 +0900
+Subject: [PATCH] Bluetooth: SMP: Add LE legacy OOB pairing
+
+LE legacy pairing uses the OOB method when both devices set the OOB data
+flag in the Pairing Request and Response: the Temporary Key is then a
+128-bit value exchanged out of band instead of zero (Just Works) or a
+passkey. smp.c only implements OOB for Secure Connections, and Add Remote
+OOB Data rejects 192-bit values for LE addresses "as long as legacy SMP
+OOB isn't implemented".
+
+The Surface Slim Pen 2 in the pen tray of a Surface Pro Type Cover pairs
+this way. The host makes up 16 random bytes, hands them to the pen through
+the cover (HID) and pairs with them as TK. The pen answers a Pairing
+Request that has the OOB flag (IO capability NoInputNoOutput, Bonding and
+MITM, no Secure Connections) with the OOB flag set and no MITM flag.
+
+Accept a TK for LE addresses in the extended form of Add Remote OOB Data:
+hash192 carries the TK, least significant octet first (the order of the
+Security Manager TK Value in OOB data blocks, and of smp->tk), rand192
+has to be zero. A zero hash192 still means that there is no 192-bit data.
+
+When a TK is stored for the peer:
+
+ - As initiator set the OOB flag and the MITM flag in the Pairing
+   Request, and offer the identity key: the peer learned the address of
+   this device out of band and may want its identity. The pen does not
+   advertise for reconnection to a host that did not give it. Do not offer Secure Connections unless P-256 OOB data is
+   stored as well: with Secure Connections the OOB flag says that the
+   P-256 data of the peer has been received.
+ - As responder set the OOB flag in the Pairing Response when the
+   initiator did not ask for Secure Connections.
+ - If legacy pairing was negotiated and both sides have set the OOB flag,
+   use the stored TK. User space is not asked for anything and the STK
+   and the distributed keys are authenticated. Otherwise the method is
+   chosen from the IO capabilities as before.
+
+The TK is not used in Secure Connections Only mode.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ net/bluetooth/mgmt.c | 20 ++++++---
+ net/bluetooth/smp.c  | 99 ++++++++++++++++++++++++++++++++++++--------
+ 2 files changed, 96 insertions(+), 23 deletions(-)
+
+diff --git a/net/bluetooth/mgmt.c b/net/bluetooth/mgmt.c
+index 251a896ba..9a8514a64 100644
+--- a/net/bluetooth/mgmt.c
++++ b/net/bluetooth/mgmt.c
+@@ -5933,11 +5933,14 @@ static int add_remote_oob_data(struct sock *sk, struct hci_dev *hdev,
+ 		u8 status;
+ 
+ 		if (bdaddr_type_is_le(cp->addr.type)) {
+-			/* Enforce zero-valued 192-bit parameters as
+-			 * long as legacy SMP OOB isn't implemented.
++			/* LE legacy OOB pairing has a single value, the
++			 * Temporary Key. It is passed as the 192-bit hash,
++			 * least significant octet first like the Security
++			 * Manager TK Value of OOB data blocks. There is no
++			 * randomizer, so enforce a zero-valued one. A zero
++			 * hash means that there is no TK.
+ 			 */
+-			if (memcmp(cp->rand192, ZERO_KEY, 16) ||
+-			    memcmp(cp->hash192, ZERO_KEY, 16)) {
++			if (memcmp(cp->rand192, ZERO_KEY, 16)) {
+ 				err = mgmt_cmd_complete(sk, hdev->id,
+ 							MGMT_OP_ADD_REMOTE_OOB_DATA,
+ 							MGMT_STATUS_INVALID_PARAMS,
+@@ -5945,8 +5948,13 @@ static int add_remote_oob_data(struct sock *sk, struct hci_dev *hdev,
+ 				goto unlock;
+ 			}
+ 
+-			rand192 = NULL;
+-			hash192 = NULL;
++			if (!memcmp(cp->hash192, ZERO_KEY, 16)) {
++				rand192 = NULL;
++				hash192 = NULL;
++			} else {
++				rand192 = cp->rand192;
++				hash192 = cp->hash192;
++			}
+ 		} else {
+ 			/* In case one of the P-192 values is set to zero,
+ 			 * then just disable OOB data for P-192.
+diff --git a/net/bluetooth/smp.c b/net/bluetooth/smp.c
+index 81d255525..98ba731c8 100644
+--- a/net/bluetooth/smp.c
++++ b/net/bluetooth/smp.c
+@@ -77,6 +77,7 @@ enum {
+ 	SMP_FLAG_REMOTE_OOB,
+ 	SMP_FLAG_LOCAL_OOB,
+ 	SMP_FLAG_CT2,
++	SMP_FLAG_LEGACY_OOB,
+ };
+ 
+ struct smp_dev {
+@@ -102,6 +103,7 @@ struct smp_chan {
+ 	u8		tk[16]; /* SMP Temporary Key */
+ 	u8		rr[16]; /* Remote OOB ra/rb value */
+ 	u8		lr[16]; /* Local OOB ra/rb value */
++	u8		oob_tk[16]; /* LE legacy OOB Temporary Key */
+ 	u8		enc_key_size;
+ 	u8		remote_key_dist;
+ 	bdaddr_t	id_addr;
+@@ -632,6 +634,9 @@ static void build_pairing_cmd(struct l2cap_conn *conn,
+ 	struct hci_conn *hcon = conn->hcon;
+ 	struct hci_dev *hdev = hcon->hdev;
+ 	u8 local_dist = 0, remote_dist = 0, oob_flag = SMP_OOB_NOT_PRESENT;
++	struct oob_data *oob_data;
++	bool sc, legacy_oob;
++	u8 bdaddr_type;
+ 
+ 	if (hci_dev_test_flag(hdev, HCI_BONDABLE)) {
+ 		local_dist = SMP_DIST_ENC_KEY | SMP_DIST_SIGN;
+@@ -647,25 +652,56 @@ static void build_pairing_cmd(struct l2cap_conn *conn,
+ 	if (hci_dev_test_flag(hdev, HCI_PRIVACY))
+ 		local_dist |= SMP_DIST_ID_KEY;
+ 
+-	if (hci_dev_test_flag(hdev, HCI_SC_ENABLED) &&
+-	    (authreq & SMP_AUTH_SC)) {
+-		struct oob_data *oob_data;
+-		u8 bdaddr_type;
++	sc = hci_dev_test_flag(hdev, HCI_SC_ENABLED) && (authreq & SMP_AUTH_SC);
++
++	if (hcon->dst_type == ADDR_LE_DEV_PUBLIC)
++		bdaddr_type = BDADDR_LE_PUBLIC;
++	else
++		bdaddr_type = BDADDR_LE_RANDOM;
++
++	mutex_lock(&hdev->remote_oob_lock);
++	oob_data = hci_find_remote_oob_data(hdev, &hcon->dst, bdaddr_type);
++
++	/* A Temporary Key for LE legacy OOB pairing is stored as the P-192
++	 * hash. In Secure Connections the OOB flag says that the P-256 data
++	 * of the peer has been received, so it must not be set for a TK
++	 * alone: as initiator do not offer Secure Connections when the TK
++	 * is all there is, as responder use the TK only when the initiator
++	 * did not ask for Secure Connections.
++	 */
++	legacy_oob = oob_data && (oob_data->present & 0x01) &&
++		     !hci_dev_test_flag(hdev, HCI_SC_ONLY);
++	if (legacy_oob) {
++		if (rsp)
++			legacy_oob = !sc;
++		else if (!(oob_data->present & 0x02))
++			sc = false;
++	}
+ 
++	if (legacy_oob) {
++		set_bit(SMP_FLAG_LEGACY_OOB, &smp->flags);
++		oob_flag = SMP_OOB_PRESENT;
++
++		/* The peer was told the address of this device out of band and
++		 * may ask for its identity to tell it from other hosts later.
++		 * Without privacy the IRK is all zeros, which stands for "no
++		 * IRK", and the identity address is the public address.
++		 */
++		local_dist |= SMP_DIST_ID_KEY;
++		memcpy(smp->oob_tk, oob_data->hash192, sizeof(smp->oob_tk));
++
++		/* OOB protects against MITM whatever the IO capabilities */
++		if (!rsp)
++			authreq |= SMP_AUTH_MITM;
++	}
++
++	if (sc) {
+ 		if (hci_dev_test_flag(hdev, HCI_SSP_ENABLED)) {
+ 			local_dist |= SMP_DIST_LINK_KEY;
+ 			remote_dist |= SMP_DIST_LINK_KEY;
+ 		}
+ 
+-		if (hcon->dst_type == ADDR_LE_DEV_PUBLIC)
+-			bdaddr_type = BDADDR_LE_PUBLIC;
+-		else
+-			bdaddr_type = BDADDR_LE_RANDOM;
+-
+-		mutex_lock(&hdev->remote_oob_lock);
+-		oob_data = hci_find_remote_oob_data(hdev, &hcon->dst,
+-						    bdaddr_type);
+-		if (oob_data && oob_data->present) {
++		if (oob_data && (oob_data->present & 0x02)) {
+ 			set_bit(SMP_FLAG_REMOTE_OOB, &smp->flags);
+ 			oob_flag = SMP_OOB_PRESENT;
+ 			memcpy(smp->rr, oob_data->rand256, 16);
+@@ -673,12 +709,14 @@ static void build_pairing_cmd(struct l2cap_conn *conn,
+ 			SMP_DBG("OOB Remote Confirmation: %16phN", smp->pcnf);
+ 			SMP_DBG("OOB Remote Random: %16phN", smp->rr);
+ 		}
+-		mutex_unlock(&hdev->remote_oob_lock);
+-
+ 	} else {
+ 		authreq &= ~SMP_AUTH_SC;
++		if (legacy_oob)
++			authreq &= ~SMP_AUTH_CT2;
+ 	}
+ 
++	mutex_unlock(&hdev->remote_oob_lock);
++
+ 	if (rsp == NULL) {
+ 		req->io_capability = conn->hcon->io_capability;
+ 		req->oob_flag = oob_flag;
+@@ -827,6 +865,18 @@ static u8 get_auth_method(struct smp_chan *smp, u8 local_io, u8 remote_io)
+ 	return gen_method[remote_io][local_io];
+ }
+ 
++/* LE legacy pairing uses OOB when both devices have set the OOB data flag,
++ * whatever their IO capabilities and MITM flags say.
++ */
++static bool smp_legacy_oob(struct smp_chan *smp, struct smp_cmd_pairing *req,
++			   struct smp_cmd_pairing *rsp)
++{
++	return test_bit(SMP_FLAG_LEGACY_OOB, &smp->flags) &&
++	       !test_bit(SMP_FLAG_SC, &smp->flags) &&
++	       req->oob_flag == SMP_OOB_PRESENT &&
++	       rsp->oob_flag == SMP_OOB_PRESENT;
++}
++
+ static int tk_request(struct l2cap_conn *conn, u8 remote_oob, u8 auth,
+ 						u8 local_io, u8 remote_io)
+ {
+@@ -843,6 +893,19 @@ static int tk_request(struct l2cap_conn *conn, u8 remote_oob, u8 auth,
+ 	bt_dev_dbg(hcon->hdev, "auth:%u lcl:%u rem:%u", auth, local_io,
+ 		   remote_io);
+ 
++	/* The TK came from user space together with the peer address, so
++	 * there is nothing left to ask. The resulting keys are authenticated.
++	 */
++	if (smp_legacy_oob(smp, (void *)&smp->preq[1], (void *)&smp->prsp[1])) {
++		smp->method = REQ_OOB;
++		memcpy(smp->tk, smp->oob_tk, sizeof(smp->tk));
++		set_bit(SMP_FLAG_TK_VALID, &smp->flags);
++		set_bit(SMP_FLAG_MITM_AUTH, &smp->flags);
++		if (hcon->pending_sec_level < BT_SECURITY_HIGH)
++			hcon->pending_sec_level = BT_SECURITY_HIGH;
++		return 0;
++	}
++
+ 	/* If neither side wants MITM, either "just" confirm an incoming
+ 	 * request or use just-works for outgoing ones. The JUST_CFM
+ 	 * will be converted to JUST_WORKS if necessary later in this
+@@ -1795,7 +1858,8 @@ static u8 smp_cmd_pairing_req(struct l2cap_conn *conn, struct sk_buff *skb)
+ 		conn->hcon->pending_sec_level = sec_level;
+ 
+ 	/* If we need MITM check that it can be achieved. */
+-	if (conn->hcon->pending_sec_level >= BT_SECURITY_HIGH) {
++	if (conn->hcon->pending_sec_level >= BT_SECURITY_HIGH &&
++	    !smp_legacy_oob(smp, req, &rsp)) {
+ 		u8 method;
+ 
+ 		method = get_auth_method(smp, conn->hcon->io_capability,
+@@ -1959,7 +2023,8 @@ static u8 smp_cmd_pairing_rsp(struct l2cap_conn *conn, struct sk_buff *skb)
+ 		conn->hcon->pending_sec_level = BT_SECURITY_HIGH;
+ 
+ 	/* If we need MITM check that it can be achieved */
+-	if (conn->hcon->pending_sec_level >= BT_SECURITY_HIGH) {
++	if (conn->hcon->pending_sec_level >= BT_SECURITY_HIGH &&
++	    !smp_legacy_oob(smp, req, rsp)) {
+ 		u8 method;
+ 
+ 		method = get_auth_method(smp, req->io_capability,
+-- 
+2.55.0
+
