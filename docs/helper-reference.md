@@ -212,8 +212,10 @@ request, battery reading, writing the keyboard backlight, the PSR policy (AC), i
 4. After `sp9-ctl touch-off on`, switch the screen off (`DPMS`): whether touch is blocked, and whether it comes
    back when the screen is on.
 5. With the pen connected, `sp9-ctl pen test`, then draw with `pen ink on`: whether start and stop are felt, and
-   whether the vibration lasts through a long stroke. The pen disconnects after about 80 s without use and does
-   not reconnect, so do this right after pairing.
+   whether the vibration lasts through a long stroke. The continuous waveform needs the pen's speed at the
+   digitizer, which `surface-pen-feedback` sends and the helper does not
+   ([pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md) section 1). A pen paired in pairing mode
+   disconnects after about 80 s without use and does not reconnect, so do this right after pairing.
 6. `PsrStatus` after `sp9-ctl psr off psr1` and a switch to battery.
 7. `sp9-ctl skin-guard on` + `stress-ng --cpu 12 -t 300`: compare `SkinTempC`, `Pl1W` and the surface temperature
    with the Windows table (power-thermal.md 3). The constants are settled according to the result.

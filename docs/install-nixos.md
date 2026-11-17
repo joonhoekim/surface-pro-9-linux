@@ -375,8 +375,11 @@ The full list is [hardware-status.md](hardware-status.md).
 
 - **Pen.** Drawing works without Bluetooth. The Bluetooth features (tail button, battery level, haptics) need
   the pen to be paired by hand: hold the tail button until the pen is in pairing mode and pair it with a
-  `NoInputNoOutput` agent. The pen disconnects after about 80 s without use and does not reconnect; it has to
-  be put in pairing mode again. There is no automatic bonding as on Windows.
+  `NoInputNoOutput` agent. The pen disconnects after about 80 s without use, and a pen paired this way does not
+  reconnect; it has to be put in pairing mode again. Bonding through the cover's pen slot as on Windows, after
+  which the pen does reconnect, has been done by hand with tools and kernel patch 0023 loaded as a module; it
+  is not automatic ([research/gaps/pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md)). The
+  continuous haptic waveforms need `hardware.surface-pro-9.pen.feedbackService`.
 - **Rear camera.** Frames arrive, but there is no autofocus through libcamera: the lens stays where it is
   unless `focus_absolute` is written by hand, and whether the image then focuses is unverified.
 - **Front camera.** Works; the sensor always runs its full-resolution mode at about 28.6 fps.

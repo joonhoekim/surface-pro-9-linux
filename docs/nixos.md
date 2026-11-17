@@ -17,7 +17,7 @@ have never been run on Linux; they are listed in section 6.
 |---|---|
 | `nixosModules.default` (= `nixosModules.surface-pro-9`) | [`nix/module.nix`](../nix/module.nix). Options are `hardware.surface-pro-9.*` |
 | `packages.x86_64-linux.kernel` | [`nix/kernel.nix`](../nix/kernel.nix): v7.3.4 + linux-surface `patches/7.3` + `kernel/patches` |
-| `packages.x86_64-linux.surface-pen-tools` | [`nix/pen-tools.nix`](../nix/pen-tools.nix): `userspace/pen` as is, `pen-haptic` and `surface-pen-connect` with the unit |
+| `packages.x86_64-linux.surface-pen-tools` | [`nix/pen-tools.nix`](../nix/pen-tools.nix): `userspace/pen` as is: `pen-haptic`, `surface-pen-connect` and `surface-pen-feedback` with their units |
 | `packages.x86_64-linux.sp9-helper` | [`nix/helper.nix`](../nix/helper.nix): `sp9-helperd`, `sp9-ctl` and the settings app `sp9-settings` from `helper/`, the unit, D-Bus and polkit files, and the two scripts the daemon calls (`post-install-check.sh`, `sdc-blob.py`) |
 | `devShells.x86_64-linux.kernel-dev` | The build inputs of the kernel derivation (`inputsFrom`) plus the tools `kmod-dev.sh` uses, `hardeningDisable = [ "all" ]`. See 5.1 |
 | `checks.x86_64-linux` | `surface-pen-tools`, `sp9-helper`, `module-eval` (a minimal NixOS system with the module and its off-by-default options switched on; only the system's drvPath is written to a file, so the kernel is evaluated and not built) |
@@ -49,8 +49,9 @@ A consumer sets `inputs.nixpkgs.follows`.
 | `camera.pipewire` | true | false disables WirePlumber's libcamera monitor. While it is on, libcamera keeps the rear lens (VCM) node open for the whole session, so the rails and the clock of the rear sensor stay on ([research/gaps/camera.md](research/gaps/camera.md)). Off, the cameras disappear from PipeWire applications (programs that use libcamera themselves keep them), so this is for measuring standby power | option description |
 | `diagnostics.enable` | true | Puts the tools that the test plan and the collector call (`cam`, `v4l2-ctl`, `amixer`, `libinput`, `hid-decode`, `drm_info`, the iptsd tools and others) into the system PATH. Without them the corresponding sections of the collector stay empty | the tools section of [test-plan.md](test-plan.md) |
 | `hibernateReboot` | false | `/etc/systemd/sleep.conf.d/sp9-hibernate-reboot.conf` | `optional/sleep.conf.d/` |
-| `pen.enable` | false | The two pen tools in PATH | `userspace/pen/` |
+| `pen.enable` | false | The pen tools in PATH (`pen-haptic`, `surface-pen-connect`, `surface-pen-feedback`) | `userspace/pen/` |
 | `pen.connectService` | false | The unit through `systemd.packages` (only ExecStart is rewritten to the store path), `wantedBy = multi-user.target`, `hardware.bluetooth.enable` (mkDefault). Implies `pen.enable` | `userspace/pen/systemd/surface-pen-connect.service` |
+| `pen.feedbackService` | false | The unit `surface-pen-feedback` through `systemd.packages` (ExecStart rewritten to the store path), `wantedBy = multi-user.target`. It feeds the pen's speed back to the digitizer, which the Slim Pen 2 needs for its continuous haptic waveforms, and starts and stops the inking waveform on contact ([research/gaps/pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md) section 1). Implies `pen.enable` | `userspace/pen/systemd/surface-pen-feedback.service` |
 | `helper.enable` | false | `sp9-helperd` through `systemd.packages` and `services.dbus.packages` (started with `multi-user.target`), the package (`sp9-ctl`, `sp9-settings`) in PATH, `security.polkit.enable`, `surface_aggregator_cdev` in `boot.kernelModules`. The tools the diagnostics script uses go into the unit's `path`, and `SP9_PYTHON` is set (ICC generation). Runs on the device; per-feature status is in [helper-reference.md](helper-reference.md) | `helper/`, [helper.md](helper.md) |
 
 The options map one to one to the components of [`install.sh`](../userspace/platform/install.sh) (`iptsd` →
@@ -66,7 +67,7 @@ cache either, so both are local builds. This repository still uses its own deriv
 | | nixos-hardware | This repository |
 |---|---|---|
 | Version | `hardware.microsoft-surface.kernelVersion` enum: `longterm` = 6.18.60, `stable` = 7.3.1 | 7.3.4 |
-| linux-surface | `668a0208…` | `ea852b4e…` (`patches/7.3/BASE` = v7.3.4). The combination patches 0001–0022 of this repository apply to |
+| linux-surface | `668a0208…` | `ea852b4e…` (`patches/7.3/BASE` = v7.3.4). The combination patches 0001–0023 of this repository apply to |
 | Config fragment | `structuredExtraConfig` in `patches.nix` prefixes the keys with `CONFIG_`. `generate-config.pl` matches names without the prefix, so every one is an "unused option", and `ignoreConfigErrors = true` hides that error (judged from reading the code; unverified against a build log). What remains is only what nixpkgs `common-config.nix` and autoModules switch on | linux-surface `configs/surface-7.3.config` and `sp9.config` are parsed at evaluation time and passed without the prefix, with the strict check on. `# … is not set` becomes optional (a symbol that is absent from `.config` because its dependencies are off means the same) |
 | `boot.kernelPackages` | A definition without a priority. It collides with a host that also sets `boot.kernelPackages` without a priority; that host needs `mkForce` | `mkOverride 90` |
 | Extras | surface-pro-intel enables `iptsd`, `surface-control`, a thermald `thermal-conf.xml` made for other models, and `mem_sleep_default=deep` (mkDefault) | Only what has evidence on the SP9 (`userspace/platform/README.md`). thermald is the host's choice |
@@ -240,7 +241,8 @@ Rebuilding the kernel derivation takes 1–2 hours on the i5-1235U. Most patches
 modules (`ov5693`, `ipu-bridge`, `dw9719`, `int3472`, `surface_*`, `i915`, `ucsi`), so the loop is: in a tree
 identical to the booted kernel, rebuild only that directory and `insmod` the result.
 [`tools/linux/kmod-dev.sh`](../tools/linux/kmod-dev.sh) does it. Patches 0018–0022 were made and exported with this
-loop ([kernel/README.md](../kernel/README.md)).
+loop ([kernel/README.md](../kernel/README.md)); 0023 was built and loaded with it and has run on the device only
+this way, as a module.
 
 ```sh
 cd ~/git/surface-pro-9-linux
@@ -311,9 +313,10 @@ are checks that are done and reflected in the text above.
 | # | Command | What to look at |
 |---|---|---|
 | N2 | `nix build .#surface-pen-tools` | Whether the shebang is the Python that includes dbus-next. Confirmed: the build, `tests/test_reports.py` passing its 16 tests, and `--help` of both tools |
-| N5 | In the host flake, add one test patch to `boot.kernelPatches` and run `nixos-rebuild build --flake .#sp9` | Whether it lands after this repository's 37 (15 linux-surface files + 22 in `kernel/patches`) (the path from `kernel.override` through `nix/kernel.nix` to `buildLinux`), and whether a package taken from `config.boot.kernelPackages` (`cpupower`, for example) builds against this kernel. Confirmed: `mkOverride 90` beats a host's plain `linuxPackages_latest` definition, and `pinctrl_tigerlake` is in the initrd |
+| N5 | In the host flake, add one test patch to `boot.kernelPatches` and run `nixos-rebuild build --flake .#sp9` | Whether it lands after this repository's 38 (15 linux-surface files + 23 in `kernel/patches`) (the path from `kernel.override` through `nix/kernel.nix` to `buildLinux`), and whether a package taken from `config.boot.kernelPackages` (`cpupower`, for example) builds against this kernel. Confirmed: `mkOverride 90` beats a host's plain `linuxPackages_latest` definition, and `pinctrl_tigerlake` is in the initrd |
 | N9 | Build with `audio.codecPatch = "pins"`, `audio.legacy = true` | `/run/current-system/firmware/sp9-alc274-pins.fw` (uncompressed), two lines in `/etc/modprobe.d/nixos.conf` |
 | N10 | `hibernateReboot = true` | The drop-in in `/etc/systemd/sleep.conf.d/`, `systemd-analyze cat-config systemd/sleep.conf` |
 | N11 | `pen.connectService = true` | The ExecStart path in `systemctl status surface-pen-connect`, the unit being enabled |
+| N15 | `pen.feedbackService = true` | The ExecStart path in `systemctl status surface-pen-feedback`, the unit being enabled, the state file `/var/lib/surface-pen/fast-host-id`, and the continuous waveform during a stroke with the pen connected |
 | N12 | `bootctl list` | Whether the menu has Windows Boot Manager and Windows boots from it. Confirmed: systemd-boot is on the ESP (`/boot`) and the current entry is a NixOS generation |
 | N13 | `nix flake check --no-build` on every nixpkgs update | The 49 keys of the two fragments are not set by `common-config.nix` at present (compared by name). Once it sets one of them to another value, evaluation fails with "conflicting definition values" for `settings.<KEY>.tristate`. Decide then whether to use `lib.mkForce` on the `parseFragment` values |

@@ -15,7 +15,7 @@ device-specific preparation in [install-nixos.md](install-nixos.md) steps 1 and 
 
 ## 1. Kernel
 
-The kernel is stable v7.3.4 + linux-surface's 7.3 series + this repository's 22 patches
+The kernel is stable v7.3.4 + linux-surface's 7.3 series + this repository's 23 patches
 ([kernel/README.md](../kernel/README.md)).
 
 [`tools/linux/build-kernel.sh`](../tools/linux/build-kernel.sh) fetches the pinned sources, applies both
@@ -30,7 +30,8 @@ tools/linux/build-kernel.sh --prepare-only   # fetch, apply patches, verify the 
 Results go to `out/kernel/dist/` with a `SHA256SUMS`. The release string is `7.3.4-sp9`.
 
 - **Verified**: the patches apply cleanly in this order (v7.3.4, linux-surface's 47 commits, then 0001–0017
-  with `git am`; 0018–0022 were exported from commits on the tree of the booted kernel).
+  with `git am`; 0018–0022 were exported from commits on the tree of the booted kernel, and 0023 from the same
+  tree, where it was built and loaded as a module).
 - **Untested**: the build itself, the packages, and booting their kernel. The configuration starts from the
   Ubuntu mainline config that linux-surface uses for its Debian packages, not from the nixpkgs configuration
   the verified kernel was built with: the options the fragments request are the same, the rest of the driver
@@ -44,7 +45,7 @@ Results go to `out/kernel/dist/` with a `SHA256SUMS`. The release string is `7.3
   while keeping another kernel as the default.
 
 Without this kernel (a distribution kernel, or linux-surface's packaged kernel) the platform files below
-still apply, but the 22 patches are missing: see [kernel/PROVENANCE.md](../kernel/PROVENANCE.md) for what
+still apply, but the 23 patches are missing: see [kernel/PROVENANCE.md](../kernel/PROVENANCE.md) for what
 each one changes. No such combination was tested.
 
 ## 2. Platform files
@@ -112,10 +113,13 @@ under NixOS ([helper-reference.md](helper-reference.md)); this installer was not
 
 ## 5. Pen tools
 
-Optional prototypes: `pen-haptic` and `surface-pen-connect` ([userspace/pen/README.md](../userspace/pen/README.md)).
+Optional prototypes: `pen-haptic`, `surface-pen-connect` and `surface-pen-feedback`
+([userspace/pen/README.md](../userspace/pen/README.md)).
 Python 3.10 or later; `surface-pen-connect` needs `dbus-next`. They run as root from a copy of the directory;
-the README has the copy and unit commands. Read the "seen on the device" section first: automatic bonding and
-reconnection do not work, so the connect service currently has little effect.
+the README has the copy and unit commands. Read the "seen on the device" section first: `surface-pen-feedback`
+is what makes the pen's continuous haptic waveforms play; a pen paired by hand in pairing mode does not
+reconnect after its idle disconnect, so the connect service has little effect for it; bonding through the
+cover's pen slot, which does reconnect, needs kernel patch 0023 and is done by hand with tools.
 
 ## 6. Verify and go back
 

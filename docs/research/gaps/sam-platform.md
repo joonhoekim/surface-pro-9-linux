@@ -20,7 +20,7 @@ Notation:
   target (1=SAM, 2=KIP), IID the instance, CID the command. The `ssam:` prefix exists only in the modalias and in software node names.
   The sysfs device names (`/sys/bus/surface_aggregator/devices/`) have no prefix, as in `01:02:01:01:00` (measured).
 - Results measured on Linux 7.3.4 are in the "On Linux" column of section 3 and in section 4. A value given without a patch range is from the kernel with patches 0001–0017.
-- Patch numbers: "patch 00NN" always means this repository's kernel patch (`kernel/patches`, 0001–0022). A linux-surface patch is always named by its file in
+- Patch numbers: "patch 00NN" always means this repository's kernel patch (`kernel/patches`, 0001–0023). A linux-surface patch is always named by its file in
   `patches/7.3` (`0007-surface-sam.patch`, `0009-surface-button.patch`, `0011-surface-shutdown.patch`, `0012-surface-gpe.patch`); the two series have overlapping numbers.
 - `#N` = issue or pull request N of linux-surface/linux-surface; those of the kernel tree are written `linux-surface/kernel#N`.
 

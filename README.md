@@ -6,7 +6,7 @@ Linux support for one device: the Microsoft Surface Pro 9 with an Intel CPU, SKU
 - **Scope.** This SKU only. Not the Surface Pro 9 5G (ARM), and not any other Surface device: those belong to
   [linux-surface](https://github.com/linux-surface/linux-surface).
 - **Relation to linux-surface.** This is a device-specific layer on top of that project: the kernel is stable
-  v7.3.4 + linux-surface's 7.3 patch series + the 22 patches in [`kernel/patches`](kernel/README.md). Around the
+  v7.3.4 + linux-surface's 7.3 patch series + the 23 patches in [`kernel/patches`](kernel/README.md). Around the
   kernel there is a NixOS module, platform files for other distributions, a device helper daemon, pen tools,
   research notes and test results. This repository is not part of linux-surface and is not endorsed by
   linux-surface, Microsoft, Intel or Realtek. Issues about other devices, or about linux-surface's own patches
@@ -34,7 +34,8 @@ not "works".
 
 ## Hardware status
 
-Kernel 7.3.4 with patches 0001–0022, NixOS, firmware UEFI 24.103.143 and SAM 6.603.139. The long form, with
+Kernel 7.3.4 with patches 0001–0022, NixOS, firmware UEFI 24.103.143 and SAM 6.603.139 (patch 0023 has run only
+as a module loaded into that kernel, for the pen results). The long form, with
 the measurements, is [docs/hardware-status.md](docs/hardware-status.md). Test IDs refer to
 [docs/test-results.md](docs/test-results.md).
 
@@ -42,7 +43,7 @@ the measurements, is [docs/hardware-status.md](docs/hardware-status.md). Test ID
 |---|---|---|---|
 | Display | Works, with a caveat | Runs PSR1 with no kernel parameter (measured). No flicker noticed in use (observed; not the 10-minute AC/battery test). 120 Hz switching and the lowest brightness steps are unverified | DSP-1 partial, DSP-2 unverified, DSP-3 partial |
 | Touch | Unverified | iptsd loads the preset, no ghost touches in 150 s without contact, no ithc errors after 17 suspend cycles (measured). Taps, swipes, palm rejection: nobody has tested them. Wake by touch is not expected to work (inferred) | TOUCH-1, 2, 4 unverified, TOUCH-3 partial, PEN-8 partial |
-| Pen (Slim Pen 2) | Partial | Strokes draw (observed); tail button sends three distinct keys (measured); manual pairing works (2/2). Does not work: automatic bonding, reconnection after the pen's idle disconnect, continuous haptics. Unverified: pressure, tilt, side button, eraser | PEN-5 partial, PEN-6 pass, PEN-9 partial, PEN-1–4, 7 unverified; [userspace/pen](userspace/pen/README.md) |
+| Pen (Slim Pen 2) | Partial | Strokes draw (observed); tail button sends three distinct keys (measured); manual pairing works (2/2). Continuous haptics play once `surface-pen-feedback` feeds the pen's speed back to the digitizer (observed). Bonding through the cover's pen slot, and reconnection of a pen bonded that way after its idle disconnect (3.5 s), were measured with patch 0023 loaded as a module; the procedure is run by hand with tools, nothing does it automatically yet, and a pen bonded in pairing mode still does not reconnect. Unverified: pressure, tilt, side button, eraser | PEN-5 partial, PEN-6 pass, PEN-9 partial, PEN-1–4, 7 unverified; [userspace/pen](userspace/pen/README.md), [gaps/pen-vendor-exchange.md](docs/research/gaps/pen-vendor-exchange.md) |
 | Front camera | Works | Frames at 640x480, 720p and 1080p requests (measured: 1280x720 120/120 frames, 28.6 fps). The sensor's binned 1296x972 mode does not work and is not offered. Mirroring, privacy LED, image quality against Windows: unverified | CAM-2 pass, CAM-3 fail, CAM-5, 6 unverified |
 | Rear camera | Works, focus unverified | Frames at 1080p and 720p (measured). Focus values are written to the lens driver; whether the image focuses is unverified. No autofocus through libcamera | CAM-1 partial, CAM-4 partial |
 | IR camera | Does not work | No driver | [gaps/camera.md](docs/research/gaps/camera.md) section 4.1 |
@@ -65,16 +66,16 @@ the measurements, is [docs/hardware-status.md](docs/hardware-status.md). Test ID
 
 | Path | Contents |
 |---|---|
-| [kernel/](kernel/README.md) | The patch series (v7.3.4 + linux-surface 7.3 + 22 patches), the config fragment, and where each patch comes from ([PROVENANCE.md](kernel/PROVENANCE.md)): 6 upstream backports, 4 from a pending linux-surface pull request, 12 local |
+| [kernel/](kernel/README.md) | The patch series (v7.3.4 + linux-surface 7.3 + 23 patches), the config fragment, and where each patch comes from ([PROVENANCE.md](kernel/PROVENANCE.md)): 6 upstream backports, 4 from a pending linux-surface pull request, 13 local |
 | [flake.nix](flake.nix), [nix/](nix/module.nix) | The NixOS module (`nixosModules.default`, options `hardware.surface-pro-9.*`) and the packages `kernel`, `surface-pen-tools`, `sp9-helper`. Reference: [docs/nixos.md](docs/nixos.md) |
 | [userspace/platform/](userspace/platform/README.md) | Platform files for any distribution (iptsd preset, speaker filter chain, initramfs and kernel command line, optional codec pin patch) and `install.sh` |
-| [userspace/pen/](userspace/pen/README.md) | Slim Pen 2 tool prototypes: `pen-haptic`, `surface-pen-connect`, and what was seen on the device |
+| [userspace/pen/](userspace/pen/README.md) | Slim Pen 2 tool prototypes: `pen-haptic`, `surface-pen-connect`, `surface-pen-feedback`, and what was seen on the device |
 | [helper/](docs/helper.md) | The device helper `sp9-helperd` and `sp9-ctl` (D-Bus) and the GTK settings app `sp9-settings`. Reference: [docs/helper-reference.md](docs/helper-reference.md) |
 | [tools/](tools/README.md) | Collection and measurement tools for Linux and Windows |
 | [docs/install-nixos.md](docs/install-nixos.md), [docs/install-other.md](docs/install-other.md) | Installation guides |
 | [docs/hardware-status.md](docs/hardware-status.md) | Per-hardware status in detail |
 | [docs/test-plan.md](docs/test-plan.md), [docs/test-results.md](docs/test-results.md) | The 49 test definitions and one result row per test run |
-| [docs/research/gaps/](docs/research/gaps/README.md) | Linux against the Windows baseline, by area: pen and touch, cameras, SAM and platform, audio, display and power |
+| [docs/research/gaps/](docs/research/gaps/README.md) | Linux against the Windows baseline, by area: pen and touch (and the pen's haptics, coupling and reconnection), cameras, SAM and platform, audio, display and power |
 | [docs/research/control/](docs/research/control/) | How Windows controls each function and how to issue the same control on Linux: power and thermal, standby, display, battery and charging, input, Type Cover, camera |
 | [docs/hardware.md](docs/hardware.md), [docs/reference/](docs/reference/) | Hardware inventory and firmware versions read on Windows, and the device lists behind it |
 
@@ -94,8 +95,8 @@ Licensing is per file and follows the REUSE convention. [LICENSE](LICENSE) has t
 ## Warning
 
 This repository changes the kernel, drivers that talk to the device's firmware (the Surface Aggregator Module,
-the touch controller, the cameras' power control), and CPU power limits, on one specific device. Sixteen of the
-22 patches are not in mainline Linux (4 from a pending linux-surface pull request, 12 local), and most of the
+the touch controller, the cameras' power control), and CPU power limits, on one specific device. Seventeen of the
+23 patches are not in mainline Linux (4 from a pending linux-surface pull request, 13 local), and most of the
 local ones are marked unverified in [PROVENANCE.md](kernel/PROVENANCE.md). Some helper
 functions are experimental and off by default (fan request, skin temperature guard). Use it at your own risk;
 there is no warranty. Keep Windows installed: firmware updates are delivered only through Windows.

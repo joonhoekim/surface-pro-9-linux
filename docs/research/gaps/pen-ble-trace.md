@@ -3,6 +3,7 @@
 This is the decoded Bluetooth ETW trace (`bt.etl`, busiotools `BluetoothStack.wprp`) recorded during the Windows baseline tests PEN-9 (haptics) and PEN-5 (sleep and reconnection).
 It serves two purposes: the defaults of the Linux haptic tool ([userspace/pen](../../../userspace/pen/README.md)), and a reference for comparison with linux-surface #1656 (on Linux the pen disconnects after about a minute).
 Addresses, keys, IRK, LTK and the pen serial are not given. The raw trace (`bt.etl`) and its conversions are not published.
+This trace truncates the values. Later captures with full values, and what they settled (the report 65 values, the 16 B round trips, why the pen did not reconnect on Linux), are in [pen-vendor-exchange.md](pen-vendor-exchange.md); statements below that they overturn are marked.
 
 ## 1. Method
 
@@ -64,10 +65,10 @@ There was no HOGP service discovery (the device is bonded, so Windows uses its c
 | 0x0077 | Read | 84 B | **Feature 66** (waveform and duration lists) | Size 85 − 1, the first 32 bits are `0x000D0042` (Auto Trigger Associated Control = Digitizer Tip Switch) |
 | 0x007a | Read | 10 B | **Feature 64** (Col05) | 0D:5B serial 32-bit, 0D:91 = `0x045E`, 0D:92 = `0x0C0F`, 0D:94 = 3 |
 | 0x006e | Read | 60 B | Col03 Feature 42 (inferred) | The only one whose size, 60, fits. 4 B header + 4 entries of 8 B, the rest 0 |
-| 0x0062 → 0x004f | Write Request 16 B → Write Response → Notification 16 B | 16 B | unknown | None of the known HID reports is 16 B. 7 round trips on each reconnection (about 30 ms apart). The values are truncated |
+| 0x0062 → 0x004f | Write Request 16 B → Write Response → Notification 16 B | 16 B | Output 45 → Input 45 (Col03, firmware update) | Identified since from the Report Reference descriptors: a CFU firmware offer exchange ([pen-vendor-exchange.md](pen-vendor-exchange.md) section 4). 7 round trips on each reconnection (about 30 ms apart). The values are truncated here |
 | 0x0047 | Notification | 8 B | Col01 keyboard Input 1 (tail button) | Arrives in PEN-5 at the times the tail button was pressed |
 
-Writes of the sizes that would go to Col02 Output 48, Col03 Output 42·45–47 or Col04 Output 51·52 (1·60·4·101·1 B) do not occur anywhere in the trace. On reconnection `csrss.exe` writes report 1 once, but no ATT write follows (keyboard LEDs; the pen's Col01 has no output report).
+Writes of the sizes that would go to Col02 Output 48, Col03 Output 42·45–47 or Col04 Output 51·52 (1·60·4·101·1 B) do not occur anywhere in the trace. On reconnection `csrss.exe` writes report 1 once, but no ATT write follows (keyboard LEDs; the pen's Col01 has no output report). Output 45 is 16 B and is the 0x0062 write of the table.
 
 ### 3.2 Feature 66: the waveform list the pen announces
 
@@ -114,8 +115,8 @@ The 22 writes after OneNote was installed are all there are. Placed next to the 
 | (after the recording ended) | 960.7–963.1 | 7 | no pen data |
 
 - One write at the start and one at the end of each stroke: 10–40 ms after contact, 9–35 ms after lift.
-- **There is no periodic retrigger.** No write occurred during the 9.8 s stroke, which is longer than the listed duration of ink-continuous (1995 ms). Whether the vibration continued throughout is not recorded (PEN-9 result "unverified").
-- The values are truncated and were not seen. Timing and count do not contradict the #1066 capture (start `41 00 7f 09 00 00 00` = ordinal 9, intensity 127, repeat·cutoff·retrigger 0; stop `41 00 fe 02 00 00 00`).
+- **There is no periodic retrigger.** No write occurred during the 9.8 s stroke, which is longer than the listed duration of ink-continuous (1995 ms). Whether the vibration continued throughout is not recorded here (PEN-9 result "unverified"); in a later capture it lasted through a 9.1 s stroke (observed, [pen-vendor-exchange.md](pen-vendor-exchange.md) section 5).
+- The values are truncated and were not seen here (captured since: start `00 7f NN 00 00 00`, stop `00 fe 02 00 00 00`, NN following the application's tool). Timing and count do not contradict the #1066 capture (start `41 00 7f 09 00 00 00` = ordinal 9, intensity 127, repeat·cutoff·retrigger 0; stop `41 00 fe 02 00 00 00`).
 - The writes are ATT Write Commands. At a connection interval of 15 ms, `Number Of Completed Packets` arrives 10–90 ms later.
 
 ## 4. Result: disconnection and reconnection (PEN-9, PEN-5)
@@ -175,7 +176,7 @@ Reading for #1656:
 - On Windows too the pen disconnected by itself (0x13) about 52 s after it was last used. "Disconnects after about a minute" is likely to be the pen's own behaviour. In PEN-5, however, it did not disconnect for 64 s, so it is not a simple fixed timer (motion detection, inferred).
 - The difference is in reconnection. When the pen wakes and advertises, Windows connects within 34 ms and has HID ready within 0.6 s. If the symptom on Linux is that the pen "does not come back", then either the pen is not on the BlueZ auto-connect list (`Disconnect()` was called while it was untrusted, or it is stored under an RPA instead of its identity address) or the RPA cannot be resolved for lack of the IRK. The pen advertises with an RPA.
 - What to look at first on Linux: the Disconnect Complete reason in `btmon`. 0x13 is the normal behaviour described above. 0x08 (Connection Timeout) makes the 420 ms supervision timeout a candidate cause, so test `ConnectionSupervisionTimeout=200`.
-- Measured on Linux since (test PEN-5; [userspace/pen](../../../userspace/pen/README.md), "Seen on the device"): the pen disconnects by itself after about 80 s without use with reason 0x13, as on Windows. After that it does not advertise at all when it is picked up, drawn with or its tail button is pressed (a two-minute unfiltered scan does not contain the empty ADV_IND from an RPA seen on Windows), so neither auto-connect nor `Connect()` has anything to connect to. The auto-connect list and the IRK therefore do not explain the symptom on this device. Whether the pen advertises again only to a host that performed the 16 B exchange of 4.3 is inferred.
+- Measured on Linux since (test PEN-5; [userspace/pen](../../../userspace/pen/README.md), "Seen on the device"): the pen disconnects by itself after about 80 s without use with reason 0x13, as on Windows. After that it does not advertise at all when it is picked up, drawn with or its tail button is pressed (a two-minute unfiltered scan does not contain the empty ADV_IND from an RPA seen on Windows), so neither auto-connect nor `Connect()` has anything to connect to. The auto-connect list and the IRK therefore do not explain the symptom on this device. The guess that the pen advertises again only to a host that performed the 16 B exchange of 4.3 was wrong: that exchange is a firmware update check. What decides it is the bond the pen holds: it advertises for reconnection to a host that gave it its identity key at bonding, which the Just Works pairing from Linux does not do. A pen bonded through the cover's pen slot with kernel patch 0023 reconnected 3.5 s after being picked up ([pen-vendor-exchange.md](pen-vendor-exchange.md) sections 3, 4).
 
 ## 5. What userspace/pen takes from this
 
@@ -184,15 +185,15 @@ Reading for #1656:
 - The intensity of the stop report is 0xFE, as on Windows.
 - README: recommended settings for reconnection (`main.conf` `[LE]`) and the order of checks for #1656.
 
-The reconnection logic of `surface-pen-connect` does not depend on this. On Windows the pen advertises 1.2 s before the digitizer sees it, so the design is that kernel auto-connect gets there first and the `Device1.Connect()` of the digitizer trigger is the fallback. On Linux neither has reconnected the pen: after its idle disconnect it was not seen advertising (4.4).
+The reconnection logic of `surface-pen-connect` does not depend on this. On Windows the pen advertises 1.2 s before the digitizer sees it, so the design is that kernel auto-connect gets there first and the `Device1.Connect()` of the digitizer trigger is the fallback. On Linux neither has reconnected a pen bonded in pairing mode: after its idle disconnect it was not seen advertising (4.4). A pen bonded through the cover's pen slot advertises with an RPA, and BlueZ resolves it and connects ([pen-vendor-exchange.md](pen-vendor-exchange.md) section 2.5).
 
 ## 6. Unknowns
 
 | Unknown | Why | How to find out |
 |---|---|---|
-| The report 65 values Windows actually wrote (ordinal, intensity, repeat, retrigger, cutoff); the meaning of the extra writes during a stroke (941.3·941.4 s) and of the 5 consecutive writes on the first stroke | HCIRAW truncates ATT write values | An over-the-air sniffer (nRF Sniffer and the like) needs the LTK because of the encryption. Instead, hook `HidD_SetOutputReport`/`WriteFile` of `dwm.exe` at the API level on Windows, or write the same values on Linux and compare by feel |
-| Whether ink-continuous repeats until STOP (or stops after 1995 ms) | All that is known is that there was no write during the 9.8 s stroke | Whether `pen-haptic buzz --ms 5000` vibrates for the whole 5 s on Linux |
-| The 16 B round trips on handles 0x0062/0x004f | The values are truncated, no matching report | Whether the same exchange happens on reconnection in Linux `btmon` (it shows decrypted HCI as it is); the UUIDs of the handles in the BlueZ GATT cache (`/var/lib/bluetooth/<adapter>/cache/<pen>`) |
-| The pen's disconnection condition | 52 s in PEN-9, held for more than 64 s in PEN-5 | The time until disconnection, with `btmon`, when the pen is only held and moved in the hand and when it lies on the desk |
-| The Windows background scan parameters, the meaning of Intel 0xFC1E | Set before the trace / vendor command | Record from right after turning Bluetooth off and on |
-| Direct evidence for handle ↔ report ID | There was no service discovery | The Report Reference (0x2908) reads in `btmon` when pairing on Linux |
+| The report 65 values Windows actually wrote (ordinal, intensity, repeat, retrigger, cutoff); the meaning of the extra writes during a stroke (941.3·941.4 s) and of the 5 consecutive writes on the first stroke | HCIRAW truncates ATT write values | An over-the-air sniffer (nRF Sniffer and the like) needs the LTK because of the encryption. Instead, hook `HidD_SetOutputReport`/`WriteFile` of `dwm.exe` at the API level on Windows, or write the same values on Linux and compare by feel. **Answered** for the values ([pen-vendor-exchange.md](pen-vendor-exchange.md) section 5, from a capture with full packet logging); the extra writes of this trace are still unexplained |
+| Whether ink-continuous repeats until STOP (or stops after 1995 ms) | All that is known is that there was no write during the 9.8 s stroke | Whether `pen-haptic buzz --ms 5000` vibrates for the whole 5 s on Linux. **Answered** on Windows: the vibration lasted through a 9.1 s stroke with only a start and a stop written (observed) |
+| The 16 B round trips on handles 0x0062/0x004f | The values are truncated, no matching report | Whether the same exchange happens on reconnection in Linux `btmon` (it shows decrypted HCI as it is); the UUIDs of the handles in the BlueZ GATT cache (`/var/lib/bluetooth/<adapter>/cache/<pen>`). **Answered**: Output 45 and Input 45, a CFU firmware offer exchange; Linux does not perform it and does not need to ([pen-vendor-exchange.md](pen-vendor-exchange.md) section 4) |
+| The pen's disconnection condition | 52 s in PEN-9, held for more than 64 s in PEN-5 | The time until disconnection, with `btmon`, when the pen is only held and moved in the hand and when it lies on the desk. Further values since: 69 s lying on a desk, 11 s after bonding in the cover's pen slot (Windows); about 50–80 s on Linux |
+| The Windows background scan parameters, the meaning of Intel 0xFC1E | Set before the trace / vendor command | Record from right after turning Bluetooth off and on. **Answered**: passive, filter policy 1, interval 367.5 ms, window 37.5 ms, set when the adapter is powered on; 0xFC1E accompanies every addition to the Filter Accept List, and Windows resolves the pen's RPA ([pen-vendor-exchange.md](pen-vendor-exchange.md) section 3) |
+| Direct evidence for handle ↔ report ID | There was no service discovery | The Report Reference (0x2908) reads in `btmon` when pairing on Linux. **Answered** (measured): 0x006b = Output 65, 0x0077 = Feature 66, 0x007a = Feature 64, 0x006e = Feature 42, 0x0047 = Input 1, as matched above ([pen-vendor-exchange.md](pen-vendor-exchange.md) section 4.1) |

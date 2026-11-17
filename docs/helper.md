@@ -121,7 +121,8 @@ The range 1600–7500 rpm is the span measured on this device (asking for 1500 g
 
 Pen haptics requested by applications (planned). On Windows, when an application calls the pen haptics API,
 `dwm.exe` writes report 65 to the pen (Bluetooth trace: single bursts of 1–3 writes and groups of continuous writes
-about 6 ms apart; the values are unverified because the capture truncates them).
+about 6 ms apart; that capture truncates the values. A later capture has them: one start and one stop per stroke,
+[pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md) section 5).
 All the pen receives is an ordinal, an intensity, a repeat count and a cutoff, so the same expression is possible
 on Linux. What is missing is a channel for applications to ask, so the plan is an effect method on the helper's
 D-Bus interface (`PlayEffect(kind)`, a table from effect name to write sequence) that applications call.

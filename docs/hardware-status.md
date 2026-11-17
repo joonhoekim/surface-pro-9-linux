@@ -4,7 +4,8 @@ What each part of the Surface Pro 9 (Intel, SKU `Surface_Pro_9_2038`) does on Li
 is in the [README](../README.md).
 
 Conditions: NixOS, kernel 7.3.4 = stable v7.3.4 + linux-surface 7.3 + [`kernel/patches`](../kernel/README.md)
-0001–0022, firmware UEFI 24.103.143 and SAM 6.603.139, Type Cover attached, Slim Pen 2.
+0001–0022, firmware UEFI 24.103.143 and SAM 6.603.139, Type Cover attached, Slim Pen 2. Patch 0023 (Bluetooth)
+has run only as a module loaded into that kernel; results that depend on it say so.
 
 How to read this page:
 
@@ -75,38 +76,53 @@ Verdict: unverified. Tests: TOUCH-1, TOUCH-2, TOUCH-4 unverified, TOUCH-3 partia
 Verdict: partial. Tests: PEN-5 partial, PEN-6 pass, PEN-8 partial, PEN-9 partial, PEN-1–4 and PEN-7 unverified.
 
 - **Observed.** Strokes draw (the iptsd stylus device reports `BTN_TOUCH`). Haptics: a click (waveform
-  ordinal 3) sent with output report 65 is felt. The continuous ink waveform (ordinal 9) sent the same way is
-  not felt, neither with the bytes Windows was captured sending (`41 00 7f 09 00 00 00`) nor at intensity 255.
-  Written as the Auto Trigger of Feature 65 it gives a weak, intermittent vibration during strokes, unlike the
-  continuous vibration on Windows. No difference was felt between waveforms 9–13 or between intensities 100
-  and 255.
+  ordinal 3) sent with output report 65 is felt. The continuous ink waveform (ordinal 9, intensity 127) is
+  felt during strokes, almost as on Windows, once the host feeds the pen's speed back to the digitizer
+  (Feature 9 of the touch controller), which `surface-pen-feedback` does. Without that feedback it is not
+  felt, neither with the bytes Windows was captured sending (`41 00 7f 09 00 00 00`) nor at intensity 255, and
+  written as the Auto Trigger of Feature 65 it gives only a weak, intermittent vibration. The tests used a pen
+  bonded in pairing mode.
 - **Measured.** Tail button: single click Meta+F20, double click Meta+F19, long press Meta+F18. Pairing by
   hand works (2/2): a long press of the tail button puts the pen in pairing mode and it bonds with a
   `NoInputNoOutput` agent; without an agent pairing fails with `AuthenticationFailed`. BlueZ and UPower then
-  show the pen's battery level. The pen disconnects by itself after about 80 s without use (reason 0x13, as on
+  show the pen's battery level. The pen disconnects by itself after 50–80 s without use (reason 0x13, as on
   Windows). The stylus device declares `ABS_PRESSURE` 0..4096, `ABS_TILT_X/Y` −9000..9000, `BTN_STYLUS` and
   `BTN_TOOL_RUBBER`. The touch controller's descriptor has the FFF4:0001 collection with input reports 84 and
   110, 12 B each.
+- **Measured, with patch 0023 loaded as a module** (no kernel built with it has been booted).
+  - Bonding through the cover's pen slot, without pairing mode. After the host address is written to the
+    cover, the cover announces the pen lying in its slot; the host gives the same 16 random bytes to the cover
+    and to the kernel as the pairing key, connects to the pen's coupling address (a second address, derived
+    from the pen ID and the host address) and pairs with LE legacy OOB pairing. The pen is bonded within 1 s
+    and BlueZ stores the LTK and IRK. This was done by hand with tools
+    ([`le-legacy-oob.py`](../tools/linux/le-legacy-oob.py), direct hidraw writes); no daemon does it, and
+    BlueZ attaches the pen's HID only after bluetoothd is restarted.
+  - Reconnection. A pen bonded that way, to which the host gave its identity key, disconnected by itself
+    after 50 s and was connected again 3.5 s after it was picked up and drawn with.
 - **Does not work.**
-  - Automatic bonding. Setting Features 86 and 112 on the digitizer leaves their values unchanged, input
-    reports 84 and 110 do not arrive, and the pen does not appear over Bluetooth. The format written was built
-    without knowing the bytes Windows writes.
-  - Reconnection. After its idle disconnect the pen does not advertise again when it is picked up, drawn with,
-    or its tail button is pressed; a two-minute unfiltered scan (30 000 advertisements) does not contain the
-    form seen on Windows, and `Device1.Connect()` times out. To use the Bluetooth features again the pen has
-    to be put in pairing mode again. On every reconnection Windows exchanges 16 B writes and notifications
-    seven times through a vendor GATT service; that the pen advertises again only to a host that did this
-    exchange is inferred, not confirmed.
-  - Continuous haptics (above).
+  - Reconnection of a pen bonded in pairing mode. After its idle disconnect the pen does not advertise again
+    when it is picked up, drawn with, or its tail button is pressed; a two-minute unfiltered scan (30 000
+    advertisements) does not contain the form seen on Windows, and `Device1.Connect()` times out. To use the
+    Bluetooth features again the pen has to be put in pairing mode again. The pen advertises for reconnection
+    only to a host that gave it its identity key at bonding, which this pairing does not do. (The 16 B
+    exchange Windows performs on every connection is a firmware update check and has nothing to do with it.)
+  - Automatic bonding through the digitizer. Setting Features 86 and 112 on the digitizer leaves their values
+    unchanged, input reports 84 and 110 do not arrive, and the pen does not appear over Bluetooth. The channel
+    that works is the cover (above).
 - **Unverified.** Reaching full pressure and the pressure at the start of a stroke (PEN-1), tilt against real
-  angles (PEN-2), the side button (PEN-3), the eraser (PEN-4), whether reports 84 and 110 are received
-  (PEN-7), haptics through the helper.
+  angles (PEN-2), the side button (PEN-3), the eraser (PEN-4), whether reports 84 and 110 are received on the
+  digitizer (PEN-7), haptics through the helper. Whether the FastHostId is needed for the continuous waveforms
+  and whether the speed value sets their strength. Continuous haptics with a pen bonded through the cover.
+  The unit `surface-pen-feedback.service` and the option `pen.feedbackService` as installed. The responder
+  and Secure Connections paths of patch 0023 (compile-tested only).
 - **Responsible.** iptsd for drawing. Drawing does not need Bluetooth; the tail button, the battery level and
   haptics do. The prototypes in [userspace/pen](../userspace/pen/README.md) (`pen-haptic`,
-  `surface-pen-connect`; option `pen.enable`, off by default). The helper's pen page (`sp9-ctl pen`, off by
-  default, unverified on the device).
+  `surface-pen-connect`, `surface-pen-feedback`; options `pen.enable`, `pen.connectService`,
+  `pen.feedbackService`, off by default). Kernel patch 0023 (LE legacy OOB pairing) for the cover coupling.
+  The helper's pen page (`sp9-ctl pen`, off by default, unverified on the device).
 - **Research.** [research/gaps/pen-touch.md](research/gaps/pen-touch.md),
-  [research/gaps/pen-ble-trace.md](research/gaps/pen-ble-trace.md).
+  [research/gaps/pen-ble-trace.md](research/gaps/pen-ble-trace.md),
+  [research/gaps/pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md).
 
 ## Cameras
 
@@ -372,7 +388,7 @@ Verdict: works. Test: NET-1 partial.
 Verdict: partial. Tests: NET-2 unverified, AUD-5 unverified.
 
 - **Measured.** AX211 Bluetooth (USB `8087:0033`), `btusb`/`btintel`; the firmware loads with no error lines.
-  The pen pairs and connects (see Pen).
+  The pen pairs and connects, and reconnects when it was bonded through the cover (see Pen).
 - **Unverified.** Mouse, earphones, audio, reconnection after resume.
 
 ## Device helper
