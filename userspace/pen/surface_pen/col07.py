@@ -29,7 +29,7 @@ DIGITIZER_IDS = (0x045E, 0x0C52)
 
 
 # The pen has a second address for the host it is coupled with through the cover slot. Windows'
-# SurfacePenBleLcAddrAdaptationDriver derives it; the constant is in that driver's .rdata.
+# SurfacePenBleLcAddrAdaptationDriver derives it; the constant is that driver's.
 _COUPLED_CONST = bytes.fromhex("f876af012e1c2840918f6f605e6b1fd6")
 _ADDR_MASK = (1 << 46) - 1
 _ADDR_STATIC = 0xC00000000000
