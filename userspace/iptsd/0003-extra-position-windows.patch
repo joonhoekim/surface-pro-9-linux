@@ -1,0 +1,191 @@
+Report the position of a DFT pen from the MPP v2 position windows (ExtraPositionWindows)
+
+An MPP v2 pen sends its tip tone in several windows of a group, and every window is sampled at
+its own time. On the Surface Pro 9 with the Slim Pen 2 the position window (0x06, 25 kHz tone)
+is followed by the two MPP v2 position windows 2.9 ms (0x07) and 10.1 ms (0x08) later in a 15 ms
+frame; their tip tone is about 15 times stronger. Measured on the device: their positions lie on
+one path when ordered by the window timestamps (median distance 0.01 to 0.03 mm), while the
+position of the 0x06 window is off by up to 1.7 mm when the pen is tilted.
+
+With [DFT] ExtraPositionWindows the position is taken from the 0x07 and 0x08 windows and a sample
+is emitted for each: 133 samples per second instead of 67, 7.2 and 7.8 ms apart. The 0x06 window
+still decides proximity and lift and its sample is still what announces them; a sample from the
+other windows is only emitted while the 0x06 window of the same group found the pen. While those
+samples flow, the 0x06 position is not reported (alternating between the two makes the path
+zigzag); if a group delivers none, the next 0x06 window reports as before. Off by default, and
+without these windows nothing changes.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 7b8c32a..911ed1b 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -75,6 +75,7 @@ public:
+ 	f64 dft_zero_force_exp = -0.5;
+ 	usize dft_zero_force_min_samples = 20;
+ 	f64 dft_zero_force_reference = 0;
++	bool dft_extra_position_windows = false;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index 1fcca14..1662938 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -64,6 +64,10 @@ private:
+ 	// Whether the contact is currently derived from the signal strength alone.
+ 	bool m_zero_force_contact = false;
+ 
++	// How many samples the MPP v2 position windows produced since the last position
++	// window. Only counted with ExtraPositionWindows.
++	usize m_extra_samples = 0;
++
+ public:
+ 	DftStylus(Config config, const DeviceInfo &info)
+ 		: m_config {std::move(config)},
+@@ -85,8 +89,28 @@ public:
+ 	bool input(const ipts::samples::DftWindow &dft)
+ 	{
+ 		switch (dft.type) {
+-		case ipts::protocol::dft::Type::Position:
++		case ipts::protocol::dft::Type::Position: {
++			const f64 x = m_stylus.x;
++			const f64 y = m_stylus.y;
++			const bool extra = m_extra_samples > 0;
++
++			m_extra_samples = 0;
+ 			this->handle_position(dft);
++
++			/* While the MPP v2 position windows deliver the position (see
++			 * handle_extra_position), the position of this window is left
++			 * out: its tone is much weaker and, with a tilted pen, off by
++			 * more than the distance the pen moved. Mixing the two makes the
++			 * path zigzag. The state is sent with the next sample, less than
++			 * 3 ms later. Entering and leaving proximity are still decided
++			 * and sent here.
++			 */
++			if (extra && m_stylus.proximity) {
++				m_stylus.x = x;
++				m_stylus.y = y;
++				return false;
++			}
++
+ 			/* This event type is the most important one. It is the first and
+ 			 * the last one to arrive. It sets both proximity and lift. It is
+ 			 * also guaranteed to come regularly whenever we have (or just lost)
+@@ -94,7 +118,7 @@ public:
+ 			 * and it is chosen as THE synchronising event.
+ 			 */
+ 			return true;
+-			break;
++		}
+ 		case ipts::protocol::dft::Type::Button:
+ 			this->handle_button(dft);
+ 			break;
+@@ -103,7 +127,9 @@ public:
+ 			break;
+ 		case ipts::protocol::dft::Type::PositionMPP_2:
+ 			this->handle_position_mpp_2(dft);
+-			break;
++			return this->handle_extra_position(dft);
++		case ipts::protocol::dft::Type::PositionMPP_2_Second:
++			return this->handle_extra_position(dft);
+ 		case ipts::protocol::dft::Type::BinaryMPP_2:
+ 			this->handle_dft_binary_mpp_2(dft);
+ 			break;
+@@ -213,6 +239,72 @@ private:
+ 		m_stylus.y = std::clamp(y, 0.0, 1.0);
+ 	}
+ 
++	/*!
++	 * Updates the stylus position from one of the MPP v2 position windows.
++	 *
++	 * An MPP v2 pen sends its tip tone in more windows of a group than the position
++	 * window, and every window is sampled at a different time: on the Surface Pro 9 the
++	 * two MPP v2 position windows come 2.9 ms and 10.1 ms after the position window of a
++	 * 15 ms frame, so together they are an almost evenly spaced position signal at twice
++	 * the rate, and a much stronger one.
++	 *
++	 * Proximity is not decided here: without a position window that found the pen in
++	 * the same group, nothing is reported.
++	 *
++	 * @param[in] dft The DFT window (with type == Type::PositionMPP_2 or PositionMPP_2_Second)
++	 * @return Whether the position was updated and a sample should be emitted.
++	 */
++	bool handle_extra_position(const ipts::samples::DftWindow &dft)
++	{
++		if (!m_config.dft_extra_position_windows)
++			return false;
++
++		if (!m_stylus.proximity)
++			return false;
++
++		if (!m_group.has_value() || m_group != dft.group)
++			return false;
++
++		if (dft.x.empty() || dft.y.empty())
++			return false;
++
++		if (dft.x[0].magnitude <= m_config.dft_position_min_mag ||
++		    dft.y[0].magnitude <= m_config.dft_position_min_mag)
++			return false;
++
++		u8 width = dft.width;
++		u8 height = dft.height;
++
++		if ((width == 0 || height == 0) && m_info.meta.has_value()) {
++			width = m_info.meta->columns;
++			height = m_info.meta->rows;
++		}
++
++		if (width < 2 || height < 2)
++			return false;
++
++		f64 x = this->interpolate_position(dft.x[0]);
++		f64 y = this->interpolate_position(dft.y[0]);
++
++		if (std::isnan(x) || std::isnan(y))
++			return false;
++
++		x /= width - 1;
++		y /= height - 1;
++
++		if (m_config.invert_x)
++			x = 1 - x;
++
++		if (m_config.invert_y)
++			y = 1 - y;
++
++		m_stylus.x = std::clamp(x, 0.0, 1.0);
++		m_stylus.y = std::clamp(y, 0.0, 1.0);
++
++		m_extra_samples++;
++		return true;
++	}
++
+ 	/*!
+ 	 * Calculates the button states of the stylus from a DFT window.
+ 	 *
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 0236644..271b936 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -198,6 +198,7 @@ private:
+ 		this->get(ini, "DFT", "ZeroForceExp", m_config.dft_zero_force_exp);
+ 		this->get(ini, "DFT", "ZeroForceMinSamples", m_config.dft_zero_force_min_samples);
+ 		this->get(ini, "DFT", "ZeroForceReference", m_config.dft_zero_force_reference);
++		this->get(ini, "DFT", "ExtraPositionWindows", m_config.dft_extra_position_windows);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);
+diff --git a/src/ipts/protocol/dft.hpp b/src/ipts/protocol/dft.hpp
+index c85db86..3c14f43 100644
+--- a/src/ipts/protocol/dft.hpp
++++ b/src/ipts/protocol/dft.hpp
+@@ -16,6 +16,7 @@ constexpr u8 PRESSURE_ROWS = 6;
+ enum class Type : u8 {
+ 	Position = 0x6,
+ 	PositionMPP_2 = 0x7,
++	PositionMPP_2_Second = 0x8,
+ 	Button = 0x9,
+ 	BinaryMPP_2 = 0xA,
+ 	Pressure = 0xB,

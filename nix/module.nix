@@ -288,6 +288,7 @@ in
             patches = (old.patches or [ ]) ++ [
               ../userspace/iptsd/0001-zero-force-contact.patch
               ../userspace/iptsd/0002-tilted-pen-in-range-button-debounce.patch
+              ../userspace/iptsd/0003-extra-position-windows.patch
             ];
           });
         })
