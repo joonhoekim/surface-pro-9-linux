@@ -101,8 +101,11 @@ mod linux {
             match wait(&f, libc::POLLPRI, 10_000) {
                 Ok(true) => {
                     s.clear();
-                    let _ = f.rewind();
-                    let _ = f.read_to_string(&mut s);
+                    // The LED is gone (the cover was detached or re-enumerated): the old file
+                    // reports an error for ever and poll() returns at once. Leave and look again.
+                    if f.rewind().is_err() || f.read_to_string(&mut s).is_err() {
+                        return;
+                    }
                     emit(conn);
                 }
                 Ok(false) => {
