@@ -2,38 +2,51 @@ Optionally correct the antenna period error of the centroid (TipSignalReference,
 
 The position between two antennas is interpolated from three amplitudes, and neither the parabola
 nor the centroid is linear in the true position: a slow straight diagonal stroke comes out wavy,
-once per antenna. Measured on the Surface Pro 9 with the Slim Pen 2 on strokes drawn along a
-straight edge (deviation from the fitted line, split into the part that repeats with the X and
-with the Y antennas, amplitude in mm on that axis):
+once per antenna. Measured on the Surface Pro 9 with the Slim Pen 2 on 20 strokes of three captures
+drawn along a straight edge, at 13 to 76 mm/s (deviation from the fitted line, split into the part
+that repeats with the X and with the Y antennas, amplitude in mm on that axis):
 
-- parabola on X, centroid on Y: X 0.09 at 20 degrees of tilt and light pressure, 0.26 .. 0.35 at
-  45 degrees, 0.45 on a very slow stroke at 40 degrees with firm pressure (plus 0.32 twice per
-  antenna, where a neighbour antenna in antiphase pins the parabola to the cell border for a third
-  of the cell); Y 0.06 .. 0.24.
-- centroid on both axes: X 0.04 .. 0.28, Y 0.05 .. 0.23, almost only the first harmonic.
+- parabola on X, centroid on Y: X 0.07 .. 0.10 at up to 26 degrees of tilt, 0.26 .. 0.48 at 40 to
+  48 degrees (plus 0.08 .. 0.32 twice per antenna, where a neighbour antenna in antiphase pins the
+  parabola to the cell border for a third of the cell); Y 0.06 .. 0.28.
+- centroid on both axes: X 0.04 .. 0.28, Y 0.05 .. 0.25, almost only the first harmonic.
 
 Nothing else contributes: the tilt offset and its smoothing add 0.002 .. 0.013 mm, the jitter lock
 0 .. 0.014 mm, and the two MPP v2 position windows agree.
 
-The error of the centroid follows the strength of the tip signal (which grows with pressure and
-tilt), not the tilt or the pressure alone: its cosine part goes from +0.05 mm at the signal level
-of light writing through zero to -0.27 mm at 1.7 times that level, the same on both axes. With
+The error of the centroid changes with two things that can be read from the same window:
 
-  level = summed amplitude of the three antennas, mean of both axes / TipSignalReference
-  error = (Cos + CosLevel (level - 1)) cos(2 pi x) + (Sin + SinLevel (level - 1)) sin(2 pi x)
-        + Cos2 cos(4 pi x) + Sin2 sin(4 pi x)                      (x and error in antennas)
+  level     = summed amplitude of the three antennas, mean of both axes / TipSignalReference
+              (grows with pressure and tilt)
+  asymmetry = (sum of the three antennas beyond the upper neighbour - sum of the three beyond the
+              lower one, with their sign relative to the strongest antenna) / summed amplitude of
+              the three antennas in the middle, smoothed over about ten samples
+              (the tail of the tip signal falls to zero and below on the side the pen leans to)
 
-subtracted from the centroid (per axis: CellCorrectionCosX .. CellCorrectionSin2Y, level limited
-to CellCorrectionLevelMin .. Max), the same strokes give X 0.003 .. 0.030 mm and Y 0.008 ..
-0.034 mm, and the deviation from the line falls from 0.07 .. 0.35 mm rms to 0.02 .. 0.07 mm, which
-is what the hand contributes. With the coefficients fitted without the group of strokes that is
-evaluated: 0.005 .. 0.045 mm per axis at levels of 1.2 and more, 0.05 .. 0.06 mm at level 1.0
-(two strokes; without the correction 0.06 .. 0.09 mm there). The coefficients are a least squares
-fit to 14 strokes at four combinations of tilt and pressure, all with the pen leaning to the lower
-right; light upright writing and other leaning directions are not covered by a measurement.
+  error = (Cos + CosLevel (level - 1) + CosAsymmetry asymmetry) cos(2 pi x)
+        + (Sin + SinLevel (level - 1) + SinAsymmetry asymmetry) sin(2 pi x)
+        + Cos2 cos(4 pi x) + Sin2 sin(4 pi x)                       (x and error in antennas)
 
-The correction applies where the centroid is selected (PositionCentroidX / Y), needs no state and
-adds no delay. Everything else of a sample is unchanged.
+is subtracted from the centroid (per axis: CellCorrectionCosX .. CellCorrectionSin2Y; the level
+is limited to CellCorrectionLevelMin .. Max, the asymmetry to CellCorrectionAsymmetryMax). Neither
+the level nor the asymmetry alone is enough: a pen at 45 to 50 degrees can have the level of a pen
+at 20 degrees (1.2) with the error of a firmly pressed one (0.24 mm), which only the asymmetry
+shows; pressure at constant tilt changes the error with the level.
+
+With the coefficients fitted to all strokes (these 20 and the two fast ones below), the 20 give X 0.001 .. 0.063 mm and
+Y 0.007 .. 0.059 mm, and the deviation from the line falls from 0.07 .. 0.35 mm rms to 0.03 ..
+0.10 mm, most of which is the hand. With the coefficients fitted to the strokes of the other
+captures only: 0.003 .. 0.090 mm per axis, except the one stroke at 45 to 50 degrees with a low
+level, whose combination of level and asymmetry occurs in one capture only (0.14 .. 0.17 mm
+then, 0.24 .. 0.25 mm uncorrected).
+
+Two strokes at 200 mm/s with light pressure do not follow: there the centroid has 0.02 .. 0.03 mm
+on X without the correction and 0.09 .. 0.12 mm with it (parabola 0.12 .. 0.16 mm), and 0.06 ..
+0.12 mm on Y either way. Light upright writing and a pen leaning to another side than the lower
+right are not covered by a measurement.
+
+The correction applies where the centroid is selected (PositionCentroidX / Y) and adds no delay.
+Everything else of a sample is unchanged.
 
 CentroidFadeMin / CentroidFadeMax: with a weak signal (pen hovering high) the centroid jumps, one
 position in ten is off by 0.4 .. 1.3 mm from its neighbours where the parabola is off by 0.14 ..
@@ -43,38 +56,55 @@ CentroidFadeMax the centroid, in between a mix.
 All off by default.
 
 diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
-index 9fbfb53..5064819 100644
+index 9fbfb53..09c7114 100644
 --- a/src/core/generic/config.hpp
 +++ b/src/core/generic/config.hpp
-@@ -105,6 +105,23 @@ public:
+@@ -105,6 +105,28 @@ public:
  	usize dft_pressure_bit_min_mag = 3000;
  	bool dft_pressure_ramp = false;
  	bool dft_zero_force_pressure = false;
 +	f64 dft_tip_signal_reference = 0;
 +	f64 dft_centroid_fade_min = 0;
 +	f64 dft_centroid_fade_max = 0;
++	f64 dft_cell_correction_asymmetry_max = 0;
 +	f64 dft_cell_correction_level_min = 1;
 +	f64 dft_cell_correction_level_max = 1;
 +	f64 dft_cell_correction_cos_x = 0;
 +	f64 dft_cell_correction_sin_x = 0;
 +	f64 dft_cell_correction_cos_level_x = 0;
 +	f64 dft_cell_correction_sin_level_x = 0;
++	f64 dft_cell_correction_cos_asymmetry_x = 0;
++	f64 dft_cell_correction_sin_asymmetry_x = 0;
 +	f64 dft_cell_correction_cos2_x = 0;
 +	f64 dft_cell_correction_sin2_x = 0;
 +	f64 dft_cell_correction_cos_y = 0;
 +	f64 dft_cell_correction_sin_y = 0;
 +	f64 dft_cell_correction_cos_level_y = 0;
 +	f64 dft_cell_correction_sin_level_y = 0;
++	f64 dft_cell_correction_cos_asymmetry_y = 0;
++	f64 dft_cell_correction_sin_asymmetry_y = 0;
 +	f64 dft_cell_correction_cos2_y = 0;
 +	f64 dft_cell_correction_sin2_y = 0;
  
  public:
  	/*!
 diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
-index dcc80cd..4db29d0 100644
+index dcc80cd..bdc9fd4 100644
 --- a/src/core/generic/dft.hpp
 +++ b/src/core/generic/dft.hpp
-@@ -714,11 +714,39 @@ private:
+@@ -464,6 +464,11 @@ private:
+ 	f64 m_tilt_offset_x = 0;
+ 	f64 m_tilt_offset_y = 0;
+ 
++	// The asymmetry of the tip signal on both axes, smoothed (see update_tip_asymmetry).
++	bool m_tip_asymmetry_valid = false;
++	f64 m_tip_asymmetry_x = 0;
++	f64 m_tip_asymmetry_y = 0;
++
+ 	// Holds the reported position of a pen that does not move, and filters the
+ 	// position while the pen draws: see filter_position().
+ 	DftInkFilter m_ink_filter {};
+@@ -714,11 +719,49 @@ private:
  		const f64 cx = this->interpolate_centroid(dft.x[0]);
  		const f64 cy = this->interpolate_centroid(dft.y[0]);
  
@@ -88,15 +118,21 @@ index dcc80cd..4db29d0 100644
 +		const f64 level = this->tip_level(dft.x[0], dft.y[0]);
 +		const f64 weight = this->centroid_weight(level);
 +
++		this->update_tip_asymmetry(dft.x[0], dft.y[0]);
++
 +		if (m_config.dft_position_centroid_x && !std::isnan(cx)) {
-+			const f64 c = this->correct_cell(cx,
-+			                                 level,
-+			                                 m_config.dft_cell_correction_cos_x,
-+			                                 m_config.dft_cell_correction_sin_x,
-+			                                 m_config.dft_cell_correction_cos_level_x,
-+			                                 m_config.dft_cell_correction_sin_level_x,
-+			                                 m_config.dft_cell_correction_cos2_x,
-+			                                 m_config.dft_cell_correction_sin2_x);
++			const f64 c =
++				this->correct_cell(cx,
++			                           level,
++			                           m_tip_asymmetry_x,
++			                           m_config.dft_cell_correction_cos_x,
++			                           m_config.dft_cell_correction_sin_x,
++			                           m_config.dft_cell_correction_cos_level_x,
++			                           m_config.dft_cell_correction_sin_level_x,
++			                           m_config.dft_cell_correction_cos_asymmetry_x,
++			                           m_config.dft_cell_correction_sin_asymmetry_x,
++			                           m_config.dft_cell_correction_cos2_x,
++			                           m_config.dft_cell_correction_sin2_x);
 +
 +			x = weight >= 1 ? c : x + (weight * (c - x));
 +		}
@@ -104,21 +140,25 @@ index dcc80cd..4db29d0 100644
 -		if (m_config.dft_position_centroid_y && !std::isnan(cy))
 -			y = cy;
 +		if (m_config.dft_position_centroid_y && !std::isnan(cy)) {
-+			const f64 c = this->correct_cell(cy,
-+			                                 level,
-+			                                 m_config.dft_cell_correction_cos_y,
-+			                                 m_config.dft_cell_correction_sin_y,
-+			                                 m_config.dft_cell_correction_cos_level_y,
-+			                                 m_config.dft_cell_correction_sin_level_y,
-+			                                 m_config.dft_cell_correction_cos2_y,
-+			                                 m_config.dft_cell_correction_sin2_y);
++			const f64 c =
++				this->correct_cell(cy,
++			                           level,
++			                           m_tip_asymmetry_y,
++			                           m_config.dft_cell_correction_cos_y,
++			                           m_config.dft_cell_correction_sin_y,
++			                           m_config.dft_cell_correction_cos_level_y,
++			                           m_config.dft_cell_correction_sin_level_y,
++			                           m_config.dft_cell_correction_cos_asymmetry_y,
++			                           m_config.dft_cell_correction_sin_asymmetry_y,
++			                           m_config.dft_cell_correction_cos2_y,
++			                           m_config.dft_cell_correction_sin2_y);
 +
 +			y = weight >= 1 ? c : y + (weight * (c - y));
 +		}
  
  		this->update_tilt(dft, cx, cy, width, height);
  
-@@ -1886,6 +1914,122 @@ private:
+@@ -1886,6 +1929,212 @@ private:
  		return row.first + maxi + ((w[2] - w[0]) / sum);
  	}
  
@@ -184,41 +224,126 @@ index dcc80cd..4db29d0 100644
 +	}
 +
 +	/*!
++	 * How much stronger the tail of the tip signal is on the upper side of the tip than
++	 * on the lower side.
++	 *
++	 * The three antennas beyond each neighbour of the strongest antenna are summed (with
++	 * their sign relative to the phase of the strongest antenna), and the difference of
++	 * the two sums is divided by the summed amplitude of the three antennas in the
++	 * middle. A pen that leans towards higher positions gives a negative value: on that
++	 * side the tail falls to zero and below.
++	 *
++	 * @param[in] row A list of measurements on one axis.
++	 * @return The asymmetry, 0 at the screen edge.
++	 */
++	[[nodiscard]] static f64 tip_asymmetry(const ipts::protocol::dft::Row &row)
++	{
++		constexpr u8 n = ipts::protocol::dft::NUM_COMPONENTS;
++		constexpr u8 mid = n / 2;
++
++		const f64 amp = std::hypot(row.real.at(mid), row.imag.at(mid));
++
++		if (amp < 1)
++			return 0;
++
++		const f64 cos = row.real.at(mid) / amp;
++		const f64 sin = row.imag.at(mid) / amp;
++
++		f64 core = 0;
++		f64 difference = 0;
++
++		for (u8 i = 0; i < n; i++) {
++			const f64 re = row.real.at(i);
++			const f64 im = row.imag.at(i);
++
++			// off-screen components are always zero
++			if (re == 0 && im == 0)
++				return 0;
++
++			if (i + 1 < mid)
++				difference -= (cos * re) + (sin * im);
++			else if (i > mid + 1)
++				difference += (cos * re) + (sin * im);
++			else
++				core += std::hypot(re, im);
++		}
++
++		return difference / core;
++	}
++
++	/*!
++	 * Follows the asymmetry of the tip signal on both axes.
++	 *
++	 * The asymmetry of a single window also changes with the position of the tip
++	 * between two antennas, so it is smoothed over about ten samples. It starts anew
++	 * when the pen comes into range.
++	 *
++	 * @param[in] row_x The measurements of the tip signal on the X axis.
++	 * @param[in] row_y The measurements of the tip signal on the Y axis.
++	 */
++	void update_tip_asymmetry(const ipts::protocol::dft::Row &row_x,
++	                          const ipts::protocol::dft::Row &row_y)
++	{
++		constexpr f64 gain = 0.1;
++
++		if (m_config.dft_cell_correction_asymmetry_max <= 0)
++			return;
++
++		const f64 ax = tip_asymmetry(row_x);
++		const f64 ay = tip_asymmetry(row_y);
++
++		if (m_tip_asymmetry_valid) {
++			m_tip_asymmetry_x += gain * (ax - m_tip_asymmetry_x);
++			m_tip_asymmetry_y += gain * (ay - m_tip_asymmetry_y);
++		} else {
++			m_tip_asymmetry_x = ax;
++			m_tip_asymmetry_y = ay;
++			m_tip_asymmetry_valid = true;
++		}
++	}
++
++	/*!
 +	 * Removes the error of the centroid that repeats with the antenna pitch.
 +	 *
 +	 * The centroid of three antennas is not linear in the position of the tip between
-+	 * two antennas. Measured on the Surface Pro 9 with the Slim Pen 2 on slow straight
-+	 * diagonal strokes: the reported line deviates from a straight one once per antenna,
-+	 * by 0.04 to 0.28 mm per axis (with the parabola 0.06 to 0.45 mm), and the size and
-+	 * the sign of the deviation follow the strength of the tip signal, which grows with
-+	 * the pressure and the tilt of the pen. It is described by the first two harmonics
-+	 * of the antenna period, with the first one linear in the signal level:
++	 * two antennas: a slow straight diagonal stroke comes out wavy, once per antenna.
++	 * Measured on the Surface Pro 9 with the Slim Pen 2 the wave is described by the
++	 * first two harmonics of the antenna period, and the first one changes with the
++	 * strength of the tip signal (which grows with pressure and tilt) and with the
++	 * asymmetry of its tails (which follows the tilt):
 +	 *
-+	 *   error = (cos + cos_level * (level - 1)) * cos(2 pi x)
-+	 *         + (sin + sin_level * (level - 1)) * sin(2 pi x)
++	 *   error = (cos + cos_level * (level - 1) + cos_asymmetry * a) * cos(2 pi x)
++	 *         + (sin + sin_level * (level - 1) + sin_asymmetry * a) * sin(2 pi x)
 +	 *         + cos2 * cos(4 pi x) + sin2 * sin(4 pi x)
 +	 *
-+	 * The level is limited to CellCorrectionLevelMin .. Max, the range in which the
-+	 * coefficients were measured. They belong to a sensor and a pen. The antennas are
-+	 * at the integer positions, so the correction is continuous where the strongest
-+	 * antenna changes.
++	 * The level is limited to CellCorrectionLevelMin .. Max and the asymmetry to
++	 * CellCorrectionAsymmetryMax, the ranges in which the coefficients were measured.
++	 * They belong to a sensor, a pen and CentroidExp. The antennas are at the integer
++	 * positions, so the correction is continuous where the strongest antenna changes.
 +	 *
 +	 * @param[in] pos The centroid on one axis, in antennas.
 +	 * @param[in] level The strength of the tip signal, see tip_level().
++	 * @param[in] asymmetry The smoothed asymmetry of the tails on this axis, see
++	 * tip_asymmetry().
 +	 * @param[in] cos The coefficient of cos(2 pi x) at level 1, in antennas.
 +	 * @param[in] sin The coefficient of sin(2 pi x) at level 1.
 +	 * @param[in] cos_level The change of the cosine coefficient per unit of level.
 +	 * @param[in] sin_level The change of the sine coefficient per unit of level.
++	 * @param[in] cos_asymmetry The change of the cosine coefficient per unit of asymmetry.
++	 * @param[in] sin_asymmetry The change of the sine coefficient per unit of asymmetry.
 +	 * @param[in] cos2 The coefficient of cos(4 pi x).
 +	 * @param[in] sin2 The coefficient of sin(4 pi x).
 +	 * @return The corrected position on that axis, in antennas.
 +	 */
 +	[[nodiscard]] f64 correct_cell(const f64 pos,
 +	                               const f64 level,
++	                               const f64 asymmetry,
 +	                               const f64 cos,
 +	                               const f64 sin,
 +	                               const f64 cos_level,
 +	                               const f64 sin_level,
++	                               const f64 cos_asymmetry,
++	                               const f64 sin_asymmetry,
 +	                               const f64 cos2,
 +	                               const f64 sin2) const
 +	{
@@ -228,11 +353,16 @@ index dcc80cd..4db29d0 100644
 +		const f64 min = m_config.dft_cell_correction_level_min;
 +		const f64 max = std::max(min, m_config.dft_cell_correction_level_max);
 +
++		const f64 limit = std::max(m_config.dft_cell_correction_asymmetry_max, 0.0);
++
 +		const f64 l = std::clamp(level, min, max) - 1;
++		const f64 a = std::clamp(asymmetry, -limit, limit);
 +		const f64 phase = 2 * M_PI * pos;
 +
-+		const f64 error = ((cos + (cos_level * l)) * std::cos(phase)) +
-+		                  ((sin + (sin_level * l)) * std::sin(phase)) +
++		const f64 first_cos = cos + (cos_level * l) + (cos_asymmetry * a);
++		const f64 first_sin = sin + (sin_level * l) + (sin_asymmetry * a);
++
++		const f64 error = (first_cos * std::cos(phase)) + (first_sin * std::sin(phase)) +
 +		                  (cos2 * std::cos(2 * phase)) + (sin2 * std::sin(2 * phase));
 +
 +		return pos - error;
@@ -241,29 +371,42 @@ index dcc80cd..4db29d0 100644
  	/*!
  	 * Calculates the position of the ring signal.
  	 *
+@@ -2102,6 +2351,7 @@ private:
+ 			m_stylus.azimuth = 0;
+ 		}
+ 		m_tilt_offset_valid = false;
++		m_tip_asymmetry_valid = false;
+ 
+ 		m_ink_filter.reset();
+ 		m_jitter_lock.reset();
 diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
-index 32d00e8..ac6fc21 100644
+index 32d00e8..1d978e7 100644
 --- a/src/core/linux/config-loader.hpp
 +++ b/src/core/linux/config-loader.hpp
-@@ -228,6 +228,23 @@ private:
+@@ -228,6 +228,28 @@ private:
  		this->get(ini, "DFT", "PressureBitMinMag", m_config.dft_pressure_bit_min_mag);
  		this->get(ini, "DFT", "PressureRamp", m_config.dft_pressure_ramp);
  		this->get(ini, "DFT", "ZeroForcePressure", m_config.dft_zero_force_pressure);
 +		this->get(ini, "DFT", "TipSignalReference", m_config.dft_tip_signal_reference);
 +		this->get(ini, "DFT", "CentroidFadeMin", m_config.dft_centroid_fade_min);
 +		this->get(ini, "DFT", "CentroidFadeMax", m_config.dft_centroid_fade_max);
++		this->get(ini, "DFT", "CellCorrectionAsymmetryMax", m_config.dft_cell_correction_asymmetry_max);
 +		this->get(ini, "DFT", "CellCorrectionLevelMin", m_config.dft_cell_correction_level_min);
 +		this->get(ini, "DFT", "CellCorrectionLevelMax", m_config.dft_cell_correction_level_max);
 +		this->get(ini, "DFT", "CellCorrectionCosX", m_config.dft_cell_correction_cos_x);
 +		this->get(ini, "DFT", "CellCorrectionSinX", m_config.dft_cell_correction_sin_x);
 +		this->get(ini, "DFT", "CellCorrectionCosLevelX", m_config.dft_cell_correction_cos_level_x);
 +		this->get(ini, "DFT", "CellCorrectionSinLevelX", m_config.dft_cell_correction_sin_level_x);
++		this->get(ini, "DFT", "CellCorrectionCosAsymmetryX", m_config.dft_cell_correction_cos_asymmetry_x);
++		this->get(ini, "DFT", "CellCorrectionSinAsymmetryX", m_config.dft_cell_correction_sin_asymmetry_x);
 +		this->get(ini, "DFT", "CellCorrectionCos2X", m_config.dft_cell_correction_cos2_x);
 +		this->get(ini, "DFT", "CellCorrectionSin2X", m_config.dft_cell_correction_sin2_x);
 +		this->get(ini, "DFT", "CellCorrectionCosY", m_config.dft_cell_correction_cos_y);
 +		this->get(ini, "DFT", "CellCorrectionSinY", m_config.dft_cell_correction_sin_y);
 +		this->get(ini, "DFT", "CellCorrectionCosLevelY", m_config.dft_cell_correction_cos_level_y);
 +		this->get(ini, "DFT", "CellCorrectionSinLevelY", m_config.dft_cell_correction_sin_level_y);
++		this->get(ini, "DFT", "CellCorrectionCosAsymmetryY", m_config.dft_cell_correction_cos_asymmetry_y);
++		this->get(ini, "DFT", "CellCorrectionSinAsymmetryY", m_config.dft_cell_correction_sin_asymmetry_y);
 +		this->get(ini, "DFT", "CellCorrectionCos2Y", m_config.dft_cell_correction_cos2_y);
 +		this->get(ini, "DFT", "CellCorrectionSin2Y", m_config.dft_cell_correction_sin2_y);
  

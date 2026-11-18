@@ -1,0 +1,139 @@
+Optionally ignore a binary window whose two rows both carry a signal (Mpp2ButtonPurity)
+
+An MPP v2 pen sends the state of its barrel button as a tone in one of two rows of the first
+binary window of a group, and iptsd takes row 5 stronger than row 4 for "button or eraser". Whether
+it is the button or the eraser is then read from the phase of the tone in the button window.
+
+Measured on the Surface Pro 9 with the Slim Pen 2: the stronger of the two rows normally has more
+than 1000 times the magnitude of the other one (95 % of the frames; less while the pen hovers
+high). For two to three frames while the pen comes back into range, or changes what it
+sends in the second binary window, both rows carry a signal in both windows: the stronger one 3 to
+17 times the weaker one in the first window, 1 to 14 times in the second. In those frames the
+first window read as "button or eraser", and with no tone at all in the button window (magnitude
+5 to 30, where a decision by magnitude needs 1000) the phase of the noise made it a pressed
+button: three frames in one capture (45 ms, beginning 75 ms after the pen came into range) and two
+in another, with nobody touching the button.
+
+With Mpp2ButtonPurity a binary window decides only if its stronger row has at least that many
+times the magnitude of the weaker one. A first window that fails keeps the decision of the frame
+before; a second window that fails takes back what the first one of its group decided. With 40
+the five frames are gone and no other sample of 7 captures changes.
+
+There was no capture with the button really pressed. A pressed button is expected to be a clean
+tone in row 5 like the released one is in row 4, and a single mixed frame while it is pressed or
+released keeps the state of the frame before.
+
+Off by default.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 2cc85c7..af3f6e3 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -106,6 +106,7 @@ public:
+ 	bool dft_pressure_ramp = false;
+ 	bool dft_zero_force_pressure = false;
+ 	bool dft_zero_force_stroke_sum = false;
++	f64 dft_mpp2_button_purity = 0;
+ 	f64 dft_tip_signal_reference = 0;
+ 	f64 dft_centroid_fade_min = 0;
+ 	f64 dft_centroid_fade_max = 0;
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index 6a77648..4bcbe88 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -364,6 +364,11 @@ private:
+ 	// value to use only the first window in the group.
+ 	std::optional<u32> m_mppv2_binary_group = std::nullopt;
+ 
++	// What the binary windows of the group before had decided, and whether the second
++	// binary window of the current group was seen. Only used with Mpp2ButtonPurity.
++	std::optional<bool> m_mppv2_binary_previous = std::nullopt;
++	bool m_mppv2_binary_checked = false;
++
+ 	// Boolean to track whether a button is held according to mpp v2.
+ 	// This is used instead of the button threshold detection.
+ 	std::optional<bool> m_mppv2_button_or_eraser = std::nullopt;
+@@ -1803,21 +1808,55 @@ private:
+ 			return;
+ 		}
+ 
+-		// Second time we see this dft window in this group, skip it.
+-		if (!dft.group.has_value() || m_mppv2_binary_group == dft.group)
++		if (!dft.group.has_value())
+ 			return;
+-		m_mppv2_binary_group = dft.group;
+-
+-		// Clearing the state in case we can't determine it.
+-		m_mppv2_button_or_eraser = std::nullopt;
+ 
+-		// Now, we can process the frame to determine button state.
+ 		// First, collapse x and y, they convey the same information.
+ 		const auto mag_4 = dft.x[4].magnitude + dft.y[4].magnitude;
+ 		const auto mag_5 = dft.x[5].magnitude + dft.y[5].magnitude;
+ 		const auto threshold = 2 * m_config.dft_mpp2_button_min_mag;
+ 
+-		if (mag_4 < threshold && mag_5 < threshold) {
++		const bool weak = mag_4 < threshold && mag_5 < threshold;
++
++		/*
++		 * The pen sends a bit as a tone in one of the two rows. Measured on the
++		 * Surface Pro 9 with the Slim Pen 2: normally the stronger row has more than
++		 * 1000 times the magnitude of the other one. For two to three frames while
++		 * the pen comes back into range (and changes what it sends in the second
++		 * window of the group) both rows carry a signal in both windows, the stronger
++		 * one 3 to 17 times the weaker one, and the first window then reads as a
++		 * pressed button although none is. With Mpp2ButtonPurity a window whose
++		 * rows are closer than that factor does not decide anything.
++		 */
++		const f64 purity = m_config.dft_mpp2_button_purity;
++
++		const f64 high = casts::to<f64>(std::max(mag_4, mag_5));
++		const f64 low = casts::to<f64>(std::min(mag_4, mag_5));
++
++		const bool mixed = purity > 0 && !weak && high < purity * low;
++
++		// Second time we see this dft window in this group: it only takes back
++		// what the first window decided, if it is not a clean tone itself.
++		if (m_mppv2_binary_group == dft.group) {
++			if (mixed && !m_mppv2_binary_checked)
++				m_mppv2_button_or_eraser = m_mppv2_binary_previous;
++
++			m_mppv2_binary_checked = true;
++			return;
++		}
++
++		m_mppv2_binary_group = dft.group;
++		m_mppv2_binary_previous = m_mppv2_button_or_eraser;
++		m_mppv2_binary_checked = false;
++
++		// The state of the frame before stays.
++		if (mixed)
++			return;
++
++		// Clearing the state in case we can't determine it.
++		m_mppv2_button_or_eraser = std::nullopt;
++
++		if (weak) {
+ 			// Not enough signal to make a decision.
+ 			return;
+ 		}
+@@ -2389,6 +2428,7 @@ private:
+ 
+ 		m_mppv2_in_contact = std::nullopt;
+ 		m_mppv2_button_or_eraser = std::nullopt;
++		m_mppv2_binary_previous = std::nullopt;
+ 		m_button_candidate = false;
+ 		m_rubber_candidate = false;
+ 
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index a7da600..e8bc945 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -229,6 +229,7 @@ private:
+ 		this->get(ini, "DFT", "PressureRamp", m_config.dft_pressure_ramp);
+ 		this->get(ini, "DFT", "ZeroForcePressure", m_config.dft_zero_force_pressure);
+ 		this->get(ini, "DFT", "ZeroForceStrokeSum", m_config.dft_zero_force_stroke_sum);
++		this->get(ini, "DFT", "Mpp2ButtonPurity", m_config.dft_mpp2_button_purity);
+ 		this->get(ini, "DFT", "TipSignalReference", m_config.dft_tip_signal_reference);
+ 		this->get(ini, "DFT", "CentroidFadeMin", m_config.dft_centroid_fade_min);
+ 		this->get(ini, "DFT", "CentroidFadeMax", m_config.dft_centroid_fade_max);
