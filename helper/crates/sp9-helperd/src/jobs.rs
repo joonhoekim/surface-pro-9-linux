@@ -19,9 +19,44 @@ fn run(cmd: &mut Command) -> Result<String, String> {
 }
 
 /// Restart every running iptsd instance (iptsd@<hidraw>.service) so it reads /etc/iptsd.d again.
+///
+/// Restarts are kept apart: a slider in the settings app sends a change per step, and systemd gives
+/// up on a unit that is started too often in a row (start-limit-hit left the machine without touch
+/// and pen). A change that comes within `IPTSD_RESTART_GAP` of the last restart is applied by one
+/// deferred restart.
 #[cfg(not(test))]
 pub fn restart_iptsd_blocking() -> Result<(), String> {
-    run(Command::new("systemctl").args(["try-restart", "iptsd@*.service"])).map(|_| ())
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    const IPTSD_RESTART_GAP: Duration = Duration::from_secs(4);
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    static PENDING: AtomicBool = AtomicBool::new(false);
+
+    fn restart_now() -> Result<(), String> {
+        *LAST.lock().unwrap() = Some(Instant::now());
+        // a unit that hit the start limit earlier stays failed otherwise
+        let _ = run(Command::new("systemctl").args(["reset-failed", "iptsd@*.service"]));
+        run(Command::new("systemctl").args(["restart", "iptsd@*.service"])).map(|_| ())
+    }
+
+    let since = LAST.lock().unwrap().map(|t| t.elapsed());
+    match since {
+        Some(d) if d < IPTSD_RESTART_GAP => {
+            if !PENDING.swap(true, Ordering::SeqCst) {
+                let wait = IPTSD_RESTART_GAP - d;
+                std::thread::spawn(move || {
+                    std::thread::sleep(wait);
+                    PENDING.store(false, Ordering::SeqCst);
+                    if let Err(e) = restart_now() {
+                        eprintln!("sp9-helperd: iptsd restart: {e}");
+                    }
+                });
+            }
+            Ok(())
+        }
+        _ => restart_now(),
+    }
 }
 
 /// The tests drive SetIptsd and Reload as an ordinary user against fake files, but systemctl is
