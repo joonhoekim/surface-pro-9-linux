@@ -10,7 +10,7 @@ Origin, author, status and evidence of each patch are in [PROVENANCE.md](PROVENA
 |---|---|
 | Upstream | stable `v7.3.4` (`7595a62d45ee1a2297eafa5f2ef5d0a45142d84d`) |
 | linux-surface | `patches/7.3/0001`–`0015` of [linux-surface/linux-surface](https://github.com/linux-surface/linux-surface) at `ea852b4eff5ed641571e13766bda5bd9cf121983` (47 commits, `patches/7.3/BASE` = `v7.3.4`) |
-| This repository | `patches/0001`–`0023` |
+| This repository | `patches/0001`–`0024` |
 
 The linux-surface series is not copied but pinned by commit: it is a public git repository, so the commit hash
 alone reproduces it exactly, and copying 15 files would only add provenance tracking and update work.
@@ -23,7 +23,7 @@ git clone https://github.com/linux-surface/linux-surface.git
 git -C linux-surface checkout ea852b4eff5ed641571e13766bda5bd9cf121983
 cd linux-sp9
 git am ../linux-surface/patches/7.3/*.patch                    # 15 files, 47 commits (whitespace warnings only)
-git am /path/to/surface-pro-9-linux/kernel/patches/*.patch     # 0001-0023, in order
+git am /path/to/surface-pro-9-linux/kernel/patches/*.patch     # 0001-0024, in order
 ```
 
 In exactly this order (v7.3.4 → 47 linux-surface commits → 0001–0017) everything has been confirmed to apply
@@ -158,6 +158,7 @@ create the initramfs and the boot loader entry with the distribution's tools
 | Camera: rear lens power | 0021 | dw9719 powers up on the first `focus_absolute` write, not on open. A lens node that is merely held open no longer keeps the rear sensor awake |
 | Camera: rear VCM creation | 0022 | The ov13858 probe enables runtime PM before it registers the subdev. This prevents boots without a lens device, which happen when the VCM creation work fails with -EACCES while waking the sensor |
 | Bluetooth: LE legacy OOB pairing | 0023 | LE legacy pairing with a Temporary Key supplied out of band: the 16 B given as `hash192` in the extended form of Add Remote OOB Data are used as the TK (the Slim Pen 2's coupling through the Type Cover's pen slot). In that pairing the host also offers its identity key; a pen that did not receive it does not advertise for reconnection. Checked on the device, first as a loaded module and then on a booted kernel built with the patch: cover coupling with LTK and IRK stored, and reconnection after the pen's idle disconnect. The responder path and the path with Secure Connections OOB data are compile-tested only |
+| Bluetooth: reconnection of a device that was paired again | 0024 | When a device is paired again and its IRK changed, the entry in the controller's resolving list is replaced. Without it a device bonded again in the same boot (the Slim Pen 2) advertises from addresses the controller cannot resolve and does not reconnect until the adapter is powered off and on. Compile-tested only |
 | Type Cover backlight | 0017 | `surface::kbd_backlight` LED in `hid-surface`. The levels 0/3/6/12 of Feature 213 (0x517) map to 0–3, writes go through Output 213, reads through Feature 214. When the backlight key (0x515) arrives, Feature 214 is read again and reported through `brightness_hw_changed` |
 
 ## What was left out

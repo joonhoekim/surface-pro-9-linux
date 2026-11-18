@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Wed, 18 Nov 2026 13:38:50 +0900
+Subject: [PATCH] Bluetooth: hci_sync: Replace the resolving list entry when
+ the IRK changed
+
+hci_le_add_resolve_list_sync() returns early when the device already has
+an entry in the resolving list, without looking at the key in it. A
+device that is paired again gets a new IRK while it is still known to
+the kernel: Unpair Device and the new pairing can happen without a
+passive scan update in between, so the entry of the old pairing is never
+removed. The controller then keeps resolving with the old IRK, the
+resolvable private addresses the device uses from then on do not resolve,
+its advertisements never pass the accept list and it cannot reconnect
+until the controller is powered off and on.
+
+Seen with a Surface Slim Pen 2 that is bonded again in the same boot: it
+advertises, an unfiltered scan sees it and resolves its address in the
+host, and the background scan never reports it.
+
+Compare the IRK of the existing entry and replace the entry when it
+differs.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ net/bluetooth/hci_sync.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
+index a92a81846..69dd250cb 100644
+--- a/net/bluetooth/hci_sync.c
++++ b/net/bluetooth/hci_sync.c
+@@ -2504,8 +2504,17 @@ static int hci_le_add_resolve_list_sync(struct hci_dev *hdev,
+ 	entry = hci_bdaddr_list_lookup_with_irk(&hdev->le_resolv_list,
+ 						&params->addr,
+ 						params->addr_type);
+-	if (entry)
+-		return 0;
++	if (entry) {
++		if (!memcmp(entry->peer_irk, irk->val, 16))
++			return 0;
++
++		/* The device was paired again and has a new IRK. With the old
++		 * one in the controller its resolvable private addresses do
++		 * not resolve and never pass the accept list.
++		 */
++		hci_le_del_resolve_list_sync(hdev, &params->addr,
++					     params->addr_type);
++	}
+ 
+ 	cp.bdaddr_type = params->addr_type;
+ 	bacpy(&cp.bdaddr, &params->addr);
+-- 
+2.55.0
+

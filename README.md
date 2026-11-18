@@ -6,7 +6,7 @@ Linux support for one device: the Microsoft Surface Pro 9 with an Intel CPU, SKU
 - **Scope.** This SKU only. Not the Surface Pro 9 5G (ARM), and not any other Surface device: those belong to
   [linux-surface](https://github.com/linux-surface/linux-surface).
 - **Relation to linux-surface.** This is a device-specific layer on top of that project: the kernel is stable
-  v7.3.4 + linux-surface's 7.3 patch series + the 23 patches in [`kernel/patches`](kernel/README.md). Around the
+  v7.3.4 + linux-surface's 7.3 patch series + the 24 patches in [`kernel/patches`](kernel/README.md). Around the
   kernel there is a NixOS module, platform files for other distributions, a device helper daemon, pen tools,
   research notes and test results. This repository is not part of linux-surface and is not endorsed by
   linux-surface, Microsoft, Intel or Realtek. Issues about other devices, or about linux-surface's own patches
@@ -66,7 +66,7 @@ the measurements, is [docs/hardware-status.md](docs/hardware-status.md). Test ID
 
 | Path | Contents |
 |---|---|
-| [kernel/](kernel/README.md) | The patch series (v7.3.4 + linux-surface 7.3 + 23 patches), the config fragment, and where each patch comes from ([PROVENANCE.md](kernel/PROVENANCE.md)): 6 upstream backports, 4 from a pending linux-surface pull request, 13 local |
+| [kernel/](kernel/README.md) | The patch series (v7.3.4 + linux-surface 7.3 + 24 patches), the config fragment, and where each patch comes from ([PROVENANCE.md](kernel/PROVENANCE.md)): 6 upstream backports, 4 from a pending linux-surface pull request, 13 local |
 | [flake.nix](flake.nix), [nix/](nix/module.nix) | The NixOS module (`nixosModules.default`, options `hardware.surface-pro-9.*`) and the packages `kernel`, `surface-pen-tools`, `sp9-helper`. Reference: [docs/nixos.md](docs/nixos.md) |
 | [userspace/platform/](userspace/platform/README.md) | Platform files for any distribution (iptsd preset, speaker filter chain, initramfs and kernel command line, optional codec pin patch) and `install.sh` |
 | [userspace/pen/](userspace/pen/README.md) | Slim Pen 2 tool prototypes: `pen-haptic`, `surface-pen-connect`, `surface-pen-feedback`, and what was seen on the device |
@@ -96,7 +96,7 @@ Licensing is per file and follows the REUSE convention. [LICENSE](LICENSE) has t
 
 This repository changes the kernel, drivers that talk to the device's firmware (the Surface Aggregator Module,
 the touch controller, the cameras' power control), and CPU power limits, on one specific device. Seventeen of the
-23 patches are not in mainline Linux (4 from a pending linux-surface pull request, 13 local), and most of the
+23 patches are not in mainline Linux (4 from a pending linux-surface pull request, 14 local), and most of the
 local ones are marked unverified in [PROVENANCE.md](kernel/PROVENANCE.md). Some helper
 functions are experimental and off by default (fan request, skin temperature guard). Use it at your own risk;
 there is no warranty. Keep Windows installed: firmware updates are delivered only through Windows.
