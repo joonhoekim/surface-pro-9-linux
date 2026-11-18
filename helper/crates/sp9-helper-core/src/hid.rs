@@ -67,7 +67,8 @@ impl Field {
         }
     }
 
-    fn write(&self, buf: &mut [u8], skip: usize, k: u32, value: i64) {
+    /// Set value `k` of this field in a report buffer (see `read` for `skip`).
+    pub fn write(&self, buf: &mut [u8], skip: usize, k: u32, value: i64) {
         let start = self.bit_offset + k * self.size;
         let v = value as u64;
         for b in 0..self.size {
@@ -252,6 +253,25 @@ impl Descriptor {
         }
         Ok(buf)
     }
+
+    /// Write a byte array into the field of report `id` that has `usage` (one element per
+    /// byte, as many as the field holds).
+    pub fn put_bytes(&self, kind: Kind, id: u8, u: u32, buf: &mut [u8], bytes: &[u8]) -> Result<(), String> {
+        let f = self.fields_of(kind, id).find(|f| f.has_usage(u)).ok_or_else(|| format!("usage {u:#010x} not in report {id}"))?;
+        if f.count as usize != bytes.len() || f.size != 8 {
+            return Err(format!("usage {u:#010x} holds {} x {} bits, not {} bytes", f.count, f.size, bytes.len()));
+        }
+        for (k, b) in bytes.iter().enumerate() {
+            f.write(buf, self.skip(), k as u32, *b as i64);
+        }
+        Ok(())
+    }
+
+    /// The byte array of the field of report `id` that has `usage`.
+    pub fn get_bytes(&self, kind: Kind, id: u8, u: u32, data: &[u8]) -> Option<Vec<u8>> {
+        let f = self.fields_of(kind, id).find(|f| f.has_usage(u))?;
+        (0..f.count).map(|k| f.read(data, self.skip(), k).map(|v| v as u8)).collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -268,6 +288,8 @@ pub struct HidNode {
 pub trait HidBackend: Send + Sync {
     fn nodes(&self) -> Vec<HidNode>;
     fn get_feature(&self, node: &str, id: u8, len: usize) -> io::Result<Vec<u8>>;
+    /// SET_FEATURE; `data` starts with the report ID.
+    fn set_feature(&self, node: &str, data: &[u8]) -> io::Result<()>;
     fn write_output(&self, node: &str, data: &[u8]) -> io::Result<()>;
 }
 
@@ -330,9 +352,29 @@ impl HidBackend for Hidraw {
     }
 
     #[cfg(target_os = "linux")]
+    fn set_feature(&self, node: &str, data: &[u8]) -> io::Result<()> {
+        use std::os::fd::AsRawFd;
+        let f = self.open(node, true)?;
+        let mut buf = data.to_vec();
+        // HIDIOCSFEATURE(len) = _IOC(_IOC_READ|_IOC_WRITE, 'H', 0x06, len)
+        let req = (3u32 << 30) | ((buf.len() as u32) << 16) | ((b'H' as u32) << 8) | 0x06;
+        // SAFETY: buf is valid for buf.len() bytes, which is the size encoded in req.
+        let n = unsafe { libc::ioctl(f.as_raw_fd(), req as _, buf.as_mut_ptr()) };
+        if n < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
     fn write_output(&self, node: &str, data: &[u8]) -> io::Result<()> {
         use std::io::Write;
         self.open(node, true)?.write_all(data)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn set_feature(&self, _node: &str, _data: &[u8]) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "hidraw needs Linux"))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -352,6 +394,8 @@ pub struct FakeHidState {
     /// (node, report id) -> feature report (report ID byte first)
     pub features: HashMap<(String, u8), Vec<u8>>,
     pub writes: Vec<(String, Vec<u8>)>,
+    /// SET_FEATURE calls (node, report with its ID)
+    pub feature_writes: Vec<(String, Vec<u8>)>,
 }
 
 #[derive(Clone, Default)]
@@ -366,6 +410,14 @@ impl HidBackend for FakeHid {
         let mut v = s.features.get(&(node.to_string(), id)).cloned().ok_or_else(|| io::Error::other("feature not readable"))?;
         v.truncate(len);
         Ok(v)
+    }
+    fn set_feature(&self, node: &str, data: &[u8]) -> io::Result<()> {
+        let mut s = self.0.lock().unwrap();
+        if !s.nodes.iter().any(|n| n.name == node) {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no such node"));
+        }
+        s.feature_writes.push((node.to_string(), data.to_vec()));
+        Ok(())
     }
     fn write_output(&self, node: &str, data: &[u8]) -> io::Result<()> {
         let mut s = self.0.lock().unwrap();

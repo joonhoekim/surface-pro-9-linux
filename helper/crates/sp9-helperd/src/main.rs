@@ -12,10 +12,13 @@
 //! SP9_STATE_DIR (default /var/lib/sp9), SP9_DATA_DIR (scripts; default
 //! <dir of this binary>/sp9-helper), SP9_PYTHON (default python3).
 
+#[cfg(target_os = "linux")]
+mod clock;
+mod couple;
 mod ifaces;
-mod ink;
 mod jobs;
 mod kbdwatch;
+mod penwatch;
 mod polkit;
 
 use ifaces::*;
@@ -47,6 +50,10 @@ pub struct Shared {
     pub features: Vec<String>,
     sc_cache: Mutex<Option<(Instant, Result<SmartCharging, String>)>>,
     pub last_report: Mutex<String>,
+    pub couple: couple::Couple,
+    /// the machine's Bluetooth and cover are in reach (system bus, real backends): the
+    /// coupling thread runs
+    pub hardware: bool,
 }
 
 impl Shared {
@@ -167,6 +174,8 @@ impl Shared {
             features,
             sc_cache: Mutex::new(None),
             last_report: Mutex::new(String::new()),
+            couple: couple::Couple::default(),
+            hardware: false,
         }
     }
 }
@@ -191,7 +200,9 @@ pub fn serve<'a>(bld: zbus::connection::Builder<'a>, shared: &Arc<Shared>) -> zb
 async fn run(no_polkit: bool, session: bool, fake: bool) -> zbus::Result<()> {
     let root = Root::from_env();
     let b = if fake { Backends::fake() } else { Backends::system(root.clone()) };
-    let shared = Arc::new(Shared::new(b, root, config_path(), no_polkit));
+    let mut shared = Shared::new(b, root, config_path(), no_polkit);
+    shared.hardware = !fake && !session;
+    let shared = Arc::new(shared);
 
     // the iptsd drop-in follows the settings (also after a manual edit of helper.toml)
     match shared.cfg().input.iptsd.apply(&shared.root) {
@@ -206,12 +217,15 @@ async fn run(no_polkit: bool, session: bool, fake: bool) -> zbus::Result<()> {
     if let Err(e) = shared.withdraw_stale_fan_request() {
         eprintln!("sp9-helperd: withdrawing the fan request: {e}");
     }
-    ink::spawn(shared.clone());
+    penwatch::spawn(shared.clone());
 
     let bld = if session { zbus::connection::Builder::session()? } else { zbus::connection::Builder::system()? };
     let bld = serve(bld, &shared)?;
     let conn = bld.name(BUS)?.build().await?;
     kbdwatch::spawn(shared.clone(), conn.clone());
+    if shared.hardware {
+        couple::spawn(shared.clone(), conn.clone());
+    }
     eprintln!(
         "sp9-helperd {VERSION} on the {} bus{}: {}",
         if session { "session" } else { "system" },

@@ -78,6 +78,12 @@
     <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
   </action>
 
+  <action id="io.github.joonhoekim.opendevicehelper.sp9.pen-couple">
+    <description>Couple a pen in the cover slot with this computer (replaces its Bluetooth bond)</description>
+    <message>Authentication is required to couple the pen with this computer</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
+  </action>
+
   <action id="io.github.joonhoekim.opendevicehelper.sp9.diagnostics">
     <description>Run the hardware check and pack its report</description>
     <message>Authentication is required to run the hardware check</message>

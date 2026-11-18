@@ -20,6 +20,8 @@ pub const ORDINAL_STOP: i64 = 2;
 /// Feature 66 of this pen as read on Windows: 3 = click, 9 = ink-continuous.
 pub const ORDINAL_CLICK: i64 = 3;
 pub const ORDINAL_INK: i64 = 9;
+/// What Windows Journal starts while the eraser end touches.
+pub const ORDINAL_ERASER: i64 = 14;
 /// Windows' inking start intensity (#1066 capture `41 00 7f 09 …`) and stop report
 /// (`41 00 fe 02 …`).
 pub const INK_INTENSITY: u8 = 0x7F;

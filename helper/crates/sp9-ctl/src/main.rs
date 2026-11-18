@@ -13,6 +13,8 @@ use zbus::zvariant::{DynamicType, OwnedValue, Value};
 
 const BUS: &str = "io.github.joonhoekim.OpenDeviceHelper1";
 const ROOT: &str = "/io/github/joonhoekim/OpenDeviceHelper1";
+/// Pen speed (mm/s) at the largest speed value that feels about as strong as on Windows: `pen strength 100`.
+const FULL_SCALE_100: f64 = 290.0;
 
 const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
   status                                 everything the daemon exports
@@ -36,7 +38,15 @@ const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
   kbd [LEVEL]                            keyboard backlight (levels: see kbd)
   touch-off [on|off]                     touchscreen off while the panel is off
   iptsd [ACT DEACT [on|off|preset]]      iptsd thresholds over the preset; iptsd preset = remove
-  pen [ink on|off | intensity N | test]  Slim Pen 2 haptics
+  pen                                    Slim Pen 2: haptics, digitizer feedback, cover coupling
+  pen ink on|off                         haptics as a whole: inking haptics and the speed feedback
+  pen intensity N | pen test             inking intensity 1..255; one click
+  pen speed on|off                       pen speed to the digitizer (continuous waveforms need it)
+  pen strength PERCENT                   25..400, 100 = about as on Windows (full scale 290 mm/s)
+  pen full-scale MM_S                    the same setting as the speed that gives the strongest
+                                         vibration, 50..2000 mm/s
+  pen auto-couple on|off                 couple a pen put into the cover slot (Bluetooth bond)
+  pen couple                             couple the pen in the cover slot now, replacing its bond
   diagnostics                            run the post-install check, print the tarball path
   reload                                 read /etc/sp9/helper.toml again";
 
@@ -287,6 +297,38 @@ fn main() {
             Some("ink") => c.act("Pen", "SetInkFeedback", &(onoff(a(2)),)),
             Some("intensity") => c.act("Pen", "SetIntensity", &(num::<u32>(a(2), "intensity"),)),
             Some("test") => c.act("Pen", "TestPulse", &()),
+            Some("speed") => c.act("Pen", "SetSpeedFeedback", &(onoff(a(2)),)),
+            Some("strength") => {
+                let pct = num::<f64>(a(2), "strength");
+                if !(25.0..=400.0).contains(&pct) {
+                    die("strength: 25..400 percent");
+                }
+                c.act("Pen", "SetSpeedFullScale", &(FULL_SCALE_100 * 100.0 / pct,))
+            }
+            Some("full-scale") => c.act("Pen", "SetSpeedFullScale", &(num::<f64>(a(2), "full scale"),)),
+            Some("auto-couple") => c.act("Pen", "SetAutoCouple", &(onoff(a(2)),)),
+            Some("couple") => {
+                c.act("Pen", "Couple", &());
+                // the daemon works on its own thread: wait for the attempt to end
+                let state = |c: &Ctl| c.props("Pen").get("CoupleState").and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
+                let mut last = String::new();
+                for _ in 0..240 {
+                    let s = state(&c);
+                    if s != last && !json {
+                        eprintln!("{s}");
+                    }
+                    if s == "idle" {
+                        break;
+                    }
+                    last = s;
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                c.show("Pen", &["CoupleState", "CoupleResult", "CoupledAddress"]);
+                let ok = c.props("Pen").get("CoupleResult").and_then(|v| v.as_str().map(|r| r.starts_with("coupled"))).unwrap_or(false);
+                if !ok {
+                    exit(1);
+                }
+            }
             Some(x) => die(format!("unknown pen command {x}")),
         },
         "diagnostics" => {

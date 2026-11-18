@@ -5,11 +5,11 @@
 //! check polkit, act, persist the setting and emit PropertiesChanged (properties
 //! invalidated, clients read again).
 
-use crate::{jobs, polkit, Shared, DEVICE, VERSION};
+use crate::{couple, jobs, polkit, Shared, DEVICE, VERSION};
 use sp9_helper_core::display::PsrMode;
 use sp9_helper_core::input::{self, Iptsd};
 use sp9_helper_core::perf::{self, Limits, PROFILES};
-use sp9_helper_core::{engine, pen, ssam};
+use sp9_helper_core::{config, cover, engine, pen, pen_feedback, ssam};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -852,9 +852,29 @@ pub struct Pen(pub Arc<Shared>);
 
 impl Snapshot for Pen {
     const IFACE: &'static str = "io.github.joonhoekim.OpenDeviceHelper1.Pen";
-    const PROPS: &'static [&'static str] = &["Available", "InkFeedback", "Intensity"];
+    const PROPS: &'static [&'static str] = &[
+        "Available",
+        "InkFeedback",
+        "Intensity",
+        "SpeedFeedback",
+        "SpeedFullScale",
+        "DigitizerAvailable",
+        "AutoCouple",
+        "CoverAvailable",
+        "CoupleState",
+        "CoupleResult",
+        "CoupledAddress",
+    ];
     fn snapshot(&self) -> String {
-        format!("{} {:?}", pen::find(&*self.0.b.hid).is_some(), self.0.cfg().pen)
+        let h = &*self.0.b.hid;
+        format!(
+            "{} {} {} {:?} {:?}",
+            pen::find(h).is_some(),
+            pen_feedback::find_digitizer(h).is_some(),
+            cover::find(h).is_some(),
+            self.0.cfg().pen,
+            self.0.couple.status()
+        )
     }
 }
 
@@ -865,7 +885,7 @@ impl Pen {
     fn available(&self) -> bool {
         pen::find(&*self.0.b.hid).is_some()
     }
-    /// Windows-style inking haptics
+    /// pen haptics as a whole: inking haptics and, with SpeedFeedback, the digitizer feedback
     #[zbus(property)]
     fn ink_feedback(&self) -> bool {
         self.0.cfg().pen.ink_feedback
@@ -874,6 +894,46 @@ impl Pen {
     #[zbus(property)]
     fn intensity(&self) -> u32 {
         self.0.cfg().pen.intensity as u32
+    }
+    /// feed the pen speed back to the digitizer while InkFeedback is on
+    #[zbus(property)]
+    fn speed_feedback(&self) -> bool {
+        self.0.cfg().pen.speed_feedback
+    }
+    /// pen speed in mm/s that maps to the largest speed value (lower is stronger)
+    #[zbus(property)]
+    fn speed_full_scale(&self) -> f64 {
+        self.0.cfg().pen.speed_full_scale
+    }
+    /// the digitizer's hidraw node with feature report 9 is there
+    #[zbus(property)]
+    fn digitizer_available(&self) -> bool {
+        pen_feedback::find_digitizer(&*self.0.b.hid).is_some()
+    }
+    /// couple a pen put into the cover slot
+    #[zbus(property)]
+    fn auto_couple(&self) -> bool {
+        self.0.cfg().pen.auto_couple
+    }
+    /// a cover with the pen-bonding collection is attached
+    #[zbus(property)]
+    fn cover_available(&self) -> bool {
+        cover::find(&*self.0.b.hid).is_some()
+    }
+    /// "idle", "waiting-for-pen", "coupling"
+    #[zbus(property)]
+    fn couple_state(&self) -> String {
+        self.0.couple.status().state
+    }
+    /// result of the last coupling attempt, "" none
+    #[zbus(property)]
+    fn couple_result(&self) -> String {
+        self.0.couple.status().result
+    }
+    /// coupling address of the last pen the cover announced, masked ("XX:XX:XX:XX:XX:B5")
+    #[zbus(property)]
+    fn coupled_address(&self) -> String {
+        self.0.couple.status().address
     }
 
     async fn set_ink_feedback(
@@ -905,11 +965,77 @@ impl Pen {
         Ok(())
     }
 
+    async fn set_speed_feedback(
+        &self,
+        on: bool,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
+        persist(self.0.update(|c| c.pen.speed_feedback = on))?;
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
+    }
+
+    /// Pen speed in mm/s that maps to the largest speed value, 50..2000 (290: about as strong
+    /// as on Windows; lower is stronger).
+    async fn set_speed_full_scale(
+        &self,
+        mm_s: f64,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
+        if !config::Pen::full_scale_valid(mm_s) {
+            return Err(invalid("full scale must be 50..2000 mm/s"));
+        }
+        persist(self.0.update(|c| c.pen.speed_full_scale = mm_s))?;
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
+    }
+
     /// One click at the set intensity, to feel the setting.
     async fn test_pulse(&self, #[zbus(header)] hdr: Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> fdo::Result<()> {
         polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
         let p = pen::find(&*self.0.b.hid).ok_or_else(|| fdo::Error::NotSupported("pen not connected".into()))?;
         p.trigger(&*self.0.b.hid, pen::ORDINAL_CLICK, self.0.cfg().pen.intensity).map_err(failed)
+    }
+
+    /// Couple pens with this host when they are put into the cover slot.
+    async fn set_auto_couple(
+        &self,
+        on: bool,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "pen-couple", self.0.no_polkit).await?;
+        persist(self.0.update(|c| c.pen.auto_couple = on))?;
+        self.0.couple.poke();
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
+    }
+
+    /// Couple the pen that sits in the cover slot now, replacing a bond it already has with
+    /// this host. Returns at once; CoupleState and CoupleResult tell how it went.
+    async fn couple(
+        &self,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "pen-couple", self.0.no_polkit).await?;
+        if !self.0.hardware {
+            return Err(fdo::Error::NotSupported("coupling needs the system bus and the real device".into()));
+        }
+        if self.0.couple.status().state == couple::STATE_COUPLING {
+            return Err(failed("a coupling is in progress"));
+        }
+        self.0.couple.request();
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
     }
 }
 

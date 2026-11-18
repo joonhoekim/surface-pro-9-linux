@@ -235,14 +235,23 @@ in
     pen = {
       enable = lib.mkEnableOption "pen-haptic and surface-pen-connect in PATH (prototypes, userspace/pen)";
       connectService = lib.mkEnableOption "the surface-pen-connect system service (implies pen.enable)";
-      feedbackService = lib.mkEnableOption "the surface-pen-feedback system service: pen speed to the digitizer, which the Slim Pen 2 needs for its continuous haptic waveforms, and inking haptics on contact (implies pen.enable)";
+      feedbackService = lib.mkEnableOption ''
+        the surface-pen-feedback system service: pen speed to the digitizer, which the Slim Pen 2
+        needs for its continuous haptic waveforms, and inking haptics on contact (implies
+        pen.enable). The helper does the same (sp9-ctl pen ink on) and both write the same
+        digitizer report, so with helper.enable the unit is installed but not started and a
+        warning says so: use the helper, or leave its pen haptics off and start the unit by hand
+        (systemctl start surface-pen-feedback)'';
     };
 
     helper.enable = lib.mkEnableOption ''
       sp9-helperd (system D-Bus service io.github.joonhoekim.OpenDeviceHelper1) and sp9-ctl:
       performance limits by platform_profile, battery and smart charging, PSR policy, keyboard
       backlight, touch and pen settings, diagnostics (helper/, docs/helper.md). Settings live in
-      /etc/sp9/helper.toml, written by the daemon'';
+      /etc/sp9/helper.toml, written by the daemon. Pen: inking haptics and the pen speed to
+      the digitizer (sp9-ctl pen ink on; replaces pen.feedbackService), and coupling a pen put
+      into the cover slot (sp9-ctl pen auto-couple on, or pen couple once), which needs
+      hardware.bluetooth and kernel.enable (kernel/patches 0023)'';
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
@@ -359,7 +368,14 @@ in
 
     (lib.mkIf cfg.pen.feedbackService {
       systemd.packages = [ penTools ];
-      systemd.services.surface-pen-feedback.wantedBy = [ "multi-user.target" ];
+      # sp9-helperd feeds the digitizer too (pen.ink_feedback with pen.speed_feedback); two
+      # writers of feature report 9 undo each other's speed value.
+      systemd.services.surface-pen-feedback.wantedBy = lib.mkIf (!cfg.helper.enable) [ "multi-user.target" ];
+      warnings = lib.optional cfg.helper.enable ''
+        hardware.surface-pro-9: pen.feedbackService and helper.enable are both set. Both feed the
+        pen speed to the digitizer, so surface-pen-feedback.service is not started at boot. Use
+        the helper (sp9-ctl pen ink on), or drop helper.enable to keep the service.
+      '';
     })
 
     (lib.mkIf cfg.pen.connectService {

@@ -11,12 +11,15 @@
 //! Where each value comes from: docs/research/control/*.md; the feature table: docs/helper-reference.md.
 
 pub mod battery;
+pub mod btmgmt;
 pub mod config;
+pub mod cover;
 pub mod display;
 pub mod engine;
 pub mod hid;
 pub mod input;
 pub mod pen;
+pub mod pen_feedback;
 pub mod perf;
 pub mod ssam;
 pub mod sys;

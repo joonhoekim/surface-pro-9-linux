@@ -181,6 +181,8 @@ pub fn setting_name(method: &str) -> &'static str {
         "SetTouchOffWhenDisplayOff" => n_("Touch Screen"),
         "SetIptsd" => n_("Touch Sensitivity"),
         "SetInkFeedback" | "SetIntensity" | "TestPulse" => n_("Pen Haptics"),
+        "SetSpeedFeedback" | "SetSpeedFullScale" => n_("Writing Texture"),
+        "SetAutoCouple" | "Couple" => n_("Pen Pairing"),
         "Run" => n_("Diagnostics"),
         "Reload" => n_("Reload Settings"),
         _ => n_("Settings"),

@@ -6,7 +6,7 @@
 use super::*;
 use sp9_helper_core::hid::{FakeHid, HidNode};
 use sp9_helper_core::sys::FakeTree;
-use sp9_helper_core::{display, input, pen, perf, ssam};
+use sp9_helper_core::{cover, display, input, pen, pen_feedback, perf, ssam};
 use zbus::connection::Builder;
 use zbus::zvariant::OwnedValue;
 
@@ -220,4 +220,134 @@ fn keyboard_backlight_prefers_led() {
     assert_eq!(i32::try_from(r.get(P_INPUT, "Input", "KeyboardBacklight")).unwrap(), 2);
     assert!(err_name(r.call(P_INPUT, "Input", "SetKeyboardBacklight", &(6u32,))).ends_with("InvalidArgs"));
     assert!(r.hid.0.lock().unwrap().writes.is_empty());
+}
+
+#[test]
+fn pen_feedback_and_coupling_settings() {
+    let r = rig();
+    assert!(!bool::try_from(r.get(P_PEN, "Pen", "InkFeedback")).unwrap());
+    assert!(bool::try_from(r.get(P_PEN, "Pen", "SpeedFeedback")).unwrap());
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 290.0);
+    assert!(!bool::try_from(r.get(P_PEN, "Pen", "DigitizerAvailable")).unwrap());
+    assert!(!bool::try_from(r.get(P_PEN, "Pen", "CoverAvailable")).unwrap());
+    {
+        use sp9_helper_core::hid::build::*;
+        let digitizer =
+            cat(&[page(0xFF00), usage(0x01), collection(1), id(9), usage(0xC9), lmin(0), lmax(255), size(8), count(63), feature(2), end()]);
+        let mut h = r.hid.0.lock().unwrap();
+        let node = |name: &str, product, descriptor| HidNode {
+            name: name.into(),
+            bus: 1,
+            vendor: 0x045E,
+            product,
+            hid_name: String::new(),
+            descriptor,
+        };
+        h.nodes.push(node("hidraw8", pen_feedback::DIGITIZER_PRODUCT, digitizer));
+        h.nodes.push(node("hidraw5", 0x09B0, cover::fake_cover_pen_descriptor()));
+    }
+    assert!(bool::try_from(r.get(P_PEN, "Pen", "DigitizerAvailable")).unwrap());
+    assert!(bool::try_from(r.get(P_PEN, "Pen", "CoverAvailable")).unwrap());
+
+    r.call(P_PEN, "Pen", "SetSpeedFeedback", &(false,)).unwrap();
+    r.call(P_PEN, "Pen", "SetSpeedFullScale", &(200.0f64,)).unwrap();
+    assert!(!bool::try_from(r.get(P_PEN, "Pen", "SpeedFeedback")).unwrap());
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 200.0);
+    for bad in [10.0f64, 5000.0, f64::NAN] {
+        assert!(err_name(r.call(P_PEN, "Pen", "SetSpeedFullScale", &(bad,))).ends_with("InvalidArgs"));
+    }
+    let toml = r.tree.read("/etc/sp9/helper.toml");
+    assert!(toml.contains("speed_feedback = false") && toml.contains("speed_full_scale = 200.0"), "{toml}");
+
+    assert!(!bool::try_from(r.get(P_PEN, "Pen", "AutoCouple")).unwrap());
+    r.call(P_PEN, "Pen", "SetAutoCouple", &(true,)).unwrap();
+    assert!(bool::try_from(r.get(P_PEN, "Pen", "AutoCouple")).unwrap());
+    assert!(r.tree.read("/etc/sp9/helper.toml").contains("auto_couple = true"));
+    assert_eq!(String::try_from(r.get(P_PEN, "Pen", "CoupleState")).unwrap(), "idle");
+    assert_eq!(String::try_from(r.get(P_PEN, "Pen", "CoupleResult")).unwrap(), "");
+    assert_eq!(String::try_from(r.get(P_PEN, "Pen", "CoupledAddress")).unwrap(), "");
+    // no Bluetooth, no cover node to read in a test: the method refuses, nothing is written
+    let e = err_name(r.call(P_PEN, "Pen", "Couple", &()));
+    assert!(e.ends_with("NotSupported"), "{e}");
+    let h = r.hid.0.lock().unwrap();
+    assert!(h.feature_writes.is_empty() && h.writes.is_empty());
+}
+
+#[test]
+fn couple_request_reaches_the_thread_state() {
+    let c = crate::couple::Couple::default();
+    assert_eq!(c.status().state, crate::couple::STATE_IDLE);
+    c.request();
+    assert_eq!(c.status().state, crate::couple::STATE_WAITING);
+}
+
+/// The pen thread end to end: a FIFO stands in for iptsd's stylus event node.
+#[cfg(target_os = "linux")]
+#[test]
+fn stylus_events_reach_the_digitizer_and_the_pen() {
+    use std::io::Write;
+    let tree = FakeTree::new("penwatch");
+    tree.file("/etc/sp9/helper.toml", "[pen]\nink_feedback = true\n")
+        .file("/sys/class/input/event9/device/name", "IPTSD Virtual Stylus 045E:0C52\n")
+        .file(pen_feedback::LEGACY_FHID, "0x0143\n");
+    let fifo = tree.root.p("/dev/input/event9");
+    std::fs::create_dir_all(fifo.parent().unwrap()).unwrap();
+    let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    // SAFETY: a valid path.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+
+    let hid = FakeHid::default();
+    {
+        use sp9_helper_core::hid::build::*;
+        let digitizer =
+            cat(&[page(0xFF00), usage(0x01), collection(1), id(9), usage(0xC9), lmin(0), lmax(255), size(8), count(63), feature(2), end()]);
+        let mut h = hid.0.lock().unwrap();
+        let node = |name: &str, bus, product, descriptor| HidNode {
+            name: name.into(),
+            bus,
+            vendor: 0x045E,
+            product,
+            hid_name: String::new(),
+            descriptor,
+        };
+        h.nodes.push(node("hidraw8", 1, pen_feedback::DIGITIZER_PRODUCT, digitizer));
+        h.nodes.push(node("hidraw7", 5, pen::PEN_PRODUCT, pen::fake_pen_descriptor()));
+    }
+    let mut b = Backends::fake();
+    b.hid = Box::new(hid.clone());
+    let mut shared = Shared::new(b, tree.root.clone(), tree.root.p("/etc/sp9/helper.toml"), true);
+    shared.state_dir = tree.root.p("/var/lib/sp9");
+    penwatch::spawn(Arc::new(shared));
+
+    // blocks until the thread has the node open
+    let mut w = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+    let ev = |ty: u16, code: u16, value: i32| {
+        let mut e = [0u8; 24];
+        e[16..18].copy_from_slice(&ty.to_ne_bytes());
+        e[18..20].copy_from_slice(&code.to_ne_bytes());
+        e[20..24].copy_from_slice(&value.to_ne_bytes());
+        e
+    };
+    let mut frame = |events: &[[u8; 24]]| {
+        w.write_all(&events.concat()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    };
+    let syn = ev(0, 0, 0);
+    frame(&[ev(1, 0x140, 1), ev(3, 0, 100), ev(3, 1, 100), syn]); // pen in range
+    frame(&[ev(1, 0x14a, 1), syn]); // tip down
+    frame(&[ev(1, 0x14a, 0), syn]); // tip up
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let h = hid.0.lock().unwrap();
+    let f: Vec<&Vec<u8>> = h.feature_writes.iter().map(|(n, d)| (assert_eq!(n, "hidraw8"), d).1).collect();
+    assert!(f.len() >= 4, "{} feature writes", f.len());
+    assert_eq!(f[0], &pen_feedback::display_states(0x143, 0).to_vec(), "the FastHostId of the standalone daemon, first");
+    assert_eq!(f[1], &pen_feedback::pen_feedback(0, 0x143, Some(0), false, 0).to_vec());
+    assert_eq!(f[2], &pen_feedback::pen_feedback(1, 0x143, Some(0), true, 0).to_vec());
+    assert_eq!(f[3], &pen_feedback::pen_feedback(2, 0x143, Some(0), false, 0).to_vec());
+    assert_eq!(
+        h.writes,
+        vec![("hidraw7".to_string(), vec![0x41, 0, 0x7F, 9, 0, 0, 0]), ("hidraw7".to_string(), vec![0x41, 0, 0xFE, 2, 0, 0, 0])]
+    );
+    assert_eq!(tree.read("/var/lib/sp9/pen-fast-host-id"), "0x0143");
 }

@@ -76,15 +76,40 @@ pub struct Input {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Pen {
-    /// Windows-style inking haptics (start on tip down, stop on tip up)
+    /// pen haptics as a whole: Windows-style inking haptics (start on tip down, stop on tip
+    /// up) and, with `speed_feedback`, the pen speed to the digitizer
     pub ink_feedback: bool,
     /// 1..255
     pub intensity: u8,
+    /// feed the pen speed back to the digitizer (the continuous waveforms need it); only
+    /// while `ink_feedback` is on
+    pub speed_feedback: bool,
+    /// pen speed in mm/s that maps to the largest speed value; lower is stronger
+    pub speed_full_scale: f64,
+    /// couple a pen with this host when it is put into the cover slot
+    pub auto_couple: bool,
+    /// restart bluetooth.service when BlueZ has not attached the pen's HID 10 s after a
+    /// coupling
+    pub couple_restart_bluetooth: bool,
 }
 
 impl Default for Pen {
     fn default() -> Self {
-        Pen { ink_feedback: false, intensity: crate::pen::INK_INTENSITY }
+        Pen {
+            ink_feedback: false,
+            intensity: crate::pen::INK_INTENSITY,
+            speed_feedback: true,
+            speed_full_scale: crate::pen_feedback::DEFAULT_FULL_SCALE,
+            auto_couple: false,
+            couple_restart_bluetooth: false,
+        }
+    }
+}
+
+impl Pen {
+    pub fn full_scale_valid(v: f64) -> bool {
+        let (lo, hi) = crate::pen_feedback::FULL_SCALE_RANGE;
+        v.is_finite() && (lo..=hi).contains(&v)
     }
 }
 
@@ -138,6 +163,10 @@ impl Config {
         if self.pen.intensity == 0 {
             self.pen.intensity = 1;
         }
+        if !Pen::full_scale_valid(self.pen.speed_full_scale) {
+            w.push(format!("pen.speed_full_scale: {} outside 50..2000 mm/s, ignored", self.pen.speed_full_scale));
+            self.pen.speed_full_scale = crate::pen_feedback::DEFAULT_FULL_SCALE;
+        }
         w
     }
 
@@ -160,6 +189,8 @@ mod tests {
         assert!(w.is_empty());
         assert!(c.performance.follow_profile && !c.performance.skin_guard && !c.fan.allow_rpm_request);
         assert!(!c.pen.ink_feedback && !c.input.touch_off_when_display_off);
+        assert!(c.pen.speed_feedback && !c.pen.auto_couple && !c.pen.couple_restart_bluetooth);
+        assert_eq!(c.pen.speed_full_scale, 290.0);
         let mut c2 = c.clone();
         c2.performance.limits.insert("performance.ac".into(), Limits::new(30.0, 50.0, 28.0, 64));
         c2.display.psr_ac = PsrMode::Off;
@@ -192,6 +223,11 @@ mod tests {
         assert_eq!(w.len(), 2, "{w:?}");
         assert!(c.performance.limits.is_empty());
         assert_eq!(c.display.psr_dc, PsrMode::Psr1);
+        t.file("/etc/sp9/helper.toml", "[pen]\nspeed_full_scale = 5.0\nauto_couple = true\n");
+        let (c, w) = Config::load(&t.root.p("/etc/sp9/helper.toml"));
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert_eq!(c.pen.speed_full_scale, 290.0);
+        assert!(c.pen.auto_couple);
         t.file("/etc/sp9/helper.toml", "[display]\npsr_dc = \"psr2\"\n");
         let (c, w) = Config::load(&t.root.p("/etc/sp9/helper.toml"));
         assert_eq!(w.len(), 1);
