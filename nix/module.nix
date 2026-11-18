@@ -280,12 +280,15 @@ in
 
     (lib.mkIf cfg.touch.enable {
       services.iptsd.enable = true;
-      # services.iptsd takes pkgs.iptsd. The patch adds zero-force contact (off unless a config turns
-      # it on; the helper's drop-in does): userspace/iptsd/.
+      # services.iptsd takes pkgs.iptsd. The patches add zero-force contact (off unless a config turns
+      # it on; the helper's drop-in does) and keep a tilted pen in range: userspace/iptsd/.
       nixpkgs.overlays = [
         (final: prev: {
           iptsd = prev.iptsd.overrideAttrs (old: {
-            patches = (old.patches or [ ]) ++ [ ../userspace/iptsd/0001-zero-force-contact.patch ];
+            patches = (old.patches or [ ]) ++ [
+              ../userspace/iptsd/0001-zero-force-contact.patch
+              ../userspace/iptsd/0002-tilted-pen-in-range-button-debounce.patch
+            ];
           });
         })
       ];

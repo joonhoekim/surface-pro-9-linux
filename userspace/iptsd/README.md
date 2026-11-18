@@ -5,3 +5,7 @@ fraction of the level it has while it writes with force, even while it reports n
 is reported meanwhile (`[DFT] ZeroForceContact`, `ZeroForceEnter`, `ZeroForceExit`, `ZeroForceReference`,
 `ContactMinPressure`; all off by default). The NixOS module applies it to `pkgs.iptsd`; the device helper writes
 the values.
+
+`0002-tilted-pen-in-range-button-debounce.patch`: a neighbour antenna in antiphase with the peak (a strongly tilted pen) no longer
+makes iptsd drop the pen out of range, and the magnitude based button decision needs two frames in a row (the first
+frame in range used to press the barrel button).
