@@ -283,6 +283,9 @@ in
       # A drop-in, loaded after /etc/iptsd.conf (services.iptsd.config) and only for 045E:0C52.
       # The preset directory is inside the iptsd store path.
       environment.etc."iptsd.d/surface-pro-9.conf".source = platform + "/iptsd/surface-pro-9.conf";
+      # libinput reads one override file. `text` is of type lines, so other modules can add to it.
+      environment.etc."libinput/local-overrides.quirks".text =
+        builtins.readFile (platform + "/libinput/sp9-stylus.quirks");
     })
 
     (lib.mkIf cfg.diagnostics.enable {

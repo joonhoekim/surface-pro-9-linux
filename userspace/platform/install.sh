@@ -115,7 +115,8 @@ del() { # dst -> 0 if the file was removed
 
 # --- components ----------------------------------------------------------------
 
-iptsd_files="iptsd/surface-pro-9.conf:$PREFIX/share/iptsd/surface-pro-9.conf"
+iptsd_files="iptsd/surface-pro-9.conf:$PREFIX/share/iptsd/surface-pro-9.conf
+libinput/sp9-stylus.quirks:$PREFIX/share/libinput/60-sp9-stylus.quirks"
 speakers_files="pipewire/pipewire.conf.d/60-sp9-speakers.conf:$PREFIX/share/pipewire/pipewire.conf.d/60-sp9-speakers.conf
 wireplumber/wireplumber.conf.d/60-sp9-speaker-raw.conf:$PREFIX/share/wireplumber/wireplumber.conf.d/60-sp9-speaker-raw.conf"
 legacy_files="optional/modprobe.d/sp9-audio-legacy.conf:$PREFIX/lib/modprobe.d/sp9-audio-legacy.conf"
