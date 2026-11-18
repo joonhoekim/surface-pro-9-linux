@@ -35,8 +35,9 @@ Build and boot are confirmed through the Nix path: the Surface Pro 9 boots the k
 [`nix/kernel.nix`](../nix/kernel.nix) builds by applying the 15 linux-surface files and 0001–0022 (37 files in
 all) with `patch -p1` to the same tarball. The measurements on the device per patch are in PROVENANCE.md. For
 0022 the creation of the rear lens device was checked on one boot only (there is no confirmation across several
-boots). 0023 is in the series (38 files with it) but no kernel built with it had been booted at the time of
-writing: it was exercised on the device as a module loaded into that 7.3.4 kernel. Results on the device per
+boots). 0023 was first exercised as a module loaded into that kernel; the device has since booted the kernel
+built with all of 0001–0023 (38 files), and the pen's cover coupling and reconnection were checked again on it.
+Results on the device per
 function are in [docs/research/gaps](../docs/research/gaps/README.md) and
 [docs/test-results.md](../docs/test-results.md).
 No build has been run to completion through the `git am` tree or the `build-kernel.sh` (.deb) path described
@@ -156,7 +157,7 @@ create the initramfs and the boot loader entry with the distribution's tools
 | Camera: front binning | 0020 | On a `clock-noncontinuous` endpoint ov5693 does not offer the binned 1296x972 mode. Requests of 720p and below go to the full mode |
 | Camera: rear lens power | 0021 | dw9719 powers up on the first `focus_absolute` write, not on open. A lens node that is merely held open no longer keeps the rear sensor awake |
 | Camera: rear VCM creation | 0022 | The ov13858 probe enables runtime PM before it registers the subdev. This prevents boots without a lens device, which happen when the VCM creation work fails with -EACCES while waking the sensor |
-| Bluetooth: LE legacy OOB pairing | 0023 | LE legacy pairing with a Temporary Key supplied out of band: the 16 B given as `hash192` in the extended form of Add Remote OOB Data are used as the TK (the Slim Pen 2's coupling through the Type Cover's pen slot). In that pairing the host also offers its identity key; a pen that did not receive it does not advertise for reconnection. Exercised on the device as a module: cover coupling with LTK and IRK stored, and reconnection after the pen's idle disconnect. The responder path and the path with Secure Connections OOB data are compile-tested only |
+| Bluetooth: LE legacy OOB pairing | 0023 | LE legacy pairing with a Temporary Key supplied out of band: the 16 B given as `hash192` in the extended form of Add Remote OOB Data are used as the TK (the Slim Pen 2's coupling through the Type Cover's pen slot). In that pairing the host also offers its identity key; a pen that did not receive it does not advertise for reconnection. Checked on the device, first as a loaded module and then on a booted kernel built with the patch: cover coupling with LTK and IRK stored, and reconnection after the pen's idle disconnect. The responder path and the path with Secure Connections OOB data are compile-tested only |
 | Type Cover backlight | 0017 | `surface::kbd_backlight` LED in `hid-surface`. The levels 0/3/6/12 of Feature 213 (0x517) map to 0–3, writes go through Output 213, reads through Feature 214. When the backlight key (0x515) arrives, Feature 214 is read again and reported through `brightness_hw_changed` |
 
 ## What was left out

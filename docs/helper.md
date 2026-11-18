@@ -2,8 +2,8 @@
 
 A system service and a command-line tool for the device-specific settings of the Surface Pro 9 (Intel) that a
 desktop does not handle. It exports over **D-Bus**: per-profile power limits, battery and smart charging, the PSR
-policy and the panel ICC profile, the Type Cover backlight, touch and iptsd settings, pen haptics, and a diagnostics
-report. The structure follows the author's Open Device Helper for another device, the TB323FU (public repository
+policy and the panel ICC profile, the Type Cover backlight, touch and iptsd settings, the pen (haptics, speed feedback to the digitizer, coupling
+through the cover), and a diagnostics report. The structure follows the author's Open Device Helper for another device, the TB323FU (public repository
 `tb323fu-linux`), and it uses the same bus name.
 The code is in [`helper/`](../helper/); the kernel interfaces, the D-Bus API, the polkit actions and the
 verification status of each feature are in [helper-reference.md](helper-reference.md).
@@ -14,7 +14,7 @@ marked "works" in the status column.
 
 | Part | Status |
 |---|---|
-| `sp9-helperd` (system D-Bus service), `sp9-ctl` (CLI) | Works on the device: start-up, per-profile PL and EPP and overrides, fan reading and fan request, battery and smart-charging reading, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics. Unverified: pen haptics (not checked with a pen connected), the skin temperature guard, touch off while the screen is off (only switching the setting on and off was seen), smart-charging release |
+| `sp9-helperd` (system D-Bus service), `sp9-ctl` (CLI) | Works on the device: start-up, per-profile PL and EPP and overrides, fan reading and fan request, battery and smart-charging reading, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics, pen haptics and speed feedback (vibration while drawing, stop on lift: observed), cover coupling (automatic and manual, up to the pen's HID without restarting bluetoothd: measured). Unverified: the skin temperature guard, touch off while the screen is off (only switching the setting on and off was seen), smart-charging release |
 | `sp9-settings` (GTK4/libadwaita settings app) | The window opens on the device (observed). Operating the individual items is unverified |
 
 What it does not do:
@@ -22,7 +22,8 @@ What it does not do:
 - **Booting does not depend on the helper.** The kernel command line, the initramfs, the iptsd preset and the
   speaker processing belong to the [platform files](../userspace/platform/README.md) and the NixOS module.
 - It adds no drivers. It uses only interfaces the kernel already provides (sysfs, debugfs, efivarfs, hidraw,
-  evdev) and the SSAM character device (`/dev/surface/aggregator`).
+  evdev) and the SSAM character device (`/dev/surface/aggregator`). Only the cover coupling uses more: the
+  Bluetooth management socket, a raw HCI socket and the D-Bus interface of BlueZ.
 - It does not touch what the desktop owns (refresh rate and VRR, brightness, automatic brightness, applying colour
   management). It only creates the ICC file; assigning it is the desktop's job.
   Continuing a touchpad edge scroll is the compositor's job too: only the compositor knows the scroll direction
@@ -74,8 +75,12 @@ sp9-ctl icc                            # /var/lib/sp9/display/panel-native.icc
 sp9-ctl kbd 6                          # keyboard backlight (`sp9-ctl kbd` shows the levels: hidraw 0 3 6 12, LED 0..3)
 sp9-ctl touch-off on                   # block touchscreen input while the screen is off
 sp9-ctl iptsd 22 18 on                 # iptsd thresholds on top of the preset; iptsd preset reverts
-sp9-ctl pen ink on                     # inking haptics (start when the tip touches, stop when it lifts)
+sp9-ctl pen ink on                     # pen haptics as a whole: inking haptics (start when the tip touches, stop when it lifts) and speed feedback
 sp9-ctl pen intensity 160 && sp9-ctl pen test
+sp9-ctl pen speed off                  # do not send the pen speed to the digitizer (no continuous vibration)
+sp9-ctl pen strength 150               # strength of the continuous vibration (25–400 %, 100 = about as on Windows); pen full-scale 290 is the same setting in mm/s
+sp9-ctl pen auto-couple on             # couple a pen when it is put into the cover's pen slot (administrator authentication)
+sp9-ctl pen couple                     # couple the pen that is in the cover now; replaces an existing bond (administrator authentication)
 sp9-ctl diagnostics                    # path of the post-install check report tar.gz (owned by the caller)
 sp9-ctl --json status
 ```
@@ -95,7 +100,9 @@ sp9-ctl --json status
 | Keyboard backlight | When the kernel provides a `*::kbd_backlight` LED, the helper writes its `brightness` (UPower and the desktop keys use the same). Otherwise it writes the level to hidraw Output 213 (`000C:007B`), reads the supported levels from Feature 213 and the current level from Feature 214. When the backlight key is pressed (the firmware changes the level), the helper sees it through the LED's `brightness_hw_changed` or hidraw Input 213 and sends a change signal, so the settings app follows | — |
 | Touch off while the screen is off | Sets `inhibited` on iptsd's virtual touchscreen while the eDP connector is off | off |
 | iptsd thresholds | Writes `/etc/iptsd.d/zz-sp9-helper.conf` (read after the preset) and restarts iptsd | preset |
-| Pen haptics | Report 65 on the pen's BLE hidraw. Inking haptics send one start and one stop report on `BTN_TOUCH` of iptsd's virtual stylus | off |
+| Pen haptics | Report 65 on the pen's BLE hidraw. Inking haptics send one start and one stop report on `BTN_TOUCH` of iptsd's virtual stylus (the eraser waveform for the eraser end). This is the switch for pen haptics as a whole | off |
+| Pen speed feedback | Sends the FastHostId (`8e a1`) and the pen's speed and tip state (`8e a5`) to Feature 9 of the digitizer (THC). The pen plays its continuous waveforms only while the digitizer has a speed. Only while pen haptics are on | on (nothing is sent while pen haptics are off) |
+| Cover coupling | When the pen is put into the Type Cover's pen slot, hands a key over through the cover and bonds with LE legacy OOB pairing. Needs kernel patch 0023 | off |
 | Diagnostics | Runs `post-install-check.sh` (read only; masks MAC addresses, UUIDs and serials) and packs it as `/var/lib/sp9/diagnostics/check-<time>.tar.gz` | — |
 
 The desktop power mode (power-profiles-daemon) uses only three levels, so `balanced-performance` (the Windows
@@ -129,12 +136,65 @@ D-Bus interface (`PlayEffect(kind)`, a table from effect name to write sequence)
 To check on Linux: whether writes 6 ms apart go out at the BlueZ connection interval, and what to do with a request
 while the pen is disconnected (it disconnects by itself when idle: after about 52 s in the Windows trace, about 80 s as measured on Linux).
 
+## Pen
+
+The basis and the measurements are in [research/gaps/pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md).
+Both functions below were first done on the device with Python tools (`userspace/pen/surface-pen-feedback` and
+test scripts for the cover coupling) and then moved into the helper. The helper's own implementation has been
+run on the device since: the status of each is in [helper-reference.md](helper-reference.md). Byte layouts and
+computations are unit-tested against the test vectors of the Python side.
+
+**Speed feedback.** With `pen ink on` the helper computes the pen's speed from the positions of iptsd's virtual
+stylus (two samples 14–32 ms apart, the last three values averaged with 0.5/0.33/0.17), quantises it to 0–63 and
+sends it to the digitizer. It sends only when the value or the tip state changes (the digitizer keeps the last
+value), and 0 when the pen stands still in range.
+`8e a1` (the FastHostId) is sent when the digitizer node is seen (again), after a resume from suspend, and when
+the pen comes into range 30 seconds or more after the last one.
+The strength is set as "the speed that gives the largest value" (full scale): 290 mm/s by default (about as on
+Windows, by a person's observation); the lower it is, the stronger the vibration at the same speed.
+`pen strength P` is 290 x 100 / P mm/s.
+The FastHostId is kept in `/var/lib/sp9/pen-fast-host-id`. When that is missing the helper takes over
+`/var/lib/surface-pen/fast-host-id`, which `surface-pen-feedback` used, and when that is missing too it makes one
+up at random.
+
+**Do not run it together with `surface-pen-feedback`.** Both write the same Feature 9 and overwrite each other's
+speed value. The helper does not write to the digitizer with `pen ink off` or `pen speed off`.
+With `helper.enable` the NixOS module does not start the unit of `pen.feedbackService` at boot and prints a
+warning.
+
+**Cover coupling.** With `pen auto-couple on` the helper keeps the cover's pen bonding node open (`045E:09B0`,
+FFF4:0001) and writes Features 112 and 86 (the host address) when the node appears, after a resume and on a manual
+request.
+When the cover announces a pen with Input 110, the helper computes the coupling address and couples when BlueZ
+has no bond for that address (or encryption with that bond has failed before):
+remove the old device from BlueZ → switch Pairable on → 16 random bytes (the TK) to the kernel (MGMT Add Remote
+OOB Data) → the same 16 B to Output 111 of the cover → LE Extended Create Connection on a raw HCI socket →
+MGMT Pair Device → remove the TK, set Trusted → wait up to 10 seconds for the pen's HID node.
+`pen couple` runs the same procedure once, also when there is a bond.
+The outcome is `CoupleResult`: `coupled`, `coupled-no-hid` (bonded, BlueZ has not attached the HID yet),
+`already-coupled`, `no-cover`, `no-pen`, `unsupported-kernel` (the kernel lacks patch 0023), `bluetooth-off`,
+`failed: reason`. Only the last byte of an address is shown, and the journal has neither whole addresses nor
+keys. The reasons for the design are in [helper-reference.md](helper-reference.md#cover-coupling).
+
+- Dual boot: when Windows couples the pen again with the same host address, the pen's key changes. When
+  encryption with that pen then fails on Linux (Device Disconnected on the management socket with reason
+  authentication failure), the helper remembers it and replaces the bond when the pen is put into the cover
+  again. When the helper did not see the failure (automatic coupling was off, or the helper restarted), replace
+  the bond with `sp9-ctl pen couple`. This detection is unverified on the device.
+- A pen whose coupling failed is not tried again by itself within 60 seconds.
+- A `pen couple` issued right after a coupling fails, because the pen does not answer the connection, and leaves
+  the pen without a bond; run it again a few seconds later (measured).
+- When the result stays `coupled-no-hid`, see whether the HID attaches the next time the pen reconnects. If not:
+  `sudo systemctl restart bluetooth`, or `[pen] couple_restart_bluetooth = true` in `helper.toml` (the helper
+  then restarts it in that case only). On the device the HID attached without a restart.
+
 ## Permissions
 
 The daemon runs as root and asks polkit on every call. Everyday settings (profile, power limits, skin temperature
-guard, smart-charging release, ICC, keyboard backlight, touch and iptsd, pen, diagnostics) are allowed without a
-password in an active local session. The experimental fan request, the PSR policy (it writes to debugfs) and
-reloading the settings ask for administrator authentication (kept for the session).
+guard, smart-charging release, ICC, keyboard backlight, touch and iptsd, pen haptics, diagnostics) are allowed
+without a password in an active local session. The experimental fan request, the PSR policy (it writes to
+debugfs), pen coupling (switching automatic coupling on, and `pen couple`: they create and replace a Bluetooth
+bond) and reloading the settings ask for administrator authentication (kept for the session).
 The actions are listed in `helper/data/io.github.joonhoekim.opendevicehelper.sp9.policy` and can be changed in
 `/etc/polkit-1/rules.d/`.
 
@@ -144,7 +204,7 @@ The actions are listed in `helper/data/io.github.joonhoekim.opendevicehelper.sp9
   writes the file when a setting changes through D-Bus; after editing it by hand run `sp9-ctl reload`.
   A value outside its range is dropped, the default is used and the journal records it. Tables and keys this
   version does not know are ignored without a warning and disappear the next time the daemon writes the file.
-- State is in `/var/lib/sp9` (diagnostics reports, the ICC profile). The fan request and the keyboard backlight
+- State is in `/var/lib/sp9` (diagnostics reports, the ICC profile, the pen's FastHostId). The fan request and the keyboard backlight
   level are not stored (the firmware holds them). The helper withdraws the fan request at start-up (when requests
   are allowed).
 - The daemon runs its policy once a second. It writes only when the wanted value differs from the value it wrote
@@ -177,7 +237,7 @@ otherwise every 10 seconds. Failures are shown as toasts.
 | Battery | Status, charge, power, health, cycles, adapter rating, smart charging state and the one-time release, UEFI battery limit (read only, with how to change it in the UEFI menu) |
 | Display | PSR policy per power source, the boot value, the driver state, creating the ICC profile and how to assign it in GNOME, KDE and colord |
 | Keyboard and touch | Keyboard backlight level (follows changes made with the key), ignoring touch while the screen is off, iptsd sensitivity presets (device preset 24/20, 20/16, 32/28, iptsd default 40/36) and ignoring touch near the pen |
-| Pen | Inking haptics, intensity, test |
+| Pen | Inking haptics, intensity, test, sending the pen speed and its strength (%), automatic pairing through the cover (confirmation when switching on), the last pairing result, pair now |
 | Diagnostics | Exporting a report, the path of the last report and opening its folder |
 | About | Device, model, helper and app versions, feature list, reloading the settings file |
 

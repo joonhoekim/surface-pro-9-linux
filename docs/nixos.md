@@ -8,7 +8,8 @@ shows how a host consumes this flake.
 The Nix code here has been evaluated and built on Linux, and the device boots the resulting kernel (7.3.4).
 `nix flake check` passes and `flake.lock` is committed. On the device the options `enable`, `helper.enable` and
 `kernel.ccacheDir` have been used switched on, with `kernelParams.psr` and `kernelParams.hpiosize` switched off
-(2.2). The other options whose default is off (`audio.codecPatch`, `audio.legacy`, `hibernateReboot`, `pen.*`)
+(2.2); the helper there also does the pen's haptics, speed feedback and cover coupling
+([helper.md](helper.md)). The other options whose default is off (`audio.codecPatch`, `audio.legacy`, `hibernateReboot`, `pen.*`)
 have never been run on Linux; they are listed in section 6.
 
 ## 1. The flake of this repository
@@ -51,8 +52,8 @@ A consumer sets `inputs.nixpkgs.follows`.
 | `hibernateReboot` | false | `/etc/systemd/sleep.conf.d/sp9-hibernate-reboot.conf` | `optional/sleep.conf.d/` |
 | `pen.enable` | false | The pen tools in PATH (`pen-haptic`, `surface-pen-connect`, `surface-pen-feedback`) | `userspace/pen/` |
 | `pen.connectService` | false | The unit through `systemd.packages` (only ExecStart is rewritten to the store path), `wantedBy = multi-user.target`, `hardware.bluetooth.enable` (mkDefault). Implies `pen.enable` | `userspace/pen/systemd/surface-pen-connect.service` |
-| `pen.feedbackService` | false | The unit `surface-pen-feedback` through `systemd.packages` (ExecStart rewritten to the store path), `wantedBy = multi-user.target`. It feeds the pen's speed back to the digitizer, which the Slim Pen 2 needs for its continuous haptic waveforms, and starts and stops the inking waveform on contact ([research/gaps/pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md) section 1). Implies `pen.enable` | `userspace/pen/systemd/surface-pen-feedback.service` |
-| `helper.enable` | false | `sp9-helperd` through `systemd.packages` and `services.dbus.packages` (started with `multi-user.target`), the package (`sp9-ctl`, `sp9-settings`) in PATH, `security.polkit.enable`, `surface_aggregator_cdev` in `boot.kernelModules`. The tools the diagnostics script uses go into the unit's `path`, and `SP9_PYTHON` is set (ICC generation). Runs on the device; per-feature status is in [helper-reference.md](helper-reference.md) | `helper/`, [helper.md](helper.md) |
+| `pen.feedbackService` | false | The unit `surface-pen-feedback` through `systemd.packages` (ExecStart rewritten to the store path), `wantedBy = multi-user.target`. It feeds the pen's speed back to the digitizer, which the Slim Pen 2 needs for its continuous haptic waveforms, and starts and stops the inking waveform on contact ([research/gaps/pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md) section 1). Together with `helper.enable` the unit is only installed, not started at boot, and a warning is printed: the helper (`sp9-ctl pen ink on`) writes the same digitizer report. Implies `pen.enable` | `userspace/pen/systemd/surface-pen-feedback.service` |
+| `helper.enable` | false | `sp9-helperd` through `systemd.packages` and `services.dbus.packages` (started with `multi-user.target`), the package (`sp9-ctl`, `sp9-settings`) in PATH, `security.polkit.enable`, `surface_aggregator_cdev` in `boot.kernelModules`. The tools the diagnostics script uses go into the unit's `path`, and `SP9_PYTHON` is set (ICC generation). Runs on the device; per-feature status is in [helper-reference.md](helper-reference.md) It also does the pen: inking haptics and the pen speed to the digitizer (`sp9-ctl pen ink on`; takes the place of `pen.feedbackService`) and coupling a pen put into the cover's pen slot (`sp9-ctl pen auto-couple on`, or `pen couple` once), which needs Bluetooth and this repository's kernel (patch 0023) | `helper/`, [helper.md](helper.md) |
 
 The options map one to one to the components of [`install.sh`](../userspace/platform/install.sh) (`iptsd` →
 `touch`, `cmdline` → `kernelParams`, `speakers`, `initramfs` always, `hda-pins` → `audio.codecPatch`,
@@ -241,8 +242,8 @@ Rebuilding the kernel derivation takes 1–2 hours on the i5-1235U. Most patches
 modules (`ov5693`, `ipu-bridge`, `dw9719`, `int3472`, `surface_*`, `i915`, `ucsi`), so the loop is: in a tree
 identical to the booted kernel, rebuild only that directory and `insmod` the result.
 [`tools/linux/kmod-dev.sh`](../tools/linux/kmod-dev.sh) does it. Patches 0018–0022 were made and exported with this
-loop ([kernel/README.md](../kernel/README.md)); 0023 was built and loaded with it and has run on the device only
-this way, as a module.
+loop ([kernel/README.md](../kernel/README.md)); 0023 was built and loaded with it first, and a kernel built with it
+has been booted since.
 
 ```sh
 cd ~/git/surface-pro-9-linux
@@ -317,6 +318,6 @@ are checks that are done and reflected in the text above.
 | N9 | Build with `audio.codecPatch = "pins"`, `audio.legacy = true` | `/run/current-system/firmware/sp9-alc274-pins.fw` (uncompressed), two lines in `/etc/modprobe.d/nixos.conf` |
 | N10 | `hibernateReboot = true` | The drop-in in `/etc/systemd/sleep.conf.d/`, `systemd-analyze cat-config systemd/sleep.conf` |
 | N11 | `pen.connectService = true` | The ExecStart path in `systemctl status surface-pen-connect`, the unit being enabled |
-| N15 | `pen.feedbackService = true` | The ExecStart path in `systemctl status surface-pen-feedback`, the unit being enabled, the state file `/var/lib/surface-pen/fast-host-id`, and the continuous waveform during a stroke with the pen connected |
+| N15 | `pen.feedbackService = true`, without `helper.enable` | The ExecStart path in `systemctl status surface-pen-feedback`, the unit being enabled, the state file `/var/lib/surface-pen/fast-host-id`, and the continuous waveform during a stroke with the pen connected |
 | N12 | `bootctl list` | Whether the menu has Windows Boot Manager and Windows boots from it. Confirmed: systemd-boot is on the ESP (`/boot`) and the current entry is a NixOS generation |
 | N13 | `nix flake check --no-build` on every nixpkgs update | The 49 keys of the two fragments are not set by `common-config.nix` at present (compared by name). Once it sets one of them to another value, evaluation fails with "conflicting definition values" for `settings.<KEY>.tristate`. Decide then whether to use `lib.mkForce` on the `parseFragment` values |

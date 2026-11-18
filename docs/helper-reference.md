@@ -41,7 +41,9 @@ Notation:
 | Keyboard backlight | The LED class device `/sys/class/leds/*::kbd_backlight` when there is one (`brightness`, `max_brightness`; key changes by polling `brightness_hw_changed`). Otherwise hidraw: the node whose descriptor has Output `000C:007B` (Type Cover keyboard Col05). The level goes to Output 213; Feature 213 (`000C:0517` x4) = supported levels, Feature 214 = current level, `000C:0515` in Input 213 = the backlight key (on receiving it Feature 214 is read again). The report layout is computed from the descriptor | `Input.KeyboardBacklightAvailable`, `KeyboardBacklightBackend`, `KeyboardBacklight`, `KeyboardBacklightLevels`; `SetKeyboardBacklight(u)`. `PropertiesChanged` when the key changes the level | `keyboard-backlight` (yes) | Reports and values confirmed (HID caps, Feature values `00 03 06 0C`, `06`). On a key press the firmware changes the level itself and reports it through In 213 (typecover.md 6.1). The LED comes from kernel patch 0017 (`surface::kbd_backlight` of `hid-surface`, maximum 3) | Works (LED backend `led:surface::kbd_backlight`): writing 0/1/2/3 gives the same LED `brightness`, off at 0 and on at 3 (observed). Following a press of the backlight key and the hidraw backend are unverified, tested (fake) |
 | Touch off while the screen is off | `/sys/class/input/input*/inhibited` (name `IPTSD Virtual Touchscreen …`); the condition is eDP `dpms` = Off | `TouchOffWhenDisplayOff`, `TouchInhibited`; `SetTouchOffWhenDisplayOff(b)` | `touch` (yes) | Windows `SystemInputSuppressionEnabled=1` confirmed. Linux has no such policy (input.md 4, the part on touch while the screen is off). Power does not drop (Feature 9 is not used) | Partial: the setting switches on and off. Whether `inhibited` is set when the screen goes off is unverified, tested (fake) |
 | iptsd thresholds | `/etc/iptsd.d/zz-sp9-helper.conf` (`[Device] 045E:0C52`, `[Contacts] Activation/DeactivationThreshold`, `[Touchscreen] DisableOnStylus`). iptsd reads its configuration directory in name order, so this comes after the preset `surface-pro-9.conf`. On a change: `systemctl try-restart 'iptsd@*.service'` | `IptsdActivationThreshold`, `IptsdDeactivationThreshold`, `IptsdDisableOnStylus`; `SetIptsd(ddi)` | `touch` (yes) | iptsd `config-loader.hpp` (code). The right values have not been measured ([pen-touch.md](research/gaps/pen-touch.md) section 3) | Works: `iptsd 22 18 on` writes the drop-in, and iptsd restarts and reads that file. `iptsd preset` removes the file and restarts iptsd |
-| Pen haptics | The pen's BLE hidraw (`045E:0C0F`, the Manual Trigger output of the Simple Haptic Controller inside the Stylus application). Start = ordinal 9 (ink-continuous), stop = ordinal 2 with intensity 0xFE, test = ordinal 3 (click). Inking: once on every `BTN_TOUCH` edge of `/dev/input/event*` (name `IPTSD Virtual Stylus`) | `Pen.Available`, `InkFeedback`, `Intensity`; `SetInkFeedback(b)`, `SetIntensity(u)`, `TestPulse()` | `pen` (yes) | Reports: byte-identical to the capture posted in linux-surface #1066 (test); inking timing: confirmed by Windows ETW; that the continuous waveform lasts until the stop is inferred ([userspace/pen](../userspace/pen/README.md)) | Unverified, tested (fake): not checked with a pen connected (`Available` false). In a test that wrote to the pen's hidraw directly, ordinal 3 (click) was felt and ordinal 9 (ink-continuous) was not felt through Manual Trigger ([userspace/pen](../userspace/pen/README.md), the part on what was seen on the device) |
+| Pen haptics | The pen's BLE hidraw (`045E:0C0F`, the Manual Trigger output of the Simple Haptic Controller inside the Stylus application). Start = ordinal 9 (ink-continuous; 14 when the eraser end is in range), stop = ordinal 2 with intensity 0xFE, test = ordinal 3 (click). Inking: once on every `BTN_TOUCH` edge of `/dev/input/event*` (name `IPTSD Virtual Stylus`) | `Pen.Available`, `InkFeedback`, `Intensity`; `SetInkFeedback(b)`, `SetIntensity(u)`, `TestPulse()` | `pen` (yes) | Reports: byte-identical to the capture posted in linux-surface #1066 (test); inking timing and values: confirmed from a Windows capture ([pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md) section 5) | Works: with `pen ink on` the pen vibrates while drawing and stops on lift (observed). `pen test` and the waveform of the eraser end are unverified |
+| Pen speed feedback | Feature 9 (63 B, FF00:C9) of the digitizer hidraw (`045E:0C52`): `8e a1` (DisplayStates, the 10-bit FastHostId), `8e a5` (pen feedback V06: sequence number, tip bit, FastHostId, ZFI, speed 0–63). The speed comes from `ABS_X` and `ABS_Y` of the stylus evdev (in mm through the `EVIOCGABS` resolution), the range state from `BTN_TOOL_PEN` and `BTN_TOOL_RUBBER`. The FastHostId is in `/var/lib/sp9/pen-fast-host-id` | `SpeedFeedback`, `SpeedFullScale`, `DigitizerAvailable`; `SetSpeedFeedback(b)`, `SetSpeedFullScale(d)` (50–2000 mm/s) | `pen` (yes) | Messages and speed computation: static analysis of the Windows touch processor. That the speed field switches the continuous waveforms on: measured and observed on Linux (pen-vendor-exchange.md section 1). Full scale 290 mm/s: a person's observation | Works: with the Python service stopped, the continuous waveform played with the helper alone (observed). The journal names the digitizer node and the FastHostId. Between `pen strength 50` and `200` a difference seems to be there but is small (a person's impression). After a suspend and after an iptsd restart: unverified |
+| Cover coupling | The cover hidraw (`045E:09B0`, collection FFF4:0001): Feature 112 (bit 0010), Feature 86 (host address), Input 110 (pen ID, pen address, flags), Output 111 (pen ID, pen address, bit 0008, 16 B TK). The Bluetooth management socket (`HCI_CHANNEL_CONTROL`): Read Controller Information, Add Remote OOB Data, Pair Device, Unpair Device, the events Device Disconnected, Authentication Failed and New Long Term Key. A raw HCI socket: LE Extended Create Connection (0x2043) and its cancel (0x200E). BlueZ D-Bus: `Adapter1.Pairable` and `RemoveDevice`, `Device1.Paired`, `Bonded`, `Trusted` | `AutoCouple`, `CoverAvailable`, `CoupleState`, `CoupleResult`, `CoupledAddress`; `SetAutoCouple(b)`, `Couple()` | `pen-couple` (auth_admin_keep) | Procedure: measured on Linux (pen-vendor-exchange.md section 2.5); coupling address: static analysis, verified with this unit's values. Kernel patch 0023 | Works: automatic coupling (a pen without a bond lying in the cover) and `pen couple` (replacing an existing bond) both end in `coupled`: connection 0.4 s, pairing 0.5 s, Paired, Bonded and Trusted in BlueZ, and the pen's HID attached without restarting bluetoothd (measured). Putting in a pen that has a bond gives `already-coupled`. A `pen couple` issued right after a coupling fails because the pen does not answer the connection, and the bond stays removed: running it again a few seconds later works (measured). Detection of a stale bond (dual boot) and `unsupported-kernel` on a kernel without the patch are unverified |
 | Diagnostics | `post-install-check.sh OUTDIR` (read only, masked), `tar -czf` | `Diagnostics.LastReport`; `Run() → s` | `diagnostics` (yes) | `tools/linux/post-install-check.sh` | Works: `check-*.tar.gz`, 180 kB, is created and is owned by the caller |
 | Reloading the settings | `/etc/sp9/helper.toml` | root `Reload() → as` (list of problems) | `reload` (auth_admin_keep) | — | Tested (fake tree: reading and validation) |
 
@@ -55,8 +57,13 @@ Left out:
 - Sending the fan request again: a request the fan does not follow is only reported through `FanRequestState`.
   While the SAM drives the fan, sending again changes nothing, and sending again after a resume would take back
   the fan the kernel just handed to the SAM.
-- UEFI writes, battery cut-off (BAT 0x46), switching BPM off (BAT 0x19), writing touch Feature 9, pen auto-bonding
-  Features 86/112: the evidence is insufficient or the action is hard to undo.
+- UEFI writes, battery cut-off (BAT 0x46), switching BPM off (BAT 0x19): the evidence is insufficient or the
+  action is hard to undo.
+- The other messages of digitizer Feature 9 (power saving by display state and so on) and the LocalId and Ack
+  fields of the pen feedback: these values belong to the identification procedure between pen and digitizer and
+  are not made up.
+- The pen's CFU exchange (Output 45) and the CouplingKey (Output 85): the first is a firmware offer, the second
+  has never been used on this unit (pen-vendor-exchange.md).
 - Refresh rate, VRR, the brightness curve, applying colour: the desktop's job.
 
 ## D-Bus API
@@ -74,7 +81,7 @@ with the list of invalidated properties. Methods allow interactive authorization
 | `…/Battery` | `Present` b, `Status` s, `Capacity` i, `CycleCount` i, `HealthPercent` d, `EnergyFullWh` d, `EnergyFullDesignWh` d, `PowerW` d, `VoltageV` d, `AcOnline` b, `AdapterW` d, `SmartChargingAvailable` b, `SmartChargingSupported` b, `SmartChargingEngaged` b, `SmartChargingStatus` q, `SmartChargingCountdownS` u, `UefiBatteryLimit` s | `ReleaseSmartCharging() → s` ("released", "counting-down", "not-engaged", "other:N") |
 | `…/Display` | `EnablePsr` i (−2 unknown), `PsrStatus` s, `PsrAc` s, `PsrDc` s, `PsrWritten` i (−1 none), `PanelOn` b, `CalibrationAvailable` b, `IccPath` s | `SetPsrPolicy(s ac, s dc)` ("default", "off", "psr1"), `GenerateIcc() → s` |
 | `…/Input` | `KeyboardBacklightAvailable` b, `KeyboardBacklightBackend` s (`led:<name>`, `hidraw:<node>`, "" when there is none), `KeyboardBacklight` i (−1), `KeyboardBacklightLevels` au (the values `SetKeyboardBacklight` takes: 0..`max_brightness` for the LED, 0 3 6 12 for hidraw), `TouchOffWhenDisplayOff` b, `TouchInhibited` b, `IptsdActivationThreshold` d, `IptsdDeactivationThreshold` d (−1 = preset), `IptsdDisableOnStylus` i (−1 preset, 0, 1) | `SetKeyboardBacklight(u)`, `SetTouchOffWhenDisplayOff(b)`, `SetIptsd(d act, d deact, i disable_on_stylus)` (negative = preset) |
-| `…/Pen` | `Available` b, `InkFeedback` b, `Intensity` u | `SetInkFeedback(b)`, `SetIntensity(u)` (1–255), `TestPulse()` |
+| `…/Pen` | `Available` b, `InkFeedback` b (pen haptics as a whole), `Intensity` u, `SpeedFeedback` b, `SpeedFullScale` d (mm/s), `DigitizerAvailable` b, `AutoCouple` b, `CoverAvailable` b, `CoupleState` s (`idle`, `waiting-for-pen`, `coupling`), `CoupleResult` s (`coupled`, `coupled-no-hid`, `already-coupled`, `no-cover`, `no-pen`, `unsupported-kernel`, `bluetooth-off`, `failed: …`, "" when there is none), `CoupledAddress` s (the coupling address of the pen the cover announced last, with only the last byte shown) | `SetInkFeedback(b)`, `SetIntensity(u)` (1–255), `TestPulse()`, `SetSpeedFeedback(b)`, `SetSpeedFullScale(d)` (50–2000), `SetAutoCouple(b)`, `Couple()` (returns at once; progress is in `CoupleState` and `CoupleResult`. `NotSupported` on the session bus and with `--fake`) |
 | `…/Diagnostics` | `LastReport` s | `Run() → s` |
 
 An object is exported only when the device has the interface behind it: `Performance` (platform_profile or RAPL),
@@ -118,6 +125,115 @@ The comparison is against "the value read right after the write" and not the tab
 shows a value that has a name by that name (0 is `performance`), and the number `balance_performance` stands for
 differs between CPU models.
 A RAPL write puts the same values into every package zone (MSR, MMIO). The effective value is the lower of the two.
+
+### Pen speed feedback
+
+One thread (`penwatch.rs`) reads the stylus evdev and does both the inking haptics and the speed feedback. With
+`pen.ink_feedback` off it does not open the evdev either.
+
+- Messages are 64 B with the report ID. `8e a1`: display state 1, hinge 0x190, the FastHostId (offset 41).
+  `8e a5`: sequence number (3), section `02` (4), LocalId `ff` (37), tip (38), FastHostId (40), ZFI (43),
+  speed (45), valid bitmap `0x0652` (47). Everything else is 0.
+- Speed: pairs of samples 14–32 ms apart, the last three estimates averaged with 0.5/0.33/0.17,
+  `round(min(v / full_scale, 1) x 63)`. With no new position for 60 ms the pen is taken to stand still and 0 is
+  sent.
+- When it sends: when the quantised value or the tip changes, and once a second in range without a change. Not
+  again within 7 ms (Windows sends about 130 a second). Nothing is sent when the pen leaves range (the digitizer
+  has the last value).
+- `8e a1`: when the digitizer node is found (again), after a resume (`CLOCK_BOOTTIME` − `CLOCK_MONOTONIC` grew by
+  more than a second), and when the pen comes into range 30 seconds or more after the last one. When a write
+  fails the node is looked for again every 2 seconds, and once found the helper starts over with `8e a1`.
+  After sending it the helper reads Feature 115 of the digitizer (the FastHostId the firmware received) and
+  writes a journal line when it differs.
+- FastHostId: `/var/lib/sp9/pen-fast-host-id` → if missing, `/var/lib/surface-pen/fast-host-id` (that of
+  `surface-pen-feedback`) is taken over and stored → if missing, a random number in 1–0x3FF.
+- Run together with `surface-pen-feedback`, the two writers alternate and overwrite each other's speed value.
+  Run only one.
+
+### Cover coupling
+
+One thread (`couple.rs`) does it. With `pen.auto_couple` off and no manual request it opens neither the cover
+node nor a socket. It runs only on the real device on the system bus.
+
+1. When the cover node is found (descriptor with FFF4:0001, Features 86 and 112, Input 110, Output 111; the
+   digitizer `0C52`, which has the same collection, is excluded), the helper reads the host address with Read
+   Controller Information on the management socket and writes Feature 112 = bit 0010 and Feature 86 = host
+   address (LSB first, bit 0009 = 0). It writes them again after a resume and on a manual request (every write
+   of 86 makes the cover announce the pen in its slot).
+2. On Input 110 it computes the coupling address: the low 46 bits of `SHA1(16 B constant ‖ pen ID reversed)`
+   with the two top bits set, XOR the host address (when bit 0012 is set; otherwise NOT).
+3. In automatic mode it ends with `already-coupled` when `Device1.Paired` and `Bonded` are true in BlueZ and no
+   encryption failure has been seen for that address. A manual request always goes on.
+4. When BlueZ has a device with that address it is removed with `Adapter1.RemoveDevice`. When
+   `Adapter1.Pairable` is off it is switched on, and back at the end (while it is off the pairing request goes
+   out as "No bonding" and no keys arrive).
+5. 16 B from `/dev/urandom` as the TK: Add Remote OOB Data (LE random, hash192 = TK, the rest 0). Status Invalid
+   Parameters means `unsupported-kernel`.
+6. A raw HCI socket is opened and filtered, Output 111 is written (pen ID and address as received, bit 0008 as
+   in the input, the TK), and LE Extended Create Connection follows at once (random address, scan interval
+   22.5 ms and window 11.25 ms, connection interval 15 ms, supervision timeout 1 s). When there is no connection
+   within 3 seconds it is cancelled.
+7. After a wait of 0.3 s, Pair Device (LE random, NoInputNoOutput), for up to 30 seconds. On Already Paired:
+   Unpair Device and once more. The proof of a pairing is the pen's New Long Term Key event: when it does not
+   arrive within 2 seconds the step is repeated, up to four times. Right after a connection comes up the kernel
+   has not created the security manager channel yet, and Pair Device then returns success at once without
+   pairing (measured: an attempt that ended that way has no key, and the Just Works pairing bluetoothd starts
+   afterwards fails).
+8. Whatever the outcome, the TK is removed (Add Remote OOB Data with zeros). When BlueZ shows the bond,
+   `Trusted` is set. The helper waits up to 10 seconds for the pen's HoG hidraw: `coupled` or `coupled-no-hid`.
+
+Design choices and their basis (kernel v7.3.4 `net/bluetooth`, BlueZ 5.87):
+
+- **The connection is made with Create Connection on a raw HCI socket.** Every way of letting the kernel connect
+  waits for a scan to report the device's advertisement first: `pair_device()` in `mgmt.c` and
+  `l2cap_chan_connect()` in `l2cap_core.c` call `hci_connect_le_scan()` (pending list and passive scan), and
+  `Device1.Connect` and `Adapter1.ConnectDevice` of BlueZ are L2CAP connections and so the same. But the pen's
+  advertising after Output 111 (directed at the host, about 1 second) was never reported by this controller's
+  scan (measured: 0 reports for the coupling address, 0 directed advertisements). At the same moment Create
+  Connection connected within 0.1 seconds (measured). `ConnectDevice` is, besides, an experimental API
+  (`bluetoothd --experimental`).
+  The kernel creates the `hci_conn` from the completion event of a connection it did not start
+  (`le_conn_complete_evt()` in `hci_event.c`) and emits Device Connected.
+  The price: the kernel does not know about the attempt, so when it is making another LE connection at that
+  moment the command fails with Command Disallowed (`failed: create connection: HCI status 0x0c`). Trying again
+  works.
+- **The pairing goes through the helper's management socket (Pair Device); bluetoothd is left alone.**
+  bluetoothd follows without being touched: its listener takes the ATT channel (`connect_cb()` in
+  `src/gatt-database.c` → `device_attach_att()`; `l2cap_core.c` notifies listening fixed channels of every new
+  connection), and it receives the keys as management events, stores them and marks the device bonded
+  (`new_long_term_key_callback()` in `src/adapter.c` → `device_set_bonded()`). When service discovery is done it
+  accepts HoG (`hog_accept()` in `profiles/input/hog.c` → `bt_hog_attach()`) and the HoG profile's
+  `auto_connect` arms auto-connect.
+  The `btmon` record of a coupling test shows exactly that: 1.2 seconds after the connection bluetoothd sent Add
+  Device (auto-connect), wrote the CCCDs and read the Report Map (measured). Using `Device1.Pair()` instead
+  would gain nothing: bluetoothd sends the same Pair Device (`adapter_create_bonding()`), the default agent's IO
+  capability gets mixed in, and an existing bond is refused with `AlreadyExists`. With a TK stored, patch 0023
+  picks OOB whatever the IO capability.
+- **When HoG does not attach.** In earlier tests HoG was once not attached right after the bonding (the cause
+  was not separated; those tests restarted bluetoothd straight away). `Device1.Connect()` does nothing for an LE
+  device that is connected (`dev_connect()` in `src/device.c`), so there is no D-Bus call that asks for the
+  attachment.
+  The helper waits 10 seconds for the hidraw and reports `coupled-no-hid` when there is none. On the device the
+  hidraw appeared within 3 s of the bonding (measured).
+  bluetoothd is restarted only with `pen.couple_restart_bluetooth` on (other Bluetooth devices drop for a
+  moment).
+- **A stale bond.** When Windows couples again with the same host address, the coupling address is the same and
+  only the pen's key changes. When Linux then starts encryption with the old LTK, the controller reports PIN or
+  Key Missing, and the kernel drops the connection and emits Device Disconnected with reason authentication
+  failure (4) (`hci_encrypt_change_evt()` in `hci_event.c` sets `HCI_CONN_AUTH_FAILURE` and disconnects).
+  BlueZ only postpones auto-connect for that reason and keeps the bond (`auth_failures` in `src/device.c`).
+  The helper remembers the address of that event (and of Authentication Failed) from the management socket, in
+  memory only, and when that pen is put into the cover and Input 110 arrives it couples again although there is
+  a bond. A manual `Couple()` always replaces. A failure of the coupling attempt itself does not count as a
+  stale bond. (From the code; not exercised on the device.)
+- **Kernel requirement.** A kernel without patch 0023 answers Invalid Parameters to Add Remote OOB Data for an
+  LE address when the 192-bit values are not zero (`add_remote_oob_data()` in `mgmt.c`: "Enforce zero-valued
+  192-bit parameters as long as legacy SMP OOB isn't implemented").
+  The helper reports that as `unsupported-kernel` and writes no key to the cover. It does not probe at start-up
+  (probing would need a management command).
+
+Addresses and keys: D-Bus and the journal get only the last byte of an address (`cover::mask_addr`). Outside the
+process the TK goes only to the kernel and to the cover.
 
 ### Skin temperature guard (experimental)
 
@@ -185,15 +301,16 @@ When iptsd restarts and creates a new device, the next step picks the new device
 
 The daemon looks for the scripts in `sp9-helper/` next to its own executable (`SP9_DATA_DIR` overrides). The unit
 has `ProtectSystem=strict` and writes only to `/sys`, `/etc/sp9` (ConfigurationDirectory), `/var/lib/sp9`
-(StateDirectory) and `/etc/iptsd.d` (when it exists). `install.sh` creates `/etc/iptsd.d`.
+(StateDirectory) and `/etc/iptsd.d` (when it exists). Address families and device access are not restricted
+(hidraw, evdev, Bluetooth sockets). `install.sh` creates `/etc/iptsd.d`.
 On NixOS with `/etc` as a read-only overlay the iptsd drop-in cannot be written.
 
 ## Tests
 
 | Test | Covers | Runs on |
 |---|---|---|
-| `sp9-helper-core` unit tests | Keyboard backlight LED preference and key report, the table and ranges, the sysfs backends (fake tree), HID descriptor parsing and report assembly (cover and pen, byte comparison with the #1066 capture), SSAM requests and verdicts (`& 0x0440`, the 0x3a bits, CID, bytes and range of the fan request), the fan request state verdict (settle time, tolerance), the cdev struct size and ioctl number (40 B, `0xC028A501`), skin guard control, the policy step (following the profile, writing an EPP that something else replaced again, with its window, slow steps and failed writes, PSR, touch), reading and validating the settings and the example file, a settings file with unknown tables | Windows, Linux |
-| `sp9-helperd` D-Bus tests | Object, property and method round trips, error names, saving the settings, the fan request's permission order, range and `FanRequestState`, withdrawing the fan request at start-up, keyboard (hidraw, LED) and pen reports, the iptsd drop-in | Windows, Linux (TCP p2p) |
+| `sp9-helper-core` unit tests | Keyboard backlight LED preference and key report, the table and ranges, the sysfs backends (fake tree), HID descriptor parsing and report assembly (cover and pen, byte comparison with the #1066 capture), the pen feedback buffers (`8e a1`, `8e a5`; byte comparison with what the Python tool sent), the speed estimate, when to send, taking over the FastHostId, the cover reports (Features 86 and 112, Input 110, Output 111 with the real descriptor), the coupling address (the vectors of the Python tests) and SHA-1, the bytes of the management commands and of the HCI commands and events, SSAM requests and verdicts (`& 0x0440`, the 0x3a bits, CID, bytes and range of the fan request), the fan request state verdict (settle time, tolerance), the cdev struct size and ioctl number (40 B, `0xC028A501`), skin guard control, the policy step (following the profile, writing an EPP that something else replaced again, with its window, slow steps and failed writes, PSR, touch), reading and validating the settings and the example file, a settings file with unknown tables | Windows, Linux |
+| `sp9-helperd` D-Bus tests | Object, property and method round trips, error names, saving the settings, the fan request's permission order, range and `FanRequestState`, withdrawing the fan request at start-up, keyboard (hidraw, LED) and pen reports, the pen settings (speed feedback, the full-scale range, automatic coupling) and the refusal of `Couple()`, stylus events (a FIFO) → digitizer Feature 9 and pen Output 65 (Linux), the iptsd drop-in | Windows, Linux (TCP p2p) |
 | `sp9-settings` unit tests | Property decoding (`a(ssdddy)`, `a(sd)`, `q`, `au`), language selection, every message ID in the source having a Korean translation | Windows (MSYS2 GTK), Linux |
 | `cargo check --target x86_64-unknown-linux-gnu` | ioctl (cdev, `HIDIOCGFEATURE`), the evdev, hidraw and LED watcher threads | anywhere |
 
@@ -203,7 +320,8 @@ tests are skipped on Windows.
 ### Still to verify on Linux
 
 What the table above leaves unverified. Confirmed: the six objects, per-profile PL and EPP, overrides, the fan
-request, battery reading, writing the keyboard backlight, the PSR policy (AC), iptsd thresholds, ICC, diagnostics.
+request, battery reading, writing the keyboard backlight, the PSR policy (AC), iptsd thresholds, ICC, diagnostics,
+pen inking haptics and speed feedback, cover coupling.
 
 1. `turbostat` PkgWatt under the same load while switching profiles: whether the written PL takes effect on the
    actual power.
@@ -211,14 +329,15 @@ request, battery reading, writing the keyboard backlight, the PSR policy (AC), i
 3. Whether the level in the settings app follows a press of the backlight key.
 4. After `sp9-ctl touch-off on`, switch the screen off (`DPMS`): whether touch is blocked, and whether it comes
    back when the screen is on.
-5. With the pen connected, `sp9-ctl pen test`, then draw with `pen ink on`: whether start and stop are felt, and
-   whether the vibration lasts through a long stroke. The continuous waveform needs the pen's speed at the
-   digitizer, which `surface-pen-feedback` sends and the helper does not
-   ([pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md) section 1). A pen paired in pairing mode
-   disconnects after about 80 s without use and does not reconnect, so do this right after pairing.
+5. `sp9-ctl pen test` (click), and the waveform when drawing with the eraser end.
 6. `PsrStatus` after `sp9-ctl psr off psr1` and a switch to battery.
 7. `sp9-ctl skin-guard on` + `stress-ng --cpu 12 -t 300`: compare `SkinTempC`, `Pl1W` and the surface temperature
    with the Windows table (power-thermal.md 3). The constants are settled according to the result.
 8. `FanRequestState` = `not-honoured` with a request in place during `stress-ng --cpu 12` and after a suspend.
    Whether the fan stops after `systemctl restart sp9-helperd` with a request in place.
 9. In `sp9-settings`, change the items on every page and check that they agree with `sp9-ctl status`.
+10. Pen speed feedback: whether the continuous vibration is still there after a suspend and after
+    `systemctl restart 'iptsd@*'`.
+11. Cover coupling: after Windows has coupled the pen again, whether the journal has `encryption with … failed`
+    when the pen is used on Linux, and whether putting it into the cover couples it again. `unsupported-kernel`
+    on a kernel without 0023.

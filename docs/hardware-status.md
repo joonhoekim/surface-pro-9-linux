@@ -4,8 +4,8 @@ What each part of the Surface Pro 9 (Intel, SKU `Surface_Pro_9_2038`) does on Li
 is in the [README](../README.md).
 
 Conditions: NixOS, kernel 7.3.4 = stable v7.3.4 + linux-surface 7.3 + [`kernel/patches`](../kernel/README.md)
-0001–0022, firmware UEFI 24.103.143 and SAM 6.603.139, Type Cover attached, Slim Pen 2. Patch 0023 (Bluetooth)
-has run only as a module loaded into that kernel; results that depend on it say so.
+0001–0023, firmware UEFI 24.103.143 and SAM 6.603.139, Type Cover attached, Slim Pen 2. Most results were
+measured on kernels with 0001–0022; patch 0023 (Bluetooth) only matters for the pen's cover coupling.
 
 How to read this page:
 
@@ -78,10 +78,12 @@ Verdict: partial. Tests: PEN-5 partial, PEN-6 pass, PEN-8 partial, PEN-9 partial
 - **Observed.** Strokes draw (the iptsd stylus device reports `BTN_TOUCH`). Haptics: a click (waveform
   ordinal 3) sent with output report 65 is felt. The continuous ink waveform (ordinal 9, intensity 127) is
   felt during strokes, almost as on Windows, once the host feeds the pen's speed back to the digitizer
-  (Feature 9 of the touch controller), which `surface-pen-feedback` does. Without that feedback it is not
+  (Feature 9 of the touch controller). The device helper does this with `sp9-ctl pen ink on`: the pen vibrates
+  while drawing and stops on lift (observed, with the helper alone); `surface-pen-feedback` is the standalone
+  alternative. Between helper strength 50 % and 200 % a difference seems to be there but is small (a person's
+  impression). Without that feedback it is not
   felt, neither with the bytes Windows was captured sending (`41 00 7f 09 00 00 00`) nor at intensity 255, and
-  written as the Auto Trigger of Feature 65 it gives only a weak, intermittent vibration. The tests used a pen
-  bonded in pairing mode.
+  written as the Auto Trigger of Feature 65 it gives only a weak, intermittent vibration.
 - **Measured.** Tail button: single click Meta+F20, double click Meta+F19, long press Meta+F18. Pairing by
   hand works (2/2): a long press of the tail button puts the pen in pairing mode and it bonds with a
   `NoInputNoOutput` agent; without an agent pairing fails with `AuthenticationFailed`. BlueZ and UPower then
@@ -89,16 +91,19 @@ Verdict: partial. Tests: PEN-5 partial, PEN-6 pass, PEN-8 partial, PEN-9 partial
   Windows). The stylus device declares `ABS_PRESSURE` 0..4096, `ABS_TILT_X/Y` −9000..9000, `BTN_STYLUS` and
   `BTN_TOOL_RUBBER`. The touch controller's descriptor has the FFF4:0001 collection with input reports 84 and
   110, 12 B each.
-- **Measured, with patch 0023 loaded as a module** (no kernel built with it has been booted).
+- **Measured, with kernel patch 0023** (first loaded as a module, then on a booted kernel built with it).
   - Bonding through the cover's pen slot, without pairing mode. After the host address is written to the
     cover, the cover announces the pen lying in its slot; the host gives the same 16 random bytes to the cover
     and to the kernel as the pairing key, connects to the pen's coupling address (a second address, derived
-    from the pen ID and the host address) and pairs with LE legacy OOB pairing. The pen is bonded within 1 s
-    and BlueZ stores the LTK and IRK. This was done by hand with tools
-    ([`le-legacy-oob.py`](../tools/linux/le-legacy-oob.py), direct hidraw writes); no daemon does it, and
-    BlueZ attaches the pen's HID only after bluetoothd is restarted.
+    from the pen ID and the host address) and pairs with LE legacy OOB pairing. The device helper does this,
+    automatically when a pen without a bond is put into the cover (`sp9-ctl pen auto-couple on`) or once with
+    `sp9-ctl pen couple`: connection 0.4 s, pairing 0.5 s, Paired, Bonded and Trusted in BlueZ, and the pen's
+    HID attached without restarting bluetoothd. A pen that has a bond gives `already-coupled`. A `pen couple`
+    issued right after a coupling fails (the pen does not answer) and leaves the pen without a bond until it
+    is run again a few seconds later.
   - Reconnection. A pen bonded that way, to which the host gave its identity key, disconnected by itself
-    after 50 s and was connected again 3.5 s after it was picked up and drawn with.
+    after 50 s and was connected again 3.5 s after it was picked up and drawn with; reconnection was confirmed
+    again on the booted kernel with 0023.
 - **Does not work.**
   - Reconnection of a pen bonded in pairing mode. After its idle disconnect the pen does not advertise again
     when it is picked up, drawn with, or its tail button is pressed; a two-minute unfiltered scan (30 000
@@ -111,15 +116,17 @@ Verdict: partial. Tests: PEN-5 partial, PEN-6 pass, PEN-8 partial, PEN-9 partial
     that works is the cover (above).
 - **Unverified.** Reaching full pressure and the pressure at the start of a stroke (PEN-1), tilt against real
   angles (PEN-2), the side button (PEN-3), the eraser (PEN-4), whether reports 84 and 110 are received on the
-  digitizer (PEN-7), haptics through the helper. Whether the FastHostId is needed for the continuous waveforms
-  and whether the speed value sets their strength. Continuous haptics with a pen bonded through the cover.
-  The unit `surface-pen-feedback.service` and the option `pen.feedbackService` as installed. The responder
-  and Secure Connections paths of patch 0023 (compile-tested only).
+  digitizer (PEN-7). Whether the FastHostId is needed for the continuous waveforms. In the helper: `pen test`, the
+  eraser waveform, speed feedback after a suspend and after an iptsd restart, detection of a stale bond after
+  Windows couples the pen again, `unsupported-kernel` on a kernel without 0023. The standalone unit
+  `surface-pen-feedback.service` and the option `pen.feedbackService` as installed. The responder and Secure
+  Connections paths of patch 0023 (compile-tested only).
 - **Responsible.** iptsd for drawing. Drawing does not need Bluetooth; the tail button, the battery level and
-  haptics do. The prototypes in [userspace/pen](../userspace/pen/README.md) (`pen-haptic`,
+  haptics do. The device helper for haptics, speed feedback and cover coupling ([helper.md](helper.md), the
+  section on the pen; pen haptics and automatic coupling are off by default). Kernel patch 0023 (LE legacy OOB
+  pairing) for the cover coupling. The prototypes in [userspace/pen](../userspace/pen/README.md) (`pen-haptic`,
   `surface-pen-connect`, `surface-pen-feedback`; options `pen.enable`, `pen.connectService`,
-  `pen.feedbackService`, off by default). Kernel patch 0023 (LE legacy OOB pairing) for the cover coupling.
-  The helper's pen page (`sp9-ctl pen`, off by default, unverified on the device).
+  `pen.feedbackService`, off by default) for systems without the helper.
 - **Research.** [research/gaps/pen-touch.md](research/gaps/pen-touch.md),
   [research/gaps/pen-ble-trace.md](research/gaps/pen-ble-trace.md),
   [research/gaps/pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md).
@@ -410,7 +417,8 @@ Optional (`helper.enable`): the system service `sp9-helperd`, the command `sp9-c
 | Keyboard backlight | Works through the LED; following the backlight key unverified |
 | iptsd thresholds | Works |
 | Touch off while the panel is off | The setting toggles; effect unverified |
-| Pen haptics | Unverified (the pen was not connected) |
+| Pen haptics and speed feedback | Works: vibration while drawing, stop on lift (observed). `pen test`, the eraser waveform, and the state after a suspend or an iptsd restart are unverified |
+| Pen cover coupling | Works, automatic and manual (measured). Stale-bond detection and `unsupported-kernel` are unverified |
 | Skin temperature guard | Experimental, off by default, unverified |
 | Diagnostics report | Works |
 | Settings app | The window opens (observed); individual controls unverified |

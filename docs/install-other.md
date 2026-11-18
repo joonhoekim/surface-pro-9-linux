@@ -31,7 +31,7 @@ Results go to `out/kernel/dist/` with a `SHA256SUMS`. The release string is `7.3
 
 - **Verified**: the patches apply cleanly in this order (v7.3.4, linux-surface's 47 commits, then 0001–0017
   with `git am`; 0018–0022 were exported from commits on the tree of the booted kernel, and 0023 from the same
-  tree, where it was built and loaded as a module).
+  tree, where it was first built and loaded as a module; a NixOS-built kernel with all 23 has been booted).
 - **Untested**: the build itself, the packages, and booting their kernel. The configuration starts from the
   Ubuntu mainline config that linux-surface uses for its Debian packages, not from the nixpkgs configuration
   the verified kernel was built with: the options the fragments request are the same, the rest of the driver
@@ -116,10 +116,13 @@ under NixOS ([helper-reference.md](helper-reference.md)); this installer was not
 Optional prototypes: `pen-haptic`, `surface-pen-connect` and `surface-pen-feedback`
 ([userspace/pen/README.md](../userspace/pen/README.md)).
 Python 3.10 or later; `surface-pen-connect` needs `dbus-next`. They run as root from a copy of the directory;
-the README has the copy and unit commands. Read the "seen on the device" section first: `surface-pen-feedback`
-is what makes the pen's continuous haptic waveforms play; a pen paired by hand in pairing mode does not
-reconnect after its idle disconnect, so the connect service has little effect for it; bonding through the
-cover's pen slot, which does reconnect, needs kernel patch 0023 and is done by hand with tools.
+the README has the copy and unit commands. With the device helper installed (section 4) they are not needed
+for everyday use: the helper does the inking haptics with the speed feedback the continuous waveforms need
+(`sp9-ctl pen ink on`) and bonds a pen put into the cover's pen slot (`sp9-ctl pen auto-couple on`, kernel
+patch 0023 required), and a pen bonded that way reconnects after its idle disconnect ([helper.md](helper.md),
+the section on the pen). `surface-pen-feedback` remains as the standalone alternative for a system without the
+helper; do not run it next to the helper's pen haptics. A pen paired by hand in pairing mode does not reconnect
+after its idle disconnect, so `surface-pen-connect` has little effect for it.
 
 ## 6. Verify and go back
 

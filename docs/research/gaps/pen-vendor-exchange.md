@@ -10,7 +10,7 @@ Facts from binaries are given without positions. Bluetooth addresses, keys, the 
 | Problem | State on Linux | Cause | Section |
 |---|---|---|---|
 | Continuous haptics | **Played on Linux** (observed) | The digitizer, not Bluetooth. The Windows touch processor feeds pen state back to the digitizer on every frame; the pen plays the continuous waveforms only once the digitizer has a valid pen speed from the host. Linux sent nothing | 1 |
-| Automatic bonding | **Works on Linux** with the pen in the cover's pen slot (measured): the cover procedure + LE legacy OOB pairing (kernel patch 0023) bonds within 1 s and BlueZ stores the LTK and IRK. Done by hand with tools, not by a daemon | The keys go through the Type Cover, and the pen uses a second address for it | 2 |
+| Automatic bonding | **Works on Linux** with the pen in the cover's pen slot (measured): the cover procedure + LE legacy OOB pairing (kernel patch 0023) bonds within 1 s and BlueZ stores the LTK and IRK. The device helper does it when the pen is put into the slot | The keys go through the Type Cover, and the pen uses a second address for it | 2 |
 | Reconnection after the idle disconnect | **Works on Linux** for a bond in which the host gave its identity key (measured: the pen disconnected by itself after 50 s, and reconnected 3.5 s after it was picked up and drawn with) | A pen that did not receive the host's identity does not advertise for reconnection | 3 |
 | The 16 B exchange | Not needed | It is a firmware update check (CFU offers). It does not switch on haptics or connection keeping | 4 |
 
@@ -94,11 +94,12 @@ That tool writes only Output 65 and does no initialisation, which already pointe
 
 [`userspace/pen/surface_pen/feedback.py`](../../../userspace/pen/surface_pen/feedback.py) builds the two messages, and `surface-pen-feedback` is a daemon around it ([userspace/pen](../../../userspace/pen/README.md)):
 it computes the speed from the positions of the iptsd stylus device and sends `8e a5` when the value changes. The continuous waveform itself is still started and stopped over Bluetooth with Output 65 (section 5).
+The device helper `sp9-helperd` does the same with `sp9-ctl pen ink on` ([helper.md](../../helper.md), the section on the pen), and with the helper alone the continuous waveform played during strokes (observed). Run only one of the two: both write Feature 9.
 
 ### 1.6 Not separated yet
 
 - Whether the FastHostId (`8e a1`) is needed at all.
-- Whether the speed value changes the strength of the vibration (speed 0 against 63). The daemon's default assumes it does: its full scale of 290 mm/s was chosen by feel as "about as strong as on Windows", and there is no controlled comparison behind it.
+- Whether the speed value changes the strength of the vibration (speed 0 against 63). The daemon's default assumes it does: its full scale of 290 mm/s was chosen by feel as "about as strong as on Windows", and there is no controlled comparison behind it. With the helper, between strength 50 % and 200 % (full scale 580 and 145 mm/s) a difference seems to be there but is small (a person's impression).
 
 ## 2. Cover-slot coupling
 
@@ -207,7 +208,7 @@ What the Windows filter driver (`SurfacePenBleLcAddrAdaptationDriver`) does (sta
 
 ### 2.5 Coupling on Linux (measured)
 
-Done with the pen lying in the cover, on the booted 7.3.4 kernel with a `bluetooth.ko` that carries [patch 0023](../../../kernel/PROVENANCE.md) loaded as a module.
+First done by hand with the pen lying in the cover, on the booted 7.3.4 kernel with a `bluetooth.ko` that carries [patch 0023](../../../kernel/PROVENANCE.md) loaded as a module.
 
 1. Make BlueZ pairable (bondable on the management interface). When it is off the pairing request goes out as "No bonding" and no keys arrive.
 2. Write Feature 112 = 1 and Feature 86 = host address (LSB first, bit 0009 = 0) to the cover. The cover announces the pen with Input 110 (flags `07`).
@@ -222,9 +223,11 @@ Done with the pen lying in the cover, on the booted 7.3.4 kernel with a `bluetoo
 - Right after the bonding BlueZ does not attach the pen's HID (HoG): the connection was made outside BlueZ and service discovery finished before the bonding. After a restart of bluetoothd the stored bond gets HoG attached and auto-connect armed. From then on the pen advertises with an RPA and BlueZ resolves it with the IRK and connects.
 
 Kernel patch 0023 adds what the stock kernel lacks: LE legacy pairing with a TK supplied out of band (through the extended form of Add Remote OOB Data), with the host's identity key offered in that pairing (section 3). The initiator path is what ran here;
-the responder path and the path combined with Secure Connections OOB data are compile-tested only, and no kernel built with the patch had been booted at the time of writing.
+the responder path and the path combined with Secure Connections OOB data are compile-tested only.
 
-Left to do: put this procedure into `surface-pen-connect` so that laying the pen in the cover bonds it without a person, and the HoG attachment right after bonding.
+This procedure now lives in the device helper `sp9-helperd` ([helper-reference.md](../../helper-reference.md#cover-coupling)): with `sp9-ctl pen auto-couple on` a pen without a bond is coupled when it is put into the cover, and `sp9-ctl pen couple` does it once. Measured with the helper: connection 0.4 s, pairing 0.5 s, Paired, Bonded and Trusted in BlueZ, and the pen's HID attached without restarting bluetoothd. A pen that already has a bond gives `already-coupled`. A `pen couple` issued right after a coupling fails because the pen does not answer the connection, and leaves the pen without a bond until it is run again a few seconds later.
+Pair Device has to wait for the security channel of the new connection: issued right after the connection comes up, the kernel returns success at once without pairing, so the helper takes the pen's New Long Term Key event as the proof and repeats the step when it does not come.
+A kernel built with 0023 has been booted since, and coupling (through the helper) and reconnection work on it as well (measured).
 
 A different route to a working bond, without the kernel patch: [`tools/linux/pen-bond-from-windows.py`](../../../tools/linux/pen-bond-from-windows.py) copies the bond Windows made through the cover into BlueZ (both systems use the same adapter address). No result obtained with a copied bond is recorded in this note.
 
@@ -249,7 +252,7 @@ Which of the three collections blocks it was not separated. Tracing this on Wind
 | Linux, pairing mode, Just Works (the host does not offer its identity key: the kernel offers it only with `HCI_PRIVACY`) | No reconnection advertising. In one test the pen disconnected after 53 s and nothing was received in 100 s of picking it up, drawing and pressing the tail button. In an unfiltered active scan (86 s, 1,144 advertisements from 14 addresses) there was neither the pairing address nor the coupling address, no RPA that resolves with any IRK the pen had given, and no ADV_IND with 0 B of data (checked again offline). A directed advertisement aimed at another address would not be visible through HCI |
 | Windows, through the cover | The pen advertises while Linux is listening: in the first 8 s of one Linux capture there are 160 ADV_IND with 0 B of data from two RPAs, and both resolve with the IRK the pen gave in its last Windows bonding |
 | Linux, cover coupling, host identity key not offered (the kernel default with privacy off) | The pen takes no host key at all and did not advertise for reconnection: 20 s of unfiltered scanning after the disconnect contain no address that resolves with the pen's IRK |
-| Linux, cover coupling with patch 0023 offering the identity key | **Reconnects.** The pen disconnected by itself after 50 s and was connected again 3.5 s after it was picked up and drawn with |
+| Linux, cover coupling with patch 0023 offering the identity key | **Reconnects.** The pen disconnected by itself after 50 s and was connected again 3.5 s after it was picked up and drawn with. Checked again on a booted kernel built with 0023, with the bond made by the helper |
 
 There is no capture of a pen bonded in pairing mode on Windows: all 15 connections of the Windows capture are the four cover couplings and their reconnections.
 So what a pairing-mode bond does when the host does offer its identity key was not tested.
@@ -364,11 +367,11 @@ Start-Process C:\BTP\v1.14.0\x86\btvs.exe -ArgumentList '-Mode','Wireshark','-Re
 
 | Open | Notes |
 |---|---|
-| Whether the FastHostId is needed for the continuous waveforms; whether the speed value sets the strength | 1.6 |
+| Whether the FastHostId is needed for the continuous waveforms; how much the speed value sets the strength | 1.6 |
 | Continuous waveforms with a pen bonded through the cover on Linux | Not recorded: the haptic tests of section 1 used a pen bonded in pairing mode |
-| A kernel built with patch 0023 has not been booted; its responder path and its path with Secure Connections OOB data are compile-tested only | The coupling and the reconnection were measured with the patched `bluetooth.ko` loaded into the booted 7.3.4 |
-| Coupling without a person: the procedure of 2.5 is not in `surface-pen-connect`, and BlueZ does not attach HoG right after the bonding | 2.5 |
-| Reconnection beyond the one recorded measurement (50 s idle, 3.5 s) | No repeat count, and nothing across a suspend or a reboot, is recorded |
+| The responder path of patch 0023 and its path with Secure Connections OOB data | Compile-tested only. The initiator path was measured, first as a module and then on a booted kernel built with the patch |
+| In the helper: detection of a stale bond after Windows couples the pen again; `unsupported-kernel` on a kernel without 0023; speed feedback after a suspend and after an iptsd restart; `pen test`; the eraser waveform | [helper-reference.md](../../helper-reference.md), the list of what is still to verify |
+| Reconnection: how often and how fast | Recorded: one measurement with a time (50 s idle, 3.5 s) and a re-check on the booted kernel with 0023, without a time. Nothing across a suspend is recorded |
 | Reconnection of a pairing-mode bond when the host offers its identity key; a pairing-mode bond on Windows | No data (section 3) |
 | The bytes Windows writes to Features 86, 112 and 115 of the cover | HIDCLASS ETW has no contents. That Feature 86 is the host address rests on static analysis and on what the cover does on Linux (2.3). Reading them with GET_FEATURE would need the collection open, which blocks the coupling (2.6), so do it with the pen out of the cover |
 | The `NOT H` form of the coupling address | Static analysis only; never seen over the air |

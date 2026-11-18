@@ -34,8 +34,8 @@ not "works".
 
 ## Hardware status
 
-Kernel 7.3.4 with patches 0001–0022, NixOS, firmware UEFI 24.103.143 and SAM 6.603.139 (patch 0023 has run only
-as a module loaded into that kernel, for the pen results). The long form, with
+Kernel 7.3.4 with patches 0001–0023, NixOS, firmware UEFI 24.103.143 and SAM 6.603.139 (most results were
+measured on kernels with 0001–0022; 0023 only matters for the pen's cover coupling). The long form, with
 the measurements, is [docs/hardware-status.md](docs/hardware-status.md). Test IDs refer to
 [docs/test-results.md](docs/test-results.md).
 
@@ -43,7 +43,7 @@ the measurements, is [docs/hardware-status.md](docs/hardware-status.md). Test ID
 |---|---|---|---|
 | Display | Works, with a caveat | Runs PSR1 with no kernel parameter (measured). No flicker noticed in use (observed; not the 10-minute AC/battery test). 120 Hz switching and the lowest brightness steps are unverified | DSP-1 partial, DSP-2 unverified, DSP-3 partial |
 | Touch | Unverified | iptsd loads the preset, no ghost touches in 150 s without contact, no ithc errors after 17 suspend cycles (measured). Taps, swipes, palm rejection: nobody has tested them. Wake by touch is not expected to work (inferred) | TOUCH-1, 2, 4 unverified, TOUCH-3 partial, PEN-8 partial |
-| Pen (Slim Pen 2) | Partial | Strokes draw (observed); tail button sends three distinct keys (measured); manual pairing works (2/2). Continuous haptics play once `surface-pen-feedback` feeds the pen's speed back to the digitizer (observed). Bonding through the cover's pen slot, and reconnection of a pen bonded that way after its idle disconnect (3.5 s), were measured with patch 0023 loaded as a module; the procedure is run by hand with tools, nothing does it automatically yet, and a pen bonded in pairing mode still does not reconnect. Unverified: pressure, tilt, side button, eraser | PEN-5 partial, PEN-6 pass, PEN-9 partial, PEN-1–4, 7 unverified; [userspace/pen](userspace/pen/README.md), [gaps/pen-vendor-exchange.md](docs/research/gaps/pen-vendor-exchange.md) |
+| Pen (Slim Pen 2) | Partial | Strokes draw (observed); tail button sends three distinct keys (measured); manual pairing works (2/2). With the device helper: continuous haptics play while drawing (observed; the helper feeds the pen's speed back to the digitizer), and a pen put into the cover's pen slot is bonded (measured; kernel patch 0023) and reconnects after its idle disconnect (measured, 3.5 s). A pen bonded in pairing mode still does not reconnect. Unverified: pressure, tilt, side button, eraser | PEN-5 partial, PEN-6 pass, PEN-9 partial, PEN-1–4, 7 unverified; [userspace/pen](userspace/pen/README.md), [gaps/pen-vendor-exchange.md](docs/research/gaps/pen-vendor-exchange.md) |
 | Front camera | Works | Frames at 640x480, 720p and 1080p requests (measured: 1280x720 120/120 frames, 28.6 fps). The sensor's binned 1296x972 mode does not work and is not offered. Mirroring, privacy LED, image quality against Windows: unverified | CAM-2 pass, CAM-3 fail, CAM-5, 6 unverified |
 | Rear camera | Works, focus unverified | Frames at 1080p and 720p (measured). Focus values are written to the lens driver; whether the image focuses is unverified. No autofocus through libcamera | CAM-1 partial, CAM-4 partial |
 | IR camera | Does not work | No driver | [gaps/camera.md](docs/research/gaps/camera.md) section 4.1 |
@@ -60,7 +60,7 @@ the measurements, is [docs/hardware-status.md](docs/hardware-status.md). Test ID
 | Suspend (s2idle) | Works, standby power unverified | 10/10 suspend and resume by RTC, RTC wake 17/17, 3/3 after audio playback (measured). Residency accrues only in S0i2.0. Power button, one hour on battery and shutdown are unverified. Hibernation is not available: swap is zram only | PWR-1 partial, PWR-3 pass, PWR-6 pass, PWR-4, 5, 7, 8 unverified |
 | Wi-Fi | Works | 5 GHz, 80 MHz link, no beacon loss in 854 s, reconnects 3.3 s after resume (measured). Throughput against Windows is unverified | NET-1 partial |
 | Bluetooth | Partial | The pen pairs and connects. Mouse, earphones and audio are unverified | NET-2 unverified, AUD-5 unverified |
-| Device helper | Works, partly unverified | Start-up, per-profile power limits, fan request, battery, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics confirmed on the device. Pen haptics through the helper, the settings app's individual controls, skin temperature guard and touch-off are unverified | [docs/helper-reference.md](docs/helper-reference.md) |
+| Device helper | Works, partly unverified | Start-up, per-profile power limits, fan request, battery, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics, pen haptics with speed feedback and cover coupling confirmed on the device. The settings app's individual controls, skin temperature guard and touch-off are unverified | [docs/helper-reference.md](docs/helper-reference.md) |
 
 ## Repository layout
 
