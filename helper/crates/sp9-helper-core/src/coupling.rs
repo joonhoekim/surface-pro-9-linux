@@ -29,6 +29,14 @@
 //!   that is not a reason to unpair: unpairing a device bluetoothd has paired makes it drop
 //!   the link, and after a link the host dropped the pen is silent for half a minute.
 //! - There is never a second Create Connection on a link that is up.
+//! - A link that came up through the pen's resolvable private address cannot be paired on:
+//!   the kernel computes the pairing's confirm value with the identity address the controller
+//!   resolved (and its "resolved" address type), the pen with the address it used on the air
+//!   (measured: "Confirm value failed" on every such link, never on a link to the static
+//!   coupling address). That happens when the controller's resolving list still has the pen
+//!   from an earlier bond and the pen, which still believes in that bond, advertises to
+//!   reconnect. `Ops::connect` keeps the controller from resolving while it connects; a link
+//!   that is resolved all the same is not paired on.
 
 use crate::btmgmt::{self, Event};
 use crate::cover::Addr;
@@ -61,6 +69,17 @@ pub enum Fail {
     /// the pen refused every pairing
     Refused,
     Other(String),
+}
+
+/// How LE Create Connection ended.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Link {
+    /// connected to the pen's static coupling address
+    Up,
+    /// connected, but through the pen's private address (the controller resolved it)
+    Resolved,
+    /// the pen took no connection
+    NoAnswer,
 }
 
 /// The reply to Pair Device.
@@ -108,8 +127,9 @@ pub trait Ops {
     fn unpair(&mut self) -> Result<(), Fail>;
     /// The key to the cover (Output 111).
     fn write_key(&mut self) -> Result<(), Fail>;
-    /// LE Create Connection; false when the pen takes none.
-    fn connect(&mut self) -> Result<bool, Fail>;
+    /// LE Create Connection to the coupling address, with the controller's address resolution
+    /// off for its duration where that is possible.
+    fn connect(&mut self) -> Result<Link, Fail>;
     /// MGMT Pair Device, waiting for its reply.
     fn pair(&mut self) -> Result<PairReply, Fail>;
     /// The pen gave a long term key since the coupling began (to whoever paired); waits up
@@ -188,6 +208,8 @@ fn rounds(ops: &mut dyn Ops, replace: bool) -> Result<(), Fail> {
         ops.unpair()?;
         ops.log("dropped the old bond");
     }
+    // the link that is up came through the pen's private address
+    let mut resolved = false;
     for round in 0..ROUNDS {
         if round > 0 {
             ops.log(&format!("round {} of {ROUNDS} in {} s", round + 1, ROUND_PAUSE.as_secs()));
@@ -201,9 +223,14 @@ fn rounds(ops: &mut dyn Ops, replace: bool) -> Result<(), Fail> {
         }
         // never a second connection on a link that is up
         if ops.connected() {
+            if resolved {
+                ops.log("the link through the pen's private address is still up: nothing to pair on");
+                continue;
+            }
             ops.log("the link is up: pairing on it");
             ops.write_key()?;
         } else {
+            resolved = false;
             // the pen takes the key only while it is not connected, and not at once: hand it over,
             // wait, ask the cover again, write the same key again, then connect
             ops.log("handing the key to the pen through the cover (no connection yet)");
@@ -213,16 +240,28 @@ fn rounds(ops: &mut dyn Ops, replace: bool) -> Result<(), Fail> {
                 return Err(Fail::Other("the cover does not announce the pen any more".into()));
             }
             ops.write_key()?;
-            if !ops.connect()? {
-                return Err(Fail::NoAnswer);
+            match ops.connect()? {
+                Link::NoAnswer => return Err(Fail::NoAnswer),
+                Link::Resolved => {
+                    // the pairing's confirm value cannot match on this link
+                    ops.log("connected through the pen's private address (the controller still resolves its old identity): no pairing on this link");
+                    resolved = true;
+                    // bluetoothd pairs on the link by itself; that pairing is not to use the key
+                    ops.clear_key();
+                    continue;
+                }
+                Link::Up => ops.log("connected, pairing"),
             }
-            ops.log("connected, pairing");
         }
         if pair_on_link(ops)? {
             return Ok(());
         }
     }
-    Err(Fail::Refused)
+    Err(if resolved {
+        Fail::Other("the pen only answers from its private address (stale resolving list entry in the controller)".into())
+    } else {
+        Fail::Refused
+    })
 }
 
 /// One coupling of the pen the cover announced. `replace`: the pen has a bond that is known
@@ -304,6 +343,9 @@ mod tests {
         /// when each write to the cover happened, and which key it carried
         times: Vec<Duration>,
         keys_written: Vec<u8>,
+        /// this many connections come up through the pen's private address
+        resolved_links: u32,
+        resolved_stays: bool,
     }
 
     impl Fake {
@@ -364,11 +406,17 @@ mod tests {
             self.keys_written.push(1);
             Ok(())
         }
-        fn connect(&mut self) -> Result<bool, Fail> {
+        fn connect(&mut self) -> Result<Link, Fail> {
             assert!(!self.connected, "Create Connection on a link that is up");
             self.call("connect");
             self.connected = self.answers;
-            Ok(self.answers)
+            if self.resolved_links > 0 && self.answers {
+                self.resolved_links -= 1;
+                // (the host drops such a link itself after bluetoothd's own pairing fails on it)
+                self.connected = self.resolved_stays;
+                return Ok(Link::Resolved);
+            }
+            Ok(if self.answers { Link::Up } else { Link::NoAnswer })
         }
         fn pair(&mut self) -> Result<PairReply, Fail> {
             assert!(self.key_in_kernel, "Pair Device without the key in the kernel");
@@ -455,6 +503,29 @@ mod tests {
         f.key_with_pair = Some(1);
         assert_eq!(couple(&mut f, false), Ok(()));
         assert_eq!((f.count("connect"), f.count("write_key"), f.count("announce")), (0, 1, 0));
+    }
+
+    /// Measured: on a link the controller resolved, the pairing's confirm value never matches.
+    /// No Pair Device on such a link; the next round connects again.
+    #[test]
+    fn no_pairing_on_a_resolved_link() {
+        let mut f = Fake::new();
+        f.resolved_links = 1;
+        f.replies = [PairReply::Success].into();
+        f.key_with_pair = Some(1);
+        assert_eq!(couple(&mut f, false), Ok(()));
+        assert_eq!((f.count("connect"), f.count("pair")), (2, 1));
+        let first_pair = f.pos("pair").unwrap();
+        assert_eq!(f.calls[..first_pair].iter().filter(|c| *c == "connect").count(), 2, "the pairing is on the second link");
+        // every link resolved: no pairing at all, and the failure says why
+        let mut f = Fake::new();
+        f.resolved_links = 5;
+        f.resolved_stays = true;
+        match couple(&mut f, false) {
+            Err(Fail::Other(e)) => assert!(e.contains("private address"), "{e}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(f.count("pair"), 0);
     }
 
     #[test]

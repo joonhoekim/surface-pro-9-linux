@@ -250,6 +250,7 @@ pub fn status_name(status: u8) -> String {
 pub const HCI_COMMAND_PKT: u8 = 0x01;
 pub const HCI_EVENT_PKT: u8 = 0x04;
 pub const OP_LE_CREATE_CONN_CANCEL: u16 = 0x200E;
+pub const OP_LE_SET_ADDR_RESOLUTION: u16 = 0x202D;
 pub const OP_LE_EXT_CREATE_CONN: u16 = 0x2043;
 pub const EVT_CMD_COMPLETE: u8 = 0x0E;
 pub const EVT_CMD_STATUS: u8 = 0x0F;
@@ -278,6 +279,12 @@ pub fn le_ext_create_conn(peer: &Addr, peer_random: bool) -> Vec<u8> {
     hci_command(OP_LE_EXT_CREATE_CONN, &p)
 }
 
+/// LE Set Address Resolution Enable: whether the controller resolves the private addresses of
+/// advertisers with its resolving list.
+pub fn le_set_addr_resolution(enable: bool) -> Vec<u8> {
+    hci_command(OP_LE_SET_ADDR_RESOLUTION, &[u8::from(enable)])
+}
+
 pub fn le_create_conn_cancel() -> Vec<u8> {
     hci_command(OP_LE_CREATE_CONN_CANCEL, &[])
 }
@@ -299,7 +306,10 @@ pub enum HciEvent {
     /// Command Status, or the status byte of a Command Complete
     CommandStatus { opcode: u16, status: u8 },
     /// LE (Enhanced) Connection Complete
-    LeConnection { status: u8, handle: u16, peer_random: bool, peer: Addr },
+    /// `resolved`: the peer advertised from a resolvable private address and the controller
+    /// resolved it with its resolving list; `peer` is then the identity address, not the
+    /// address used on the air
+    LeConnection { status: u8, handle: u16, peer_random: bool, resolved: bool, peer: Addr },
 }
 
 /// One packet read from the raw HCI socket.
@@ -321,6 +331,7 @@ pub fn parse_hci_event(pkt: &[u8]) -> Option<HciEvent> {
             status: body[1],
             handle: u16::from_le_bytes([body[2], body[3]]),
             peer_random: body[5] & 1 == 1,
+            resolved: body[5] >= 2,
             peer: msb(&body[6..12]),
         }),
         _ => None,
@@ -439,7 +450,15 @@ mod tests {
         // LE Enhanced Connection Complete
         let mut pkt = vec![0x04, 0x3E, 31, 0x0A, 0x00, 0x00, 0x08, 0x00, 0x01, 0xE7, 0xE1, 0x17, 0xD9, 0x08, 0xED];
         pkt.extend([0u8; 19]);
-        assert_eq!(parse_hci_event(&pkt), Some(HciEvent::LeConnection { status: 0, handle: 0x0800, peer_random: true, peer: addr() }));
+        assert_eq!(
+            parse_hci_event(&pkt),
+            Some(HciEvent::LeConnection { status: 0, handle: 0x0800, peer_random: true, resolved: false, peer: addr() })
+        );
+        // peer address type 3: a resolved random address (the identity the controller found for a private address)
+        pkt[8] = 0x03;
+        assert!(matches!(parse_hci_event(&pkt), Some(HciEvent::LeConnection { resolved: true, peer_random: true, .. })));
+        assert_eq!(le_set_addr_resolution(false), vec![0x01, 0x2D, 0x20, 0x01, 0x00]);
+        assert_eq!(le_set_addr_resolution(true), vec![0x01, 0x2D, 0x20, 0x01, 0x01]);
         // other subevents and packet types are not ours
         assert_eq!(parse_hci_event(&[0x04, 0x3E, 12, 0x0D, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), None);
         assert_eq!(parse_hci_event(&[0x02, 0x00, 0x00]), None);

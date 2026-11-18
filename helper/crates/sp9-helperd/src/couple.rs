@@ -164,7 +164,7 @@ mod linux {
     use super::*;
     use crate::clock;
     use sp9_helper_core::btmgmt::{self as bt, Event, HciEvent};
-    use sp9_helper_core::coupling::{self, Fail, Ops, PairReply};
+    use sp9_helper_core::coupling::{self, Fail, Link, Ops, PairReply};
     use sp9_helper_core::cover::{self, mask_addr, Addr, CoverPen, Seen};
     use sp9_helper_core::pen;
     use std::collections::HashMap;
@@ -369,12 +369,51 @@ mod linux {
         }
     }
 
-    /// LE Extended Create Connection on the raw HCI socket, waiting for the connection.
-    /// Ok(false) when the pen takes none. A link that is up already counts as connected.
-    fn connect(raw: &mut std::fs::File, peer: &Addr) -> Result<bool, String> {
+    /// LE Set Address Resolution Enable on the raw socket; whether the controller took it. It
+    /// refuses while it scans, advertises or connects.
+    fn set_resolution(raw: &mut std::fs::File, enable: bool) -> bool {
+        if raw.write_all(&bt::le_set_addr_resolution(enable)).is_err() {
+            return false;
+        }
+        let end = Instant::now() + Duration::from_millis(500);
+        loop {
+            match raw_event(raw, end.saturating_duration_since(Instant::now())) {
+                Ok(Some(HciEvent::CommandStatus { opcode: bt::OP_LE_SET_ADDR_RESOLUTION, status })) => return status == 0,
+                Ok(Some(_)) => {}
+                _ => return false,
+            }
+        }
+    }
+
+    /// LE Extended Create Connection on the raw HCI socket, waiting for the connection. A
+    /// link that is up already counts as connected.
+    ///
+    /// `unresolved` (a coupling): the controller's address resolution is switched off for the
+    /// attempt. Its resolving list can still hold the pen from an earlier bond (the kernel
+    /// does not take entries out when it stops scanning), and a pen that still believes in
+    /// that bond advertises from a private address the controller then resolves. On a link
+    /// made that way the kernel computes the pairing's confirm value with the identity
+    /// address, the pen with the private one: no pairing can succeed. With resolution off
+    /// only the pen's directed advert from the static coupling address matches. The kernel
+    /// switches resolution back on whenever it next programs its lists; it is switched back
+    /// on here too.
+    fn connect(raw: &mut std::fs::File, peer: &Addr, unresolved: bool) -> Result<Link, String> {
         // what queued up since the socket was opened is not about this connection
         let mut buf = [0u8; 260];
         while matches!(raw.read(&mut buf), Ok(n) if n > 0) {}
+        let off = unresolved && set_resolution(raw, false);
+        if unresolved && !off {
+            log("the controller does not let address resolution be switched off now");
+        }
+        let r = create_connection(raw, peer);
+        if off && !set_resolution(raw, true) {
+            log("address resolution stays off until the kernel programs its lists again");
+        }
+        r
+    }
+
+    fn create_connection(raw: &mut std::fs::File, peer: &Addr) -> Result<Link, String> {
+        let up = |resolved: bool| if resolved { Link::Resolved } else { Link::Up };
         let mut tried_again = false;
         'create: loop {
             raw.write_all(&bt::le_ext_create_conn(peer, true)).map_err(|e| format!("create connection: {e}"))?;
@@ -387,7 +426,7 @@ mod linux {
                 match raw_event(raw, left)? {
                     Some(HciEvent::CommandStatus { opcode: bt::OP_LE_EXT_CREATE_CONN, status }) => match status {
                         0 => {}
-                        HCI_ACL_EXISTS => return Ok(true),
+                        HCI_ACL_EXISTS => return Ok(Link::Up),
                         // the kernel is creating a connection of its own right now: once more
                         HCI_COMMAND_DISALLOWED if !tried_again => {
                             tried_again = true;
@@ -396,8 +435,8 @@ mod linux {
                         }
                         s => return Err(format!("create connection: HCI status 0x{s:02x}")),
                     },
-                    Some(HciEvent::LeConnection { status: 0, peer: p, .. }) if p == *peer => return Ok(true),
-                    Some(HciEvent::LeConnection { status: bt::HCI_UNKNOWN_CONN_ID, .. }) => return Ok(false),
+                    Some(HciEvent::LeConnection { status: 0, peer: p, resolved, .. }) if p == *peer => return Ok(up(resolved)),
+                    Some(HciEvent::LeConnection { status: bt::HCI_UNKNOWN_CONN_ID, .. }) => return Ok(Link::NoAnswer),
                     Some(HciEvent::LeConnection { status, peer: p, .. }) if p == *peer => {
                         return Err(format!("connection: HCI status 0x{status:02x}"))
                     }
@@ -411,11 +450,11 @@ mod linux {
         loop {
             let left = end.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Ok(false);
+                return Ok(Link::NoAnswer);
             }
             match raw_event(raw, left)? {
-                Some(HciEvent::LeConnection { status: 0, peer: p, .. }) if p == *peer => return Ok(true),
-                Some(HciEvent::LeConnection { status: bt::HCI_UNKNOWN_CONN_ID, .. }) => return Ok(false),
+                Some(HciEvent::LeConnection { status: 0, peer: p, resolved, .. }) if p == *peer => return Ok(up(resolved)),
+                Some(HciEvent::LeConnection { status: bt::HCI_UNKNOWN_CONN_ID, .. }) => return Ok(Link::NoAnswer),
                 _ => {}
             }
         }
@@ -632,9 +671,9 @@ mod linux {
             self.dev.write_all(&self.report).map_err(|e| Fail::Other(format!("Output {}: {e}", cover::OUTPUT_KEY)))
         }
 
-        fn connect(&mut self) -> Result<bool, Fail> {
+        fn connect(&mut self) -> Result<Link, Fail> {
             let raw = self.raw.as_mut().ok_or_else(|| Fail::Other("HCI socket not open".into()))?;
-            connect(raw, &self.addr).map_err(Fail::Other)
+            connect(raw, &self.addr, true).map_err(Fail::Other)
         }
 
         fn pair(&mut self) -> Result<PairReply, Fail> {
@@ -701,12 +740,13 @@ mod linux {
                 |report| {
                     let mut raw = open_raw(mgmt.index)?;
                     dev.write_all(&report).map_err(|e| format!("Output {}: {e}", cover::OUTPUT_KEY))?;
-                    connect(&mut raw, addr)
+                    connect(&mut raw, addr, false)
                 },
             );
         match connected {
-            Ok(true) => {}
-            Ok(false) => return cover::Probe::NoAnswer,
+            // (a bonded pen may answer from its private address: encryption works on either link)
+            Ok(Link::Up | Link::Resolved) => {}
+            Ok(Link::NoAnswer) => return cover::Probe::NoAnswer,
             Err(e) => {
                 log(format!("probe: {e}"));
                 return cover::Probe::NoAnswer;
