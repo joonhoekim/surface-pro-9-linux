@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Joonhoe Kim <26rote@gmail.com>
-Date: Wed, 18 Nov 2026 13:38:50 +0900
+Date: Wed, 18 Nov 2026 14:37:07 +0900
 Subject: [PATCH] Bluetooth: hci_sync: Replace the resolving list entry when
  the IRK changed
 
@@ -19,37 +19,58 @@ advertises, an unfiltered scan sees it and resolves its address in the
 host, and the background scan never reports it.
 
 Compare the IRK of the existing entry and replace the entry when it
-differs.
+differs. The key is copied before the entry is removed, since the IRK
+can be freed while the command is pending, and a failure to remove the
+entry is returned.
 
 Signed-off-by: Joonhoe Kim <26rote@gmail.com>
 ---
- net/bluetooth/hci_sync.c | 13 +++++++++++--
- 1 file changed, 11 insertions(+), 2 deletions(-)
+ net/bluetooth/hci_sync.c | 22 +++++++++++++++++++---
+ 1 file changed, 19 insertions(+), 3 deletions(-)
 
 diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
-index a92a81846..69dd250cb 100644
+index a92a81846..28c39d43a 100644
 --- a/net/bluetooth/hci_sync.c
 +++ b/net/bluetooth/hci_sync.c
-@@ -2504,8 +2504,17 @@ static int hci_le_add_resolve_list_sync(struct hci_dev *hdev,
+@@ -6,6 +6,7 @@
+  * Copyright 2023 NXP
+  */
+ 
++#include <crypto/utils.h>
+ #include <linux/property.h>
+ 
+ #include <net/bluetooth/bluetooth.h>
+@@ -2504,12 +2505,27 @@ static int hci_le_add_resolve_list_sync(struct hci_dev *hdev,
  	entry = hci_bdaddr_list_lookup_with_irk(&hdev->le_resolv_list,
  						&params->addr,
  						params->addr_type);
 -	if (entry)
 -		return 0;
++	/* Take the key now: the IRK can be freed while a command is pending */
++	memcpy(cp.peer_irk, irk->val, 16);
++
 +	if (entry) {
-+		if (!memcmp(entry->peer_irk, irk->val, 16))
++		int err;
++
++		if (!crypto_memneq(entry->peer_irk, cp.peer_irk, 16))
 +			return 0;
 +
 +		/* The device was paired again and has a new IRK. With the old
 +		 * one in the controller its resolvable private addresses do
 +		 * not resolve and never pass the accept list.
 +		 */
-+		hci_le_del_resolve_list_sync(hdev, &params->addr,
-+					     params->addr_type);
++		err = hci_le_del_resolve_list_sync(hdev, &params->addr,
++						   params->addr_type);
++		if (err)
++			return err;
 +	}
  
  	cp.bdaddr_type = params->addr_type;
  	bacpy(&cp.bdaddr, &params->addr);
+-	memcpy(cp.peer_irk, irk->val, 16);
+ 
+ 	/* Default privacy mode is always Network */
+ 	params->privacy_mode = HCI_NETWORK_PRIVACY;
 -- 
 2.55.0
 

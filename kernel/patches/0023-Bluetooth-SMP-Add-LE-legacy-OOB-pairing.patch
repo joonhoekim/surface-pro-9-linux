@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Joonhoe Kim <26rote@gmail.com>
-Date: Wed, 18 Nov 2026 00:00:58 +0900
+Date: Wed, 18 Nov 2026 14:37:07 +0900
 Subject: [PATCH] Bluetooth: SMP: Add LE legacy OOB pairing
 
 LE legacy pairing uses the OOB method when both devices set the OOB data
@@ -24,9 +24,10 @@ has to be zero. A zero hash192 still means that there is no 192-bit data.
 When a TK is stored for the peer:
 
  - As initiator set the OOB flag and the MITM flag in the Pairing
-   Request, and offer the identity key: the peer learned the address of
-   this device out of band and may want its identity. The pen does not
-   advertise for reconnection to a host that did not give it. Do not offer Secure Connections unless P-256 OOB data is
+   Request, and offer the identity key: the peer was told the address
+   of this device out of band and may want its identity. The pen does
+   not advertise for reconnection to a host that did not give it. Do
+   not offer Secure Connections unless P-256 OOB data is
    stored as well: with Secure Connections the OOB flag says that the
    P-256 data of the peer has been received.
  - As responder set the OOB flag in the Pairing Response when the
@@ -38,11 +39,15 @@ When a TK is stored for the peer:
 
 The TK is not used in Secure Connections Only mode.
 
+The TK is good for one pairing: it is dropped from the stored OOB data
+when it is used, so a later pairing with the device does not reuse it and
+Secure Connections is offered again.
+
 Signed-off-by: Joonhoe Kim <26rote@gmail.com>
 ---
- net/bluetooth/mgmt.c | 20 ++++++---
- net/bluetooth/smp.c  | 99 ++++++++++++++++++++++++++++++++++++--------
- 2 files changed, 96 insertions(+), 23 deletions(-)
+ net/bluetooth/mgmt.c |  20 ++++---
+ net/bluetooth/smp.c  | 125 +++++++++++++++++++++++++++++++++++++------
+ 2 files changed, 122 insertions(+), 23 deletions(-)
 
 diff --git a/net/bluetooth/mgmt.c b/net/bluetooth/mgmt.c
 index 251a896ba..9a8514a64 100644
@@ -84,7 +89,7 @@ index 251a896ba..9a8514a64 100644
  			/* In case one of the P-192 values is set to zero,
  			 * then just disable OOB data for P-192.
 diff --git a/net/bluetooth/smp.c b/net/bluetooth/smp.c
-index 81d255525..98ba731c8 100644
+index 81d255525..3b241e85c 100644
 --- a/net/bluetooth/smp.c
 +++ b/net/bluetooth/smp.c
 @@ -77,6 +77,7 @@ enum {
@@ -146,7 +151,7 @@ index 81d255525..98ba731c8 100644
 +		else if (!(oob_data->present & 0x02))
 +			sc = false;
 +	}
- 
++
 +	if (legacy_oob) {
 +		set_bit(SMP_FLAG_LEGACY_OOB, &smp->flags);
 +		oob_flag = SMP_OOB_PRESENT;
@@ -163,7 +168,7 @@ index 81d255525..98ba731c8 100644
 +		if (!rsp)
 +			authreq |= SMP_AUTH_MITM;
 +	}
-+
+ 
 +	if (sc) {
  		if (hci_dev_test_flag(hdev, HCI_SSP_ENABLED)) {
  			local_dist |= SMP_DIST_LINK_KEY;
@@ -200,7 +205,7 @@ index 81d255525..98ba731c8 100644
  	if (rsp == NULL) {
  		req->io_capability = conn->hcon->io_capability;
  		req->oob_flag = oob_flag;
-@@ -827,6 +865,18 @@ static u8 get_auth_method(struct smp_chan *smp, u8 local_io, u8 remote_io)
+@@ -827,6 +865,43 @@ static u8 get_auth_method(struct smp_chan *smp, u8 local_io, u8 remote_io)
  	return gen_method[remote_io][local_io];
  }
  
@@ -216,10 +221,35 @@ index 81d255525..98ba731c8 100644
 +	       rsp->oob_flag == SMP_OOB_PRESENT;
 +}
 +
++/* The Temporary Key is good for one pairing. Left in place it would be
++ * used again for the next one and keep Secure Connections from being
++ * offered to this device.
++ */
++static void smp_drop_legacy_oob(struct hci_conn *hcon)
++{
++	struct hci_dev *hdev = hcon->hdev;
++	struct oob_data *oob_data;
++	u8 bdaddr_type;
++
++	if (hcon->dst_type == ADDR_LE_DEV_PUBLIC)
++		bdaddr_type = BDADDR_LE_PUBLIC;
++	else
++		bdaddr_type = BDADDR_LE_RANDOM;
++
++	mutex_lock(&hdev->remote_oob_lock);
++	oob_data = hci_find_remote_oob_data(hdev, &hcon->dst, bdaddr_type);
++	if (oob_data) {
++		memzero_explicit(oob_data->hash192, sizeof(oob_data->hash192));
++		memzero_explicit(oob_data->rand192, sizeof(oob_data->rand192));
++		oob_data->present &= ~0x01;
++	}
++	mutex_unlock(&hdev->remote_oob_lock);
++}
++
  static int tk_request(struct l2cap_conn *conn, u8 remote_oob, u8 auth,
  						u8 local_io, u8 remote_io)
  {
-@@ -843,6 +893,19 @@ static int tk_request(struct l2cap_conn *conn, u8 remote_oob, u8 auth,
+@@ -843,6 +918,20 @@ static int tk_request(struct l2cap_conn *conn, u8 remote_oob, u8 auth,
  	bt_dev_dbg(hcon->hdev, "auth:%u lcl:%u rem:%u", auth, local_io,
  		   remote_io);
  
@@ -229,6 +259,7 @@ index 81d255525..98ba731c8 100644
 +	if (smp_legacy_oob(smp, (void *)&smp->preq[1], (void *)&smp->prsp[1])) {
 +		smp->method = REQ_OOB;
 +		memcpy(smp->tk, smp->oob_tk, sizeof(smp->tk));
++		smp_drop_legacy_oob(hcon);
 +		set_bit(SMP_FLAG_TK_VALID, &smp->flags);
 +		set_bit(SMP_FLAG_MITM_AUTH, &smp->flags);
 +		if (hcon->pending_sec_level < BT_SECURITY_HIGH)
@@ -239,7 +270,7 @@ index 81d255525..98ba731c8 100644
  	/* If neither side wants MITM, either "just" confirm an incoming
  	 * request or use just-works for outgoing ones. The JUST_CFM
  	 * will be converted to JUST_WORKS if necessary later in this
-@@ -1795,7 +1858,8 @@ static u8 smp_cmd_pairing_req(struct l2cap_conn *conn, struct sk_buff *skb)
+@@ -1795,7 +1884,8 @@ static u8 smp_cmd_pairing_req(struct l2cap_conn *conn, struct sk_buff *skb)
  		conn->hcon->pending_sec_level = sec_level;
  
  	/* If we need MITM check that it can be achieved. */
@@ -249,7 +280,7 @@ index 81d255525..98ba731c8 100644
  		u8 method;
  
  		method = get_auth_method(smp, conn->hcon->io_capability,
-@@ -1959,7 +2023,8 @@ static u8 smp_cmd_pairing_rsp(struct l2cap_conn *conn, struct sk_buff *skb)
+@@ -1959,7 +2049,8 @@ static u8 smp_cmd_pairing_rsp(struct l2cap_conn *conn, struct sk_buff *skb)
  		conn->hcon->pending_sec_level = BT_SECURITY_HIGH;
  
  	/* If we need MITM check that it can be achieved */
