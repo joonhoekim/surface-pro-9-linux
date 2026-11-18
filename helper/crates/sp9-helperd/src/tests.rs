@@ -227,7 +227,9 @@ fn pen_feedback_and_coupling_settings() {
     let r = rig();
     assert!(!bool::try_from(r.get(P_PEN, "Pen", "InkFeedback")).unwrap());
     assert!(bool::try_from(r.get(P_PEN, "Pen", "SpeedFeedback")).unwrap());
-    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 290.0);
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 353.0);
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "Strength")).unwrap(), 100.0);
+    assert!(bool::try_from(r.get(P_PEN, "Pen", "EraserClick")).unwrap());
     assert!(!bool::try_from(r.get(P_PEN, "Pen", "DigitizerAvailable")).unwrap());
     assert!(!bool::try_from(r.get(P_PEN, "Pen", "CoverAvailable")).unwrap());
     {
@@ -257,7 +259,24 @@ fn pen_feedback_and_coupling_settings() {
         assert!(err_name(r.call(P_PEN, "Pen", "SetSpeedFullScale", &(bad,))).ends_with("InvalidArgs"));
     }
     let toml = r.tree.read("/etc/sp9/helper.toml");
-    assert!(toml.contains("speed_feedback = false") && toml.contains("speed_full_scale = 200.0"), "{toml}");
+    assert!(toml.contains("speed_feedback = false") && toml.contains("full_scale_mm_s = 200.0"), "{toml}");
+    r.call(P_PEN, "Pen", "SetSpeedFullScale", &(0.0f64,)).unwrap();
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 353.0);
+    assert!(!r.tree.read("/etc/sp9/helper.toml").contains("full_scale"));
+
+    // strength is the intensity byte: 100 % = 127, inside 2..254
+    for (pct, want) in [(150.0f64, 191u32), (200.0, 254), (500.0, 254), (0.0, 2), (100.0, 127)] {
+        r.call(P_PEN, "Pen", "SetStrength", &(pct,)).unwrap();
+        assert_eq!(u32::try_from(r.get(P_PEN, "Pen", "Intensity")).unwrap(), want, "{pct} %");
+    }
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "Strength")).unwrap(), 100.0);
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 353.0, "strength leaves the speed scale alone");
+    for bad in [-5.0f64, f64::NAN] {
+        assert!(err_name(r.call(P_PEN, "Pen", "SetStrength", &(bad,))).ends_with("InvalidArgs"));
+    }
+    r.call(P_PEN, "Pen", "SetEraserClick", &(false,)).unwrap();
+    assert!(!bool::try_from(r.get(P_PEN, "Pen", "EraserClick")).unwrap());
+    assert!(r.tree.read("/etc/sp9/helper.toml").contains("eraser_click = false"));
 
     assert!(!bool::try_from(r.get(P_PEN, "Pen", "AutoCouple")).unwrap());
     r.call(P_PEN, "Pen", "SetAutoCouple", &(true,)).unwrap();
@@ -336,18 +355,25 @@ fn stylus_events_reach_the_digitizer_and_the_pen() {
     frame(&[ev(1, 0x140, 1), ev(3, 0, 100), ev(3, 1, 100), syn]); // pen in range
     frame(&[ev(1, 0x14a, 1), syn]); // tip down
     frame(&[ev(1, 0x14a, 0), syn]); // tip up
+    frame(&[ev(1, 0x140, 0), syn]); // out of range
+    frame(&[ev(1, 0x141, 1), syn]); // eraser end in range
+    frame(&[ev(1, 0x14a, 1), syn]); // eraser down: one click
+    frame(&[ev(1, 0x14a, 0), syn]); // eraser up: nothing
     std::thread::sleep(std::time::Duration::from_millis(200));
 
+    use pen_feedback::PenState::{Eraser, Hover, Tip};
     let h = hid.0.lock().unwrap();
     let f: Vec<&Vec<u8>> = h.feature_writes.iter().map(|(n, d)| (assert_eq!(n, "hidraw8"), d).1).collect();
-    assert!(f.len() >= 4, "{} feature writes", f.len());
+    assert_eq!(f.len(), 6, "{} feature writes", f.len());
     assert_eq!(f[0], &pen_feedback::display_states(0x143, 0).to_vec(), "the FastHostId of the standalone daemon, first");
-    assert_eq!(f[1], &pen_feedback::pen_feedback(0, 0x143, Some(0), false, 0).to_vec());
-    assert_eq!(f[2], &pen_feedback::pen_feedback(1, 0x143, Some(0), true, 0).to_vec());
-    assert_eq!(f[3], &pen_feedback::pen_feedback(2, 0x143, Some(0), false, 0).to_vec());
+    for (k, state) in [Hover, Tip(0), Hover, Eraser, Hover].into_iter().enumerate() {
+        assert_eq!(f[k + 1], &pen_feedback::pen_feedback(k as u8, 0x143, state).to_vec(), "frame {k}");
+    }
+    let pen_writes: Vec<Vec<u8>> = h.writes.iter().map(|(n, d)| (assert_eq!(n, "hidraw7"), d.clone()).1).collect();
     assert_eq!(
-        h.writes,
-        vec![("hidraw7".to_string(), vec![0x41, 0, 0x7F, 9, 0, 0, 0]), ("hidraw7".to_string(), vec![0x41, 0, 0xFE, 2, 0, 0, 0])]
+        pen_writes,
+        [vec![0x41, 0, 0x7F, 9, 0, 0, 0], vec![0x41, 0, 0xFE, 2, 0, 0, 0], vec![0x41, 0, 0x7F, 3, 0, 0, 0]],
+        "start, stop, eraser click"
     );
     assert_eq!(tree.read("/var/lib/sp9/pen-fast-host-id"), "0x0143");
 }

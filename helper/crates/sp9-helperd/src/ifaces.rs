@@ -856,6 +856,8 @@ impl Snapshot for Pen {
         "Available",
         "InkFeedback",
         "Intensity",
+        "Strength",
+        "EraserClick",
         "SpeedFeedback",
         "SpeedFullScale",
         "DigitizerAvailable",
@@ -890,20 +892,30 @@ impl Pen {
     fn ink_feedback(&self) -> bool {
         self.0.cfg().pen.ink_feedback
     }
-    /// 1..255
+    /// intensity byte of the inking start, 1..255
     #[zbus(property)]
     fn intensity(&self) -> u32 {
         self.0.cfg().pen.intensity as u32
+    }
+    /// the intensity in percent of Windows' default (127 = 100)
+    #[zbus(property)]
+    fn strength(&self) -> f64 {
+        pen::intensity_to_strength(self.0.cfg().pen.intensity)
+    }
+    /// one click when the eraser end touches down
+    #[zbus(property)]
+    fn eraser_click(&self) -> bool {
+        self.0.cfg().pen.eraser_click
     }
     /// feed the pen speed back to the digitizer while InkFeedback is on
     #[zbus(property)]
     fn speed_feedback(&self) -> bool {
         self.0.cfg().pen.speed_feedback
     }
-    /// pen speed in mm/s that maps to the largest speed value (lower is stronger)
+    /// pen speed in mm/s that maps to the largest speed value
     #[zbus(property)]
     fn speed_full_scale(&self) -> f64 {
-        self.0.cfg().pen.speed_full_scale
+        self.0.cfg().pen.full_scale()
     }
     /// the digitizer's hidraw node with feature report 9 is there
     #[zbus(property)]
@@ -978,8 +990,38 @@ impl Pen {
         Ok(())
     }
 
-    /// Pen speed in mm/s that maps to the largest speed value, 50..2000 (290: about as strong
-    /// as on Windows; lower is stronger).
+    /// Strength in percent of Windows' default intensity (100 = 127); the result stays inside
+    /// what Windows sends (intensity 2..254, about 2..200 %).
+    async fn set_strength(
+        &self,
+        percent: f64,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
+        let intensity =
+            pen::strength_to_intensity(percent).filter(|_| percent >= 0.0).ok_or_else(|| invalid("strength must be a percentage"))?;
+        persist(self.0.update(|c| c.pen.intensity = intensity))?;
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
+    }
+
+    async fn set_eraser_click(
+        &self,
+        on: bool,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
+        persist(self.0.update(|c| c.pen.eraser_click = on))?;
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
+    }
+
+    /// Pen speed in mm/s that maps to the largest speed value, 50..2000; 0 = the default
+    /// (353, Windows' scale). Not a strength setting.
     async fn set_speed_full_scale(
         &self,
         mm_s: f64,
@@ -988,10 +1030,14 @@ impl Pen {
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
     ) -> fdo::Result<()> {
         polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
-        if !config::Pen::full_scale_valid(mm_s) {
-            return Err(invalid("full scale must be 50..2000 mm/s"));
-        }
-        persist(self.0.update(|c| c.pen.speed_full_scale = mm_s))?;
+        let v = if mm_s == 0.0 {
+            None
+        } else if config::Pen::full_scale_valid(mm_s) {
+            Some(mm_s)
+        } else {
+            return Err(invalid("full scale must be 50..2000 mm/s, or 0 for the default"));
+        };
+        persist(self.0.update(|c| c.pen.full_scale_mm_s = v))?;
         invalidate(&em, Self::IFACE, Self::PROPS).await;
         Ok(())
     }

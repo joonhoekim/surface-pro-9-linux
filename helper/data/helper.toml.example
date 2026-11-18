@@ -47,14 +47,19 @@ touch_off_when_display_off = false
 # Pen haptics as a whole. On: the inking waveform starts on tip down and stops on tip up (as
 # Windows applications do), and with speed_feedback the pen speed goes to the digitizer.
 ink_feedback = false
+# Strength: the intensity byte of the start report, as Windows' "tactile signals" setting.
+# 2-254 is what Windows sends (127 = its default = 100 % of `sp9-ctl pen strength`).
 intensity = 127
-# Feed the pen speed back to the digitizer (THC feature report 9). The Slim Pen 2 plays its
-# continuous waveforms only while the digitizer has a speed from the host. Only while
+# Feed the pen state back to the digitizer (THC feature report 9). The Slim Pen 2 plays its
+# continuous waveforms only while the digitizer has a pen speed from the host. Only while
 # ink_feedback is on. Do not run the standalone surface-pen-feedback service at the same time.
 speed_feedback = true
-# Pen speed in mm/s that maps to the largest speed value (50-2000). Lower is stronger; 290 is
-# about as strong as on Windows.
-speed_full_scale = 290.0
+# One click when the eraser end touches down. The eraser end plays no continuous waveform
+# (on Windows neither). Only while ink_feedback is on.
+eraser_click = true
+# Pen speed in mm/s that maps to the largest speed value (50-2000). Absent: 353, the scale
+# Windows uses. Not a strength setting; `sp9-ctl pen full-scale N` sets it.
+# full_scale_mm_s = 353.0
 # Couple a pen with this host when it is put into the cover slot (Bluetooth bond through the
 # cover, LE legacy OOB pairing; needs kernel patch 0023). sp9-ctl pen couple does it once.
 auto_couple = false

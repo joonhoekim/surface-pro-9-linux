@@ -7,8 +7,13 @@
 //! The thread keeps the cover's pen-bonding node open. When the node appears, after resume
 //! and for a manual request it writes Feature 112 and Feature 86 (the host address); the
 //! cover then announces a seated pen with Input 110, and by itself whenever a pen is seated
-//! later. For a pen BlueZ has no bond for under its coupling address (or whose bond failed
-//! to encrypt since, or on a manual request) it runs the sequence:
+//! later. What happens then is `cover::on_seated`: a pen BlueZ has no bond for under its
+//! coupling address, one whose bond failed to encrypt since, and a manual request are
+//! coupled at once. A pen with a bond is given 6 s to be connected; if it is not, the cover
+//! is asked once more, and if the pen is still seated its bond is replaced (Windows coupled
+//! it in between: its keys and IRK for this host changed, Linux no longer recognises its
+//! adverts). Nothing here disconnects a pen except Adapter1.RemoveDevice in step 1: after a
+//! link the host terminated the pen does not advertise for at least 30 s. The sequence:
 //!
 //!   1. remove the device BlueZ has under the coupling address (Adapter1.RemoveDevice)
 //!   2. Pairable on (Adapter1.Pairable; restored afterwards)
@@ -141,6 +146,14 @@ mod linux {
     const HID_WAIT: Duration = Duration::from_secs(10);
     /// a pen whose coupling failed is not tried again by itself before this
     const RETRY_AFTER: Duration = Duration::from_secs(60);
+    /// a bonded pen that was seated is expected to be connected after this
+    const CONNECT_GRACE: Duration = Duration::from_secs(6);
+    /// the cover answers a new Feature 86 at once when the pen is still seated
+    const CONFIRM_WAIT: Duration = Duration::from_secs(3);
+    /// a pen coupled this recently is not coupled again by itself
+    const RECOUPLE_AFTER: Duration = Duration::from_secs(60);
+    /// the pen does not answer a second coupling right after one, and the bond would be gone
+    const MANUAL_AFTER: Duration = Duration::from_secs(15);
 
     fn log(msg: impl std::fmt::Display) {
         eprintln!("sp9-helperd: pen coupling: {msg}");
@@ -315,6 +328,10 @@ mod linux {
                 && self.get_bool(&p, "org.bluez.Device1", "Bonded") != Some(false)
         }
 
+        fn connected(&self, addr: &Addr) -> bool {
+            self.get_bool(&Self::device_path(addr), "org.bluez.Device1", "Connected") == Some(true)
+        }
+
         fn remove(&self, addr: &Addr) -> Result<(), String> {
             let p = Self::device_path(addr);
             let path = ObjectPath::try_from(p.as_str()).map_err(|e| e.to_string())?;
@@ -467,6 +484,7 @@ mod linux {
         /// bonds whose encryption failed since they were made (the pen has another key now)
         stale: HashSet<Addr>,
         failed_at: HashMap<Addr, Instant>,
+        coupled_at: HashMap<Addr, Instant>,
     }
 
     /// Feature 112 and 86: the cover announces a seated pen at once and later ones by itself.
@@ -497,7 +515,20 @@ mod linux {
         let mut manual_until = c.take_request().then(|| Instant::now() + ANNOUNCE_WAIT);
         announce(shared, cover, &host)?;
         log(format!("cover {} told the host address {}", cover.node, mask_addr(&host)));
+        {
+            // Bluetooth was off when the thread first looked (boot): that is over
+            let mut st = c.status.lock().unwrap();
+            if st.result == "bluetooth-off" {
+                st.result.clear();
+            }
+        }
         let mut resume_mark = clock::suspended();
+        // the cover was asked again only because of a resume, until then
+        let mut quiet_until = Instant::now();
+        // a bonded pen that was seated: is it connected by then?
+        let mut check: Option<(Addr, Instant)> = None;
+        // it was not, and the cover was asked whether the pen is still there
+        let mut confirm: Option<(Addr, Instant)> = None;
         let mut buf = [0u8; 64];
         loop {
             let ready = poll_in(&[&dev, &mgmt.sock], Duration::from_secs(1)).map_err(|_| String::new())?;
@@ -505,6 +536,7 @@ mod linux {
                 manual_until = Some(Instant::now() + ANNOUNCE_WAIT);
                 announce(shared, cover, &host)?;
             } else if clock::resumed(&mut resume_mark) {
+                quiet_until = Instant::now() + CONFIRM_WAIT;
                 announce(shared, cover, &host)?;
             }
             if !shared.cfg().pen.auto_couple && manual_until.is_none() {
@@ -516,6 +548,20 @@ mod linux {
             for a in mgmt.auth_failed.drain(..) {
                 if mem.stale.insert(a) {
                     log(format!("encryption with {} failed: its bond is replaced when that pen is seated", mask_addr(&a)));
+                }
+            }
+            if let Some((addr, _)) = check.filter(|(_, t)| Instant::now() >= *t) {
+                check = None;
+                if bz.connected(&addr) {
+                    c.set(STATE_IDLE, Some("already-coupled".into()));
+                } else {
+                    log(format!(
+                        "{} has a bond but did not connect within {} s: asking the cover whether it is still seated",
+                        mask_addr(&addr),
+                        CONNECT_GRACE.as_secs()
+                    ));
+                    announce(shared, cover, &host)?;
+                    confirm = Some((addr, Instant::now() + CONFIRM_WAIT));
                 }
             }
             let mut seen = None;
@@ -533,15 +579,44 @@ mod linux {
                 let addr = cover::seen_address(&seen, &host);
                 let manual = manual_until.take().is_some();
                 c.status.lock().unwrap().address = mask_addr(&addr);
-                let recent = mem.failed_at.get(&addr).is_some_and(|t| t.elapsed() < RETRY_AFTER);
-                if !manual && (recent || (bz.bonded(&addr) && !mem.stale.contains(&addr))) {
-                    if !recent {
-                        c.set(STATE_IDLE, Some("already-coupled".into()));
-                    }
+                let within = |m: &HashMap<Addr, Instant>, d: Duration| m.get(&addr).is_some_and(|t| t.elapsed() < d);
+                let confirmed = confirm.take_if(|(a, _)| *a == addr).is_some();
+                if manual && within(&mem.coupled_at, MANUAL_AFTER) {
+                    log("coupled a moment ago: the pen would not answer and its bond would be lost; request ignored");
+                    c.set(STATE_IDLE, Some("failed: coupled a moment ago, try again in a few seconds".into()));
                     continue;
                 }
+                let facts = cover::SeatedPen {
+                    requested: manual,
+                    bonded: bz.bonded(&addr),
+                    stale: mem.stale.contains(&addr),
+                    failed_recently: within(&mem.failed_at, RETRY_AFTER),
+                    coupled_recently: within(&mem.coupled_at, RECOUPLE_AFTER),
+                    after_resume: Instant::now() < quiet_until,
+                };
+                let why = match cover::on_seated(facts) {
+                    cover::Seated::Couple if manual => " (requested)",
+                    cover::Seated::Couple if facts.bonded => " (its bond no longer encrypts)",
+                    cover::Seated::Couple => "",
+                    cover::Seated::CheckConnection if confirmed => " (bonded, but not connected: its keys were replaced elsewhere)",
+                    cover::Seated::CheckConnection => {
+                        if bz.connected(&addr) {
+                            c.set(STATE_IDLE, Some("already-coupled".into()));
+                        } else if check.is_none() {
+                            check = Some((addr, Instant::now() + CONNECT_GRACE));
+                        }
+                        continue;
+                    }
+                    cover::Seated::Skip => {
+                        if facts.bonded && !facts.failed_recently {
+                            c.set(STATE_IDLE, Some("already-coupled".into()));
+                        }
+                        continue;
+                    }
+                };
+                check = None;
                 c.set(STATE_COUPLING, None);
-                log(format!("pen in the cover slot, coupling address {}{}", mask_addr(&addr), if manual { " (requested)" } else { "" }));
+                log(format!("pen in the cover slot, coupling address {}{why}", mask_addr(&addr)));
                 let r = couple(shared, &bz, cover, &mut dev, &mut mgmt, &seen, &addr);
                 // the attempt's own failures are not a stale bond
                 mgmt.auth_failed.clear();
@@ -551,6 +626,7 @@ mod linux {
                     Ok(t) => {
                         mem.stale.remove(&addr);
                         mem.failed_at.remove(&addr);
+                        mem.coupled_at.insert(addr, Instant::now());
                         t.to_string()
                     }
                     Err(e) => {
@@ -569,6 +645,9 @@ mod linux {
                 manual_until = None;
                 log("the cover announced no pen");
                 c.set(STATE_IDLE, Some("no-pen".into()));
+            } else if confirm.is_some_and(|(_, t)| Instant::now() >= t) {
+                confirm = None;
+                log("the pen is no longer in the cover; its bond is kept");
             }
         }
     }
@@ -593,11 +672,19 @@ mod linux {
                 Ok(()) => {}
                 // the node went away
                 Err(e) if e.is_empty() => {}
+                Err(e) if e == "bluetooth-off" => {
+                    // at boot the adapter comes up a little later: look again soon, say it once
+                    if c.status().result != e {
+                        log("Bluetooth is off or not up yet; waiting for it");
+                    }
+                    c.take_request();
+                    c.set(STATE_IDLE, Some(e));
+                    std::thread::sleep(Duration::from_secs(3));
+                }
                 Err(e) => {
                     log(&e);
-                    let manual = c.take_request() || c.status().state != STATE_IDLE;
-                    if manual || e == "bluetooth-off" {
-                        c.set(STATE_IDLE, Some(if e == "bluetooth-off" { e } else { format!("failed: {e}") }));
+                    if c.take_request() || c.status().state != STATE_IDLE {
+                        c.set(STATE_IDLE, Some(format!("failed: {e}")));
                     }
                     std::thread::sleep(Duration::from_secs(10));
                 }

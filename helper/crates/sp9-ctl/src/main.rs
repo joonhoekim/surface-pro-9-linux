@@ -13,8 +13,6 @@ use zbus::zvariant::{DynamicType, OwnedValue, Value};
 
 const BUS: &str = "io.github.joonhoekim.OpenDeviceHelper1";
 const ROOT: &str = "/io/github/joonhoekim/OpenDeviceHelper1";
-/// Pen speed (mm/s) at the largest speed value that feels about as strong as on Windows: `pen strength 100`.
-const FULL_SCALE_100: f64 = 290.0;
 
 const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
   status                                 everything the daemon exports
@@ -39,12 +37,15 @@ const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
   touch-off [on|off]                     touchscreen off while the panel is off
   iptsd [ACT DEACT [on|off|preset]]      iptsd thresholds over the preset; iptsd preset = remove
   pen                                    Slim Pen 2: haptics, digitizer feedback, cover coupling
-  pen ink on|off                         haptics as a whole: inking haptics and the speed feedback
-  pen intensity N | pen test             inking intensity 1..255; one click
+  pen ink on|off                         haptics as a whole: inking haptics and the digitizer feedback
+  pen strength PERCENT                   how hard the pen vibrates: 100 = Windows' default (intensity
+                                         127), about 2..200 (intensity 2..254)
+  pen intensity N | pen test             the same setting as the raw intensity byte 1..255; one click
+  pen eraser-click on|off                one click when the eraser end touches down (it plays no
+                                         continuous vibration)
   pen speed on|off                       pen speed to the digitizer (continuous waveforms need it)
-  pen strength PERCENT                   25..400, 100 = about as on Windows (full scale 290 mm/s)
-  pen full-scale MM_S                    the same setting as the speed that gives the strongest
-                                         vibration, 50..2000 mm/s
+  pen full-scale MM_S|default            advanced: pen speed that gives the largest speed value,
+                                         50..2000 mm/s (default 353, Windows' scale)
   pen auto-couple on|off                 couple a pen put into the cover slot (Bluetooth bond)
   pen couple                             couple the pen in the cover slot now, replacing its bond
   diagnostics                            run the post-install check, print the tarball path
@@ -298,14 +299,12 @@ fn main() {
             Some("intensity") => c.act("Pen", "SetIntensity", &(num::<u32>(a(2), "intensity"),)),
             Some("test") => c.act("Pen", "TestPulse", &()),
             Some("speed") => c.act("Pen", "SetSpeedFeedback", &(onoff(a(2)),)),
-            Some("strength") => {
-                let pct = num::<f64>(a(2), "strength");
-                if !(25.0..=400.0).contains(&pct) {
-                    die("strength: 25..400 percent");
-                }
-                c.act("Pen", "SetSpeedFullScale", &(FULL_SCALE_100 * 100.0 / pct,))
+            Some("strength") => c.act("Pen", "SetStrength", &(num::<f64>(a(2), "strength"),)),
+            Some("eraser-click") => c.act("Pen", "SetEraserClick", &(onoff(a(2)),)),
+            Some("full-scale") => {
+                let v = if a(2).map(String::as_str) == Some("default") { 0.0 } else { num::<f64>(a(2), "full scale") };
+                c.act("Pen", "SetSpeedFullScale", &(v,))
             }
-            Some("full-scale") => c.act("Pen", "SetSpeedFullScale", &(num::<f64>(a(2), "full scale"),)),
             Some("auto-couple") => c.act("Pen", "SetAutoCouple", &(onoff(a(2)),)),
             Some("couple") => {
                 c.act("Pen", "Couple", &());

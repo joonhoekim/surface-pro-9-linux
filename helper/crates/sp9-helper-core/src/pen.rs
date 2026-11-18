@@ -20,12 +20,24 @@ pub const ORDINAL_STOP: i64 = 2;
 /// Feature 66 of this pen as read on Windows: 3 = click, 9 = ink-continuous.
 pub const ORDINAL_CLICK: i64 = 3;
 pub const ORDINAL_INK: i64 = 9;
-/// What Windows Journal starts while the eraser end touches.
-pub const ORDINAL_ERASER: i64 = 14;
 /// Windows' inking start intensity (#1066 capture `41 00 7f 09 …`) and stop report
 /// (`41 00 fe 02 …`).
 pub const INK_INTENSITY: u8 = 0x7F;
 pub const STOP_INTENSITY: i64 = 0xFE;
+/// Windows' "tactile signals" strength setting is this intensity byte and nothing else:
+/// minimum 2, default 127, maximum 254.
+pub const INTENSITY_RANGE: (u8, u8) = (2, 254);
+
+/// Strength in percent (100 = Windows' default intensity 127) as the intensity byte, kept
+/// inside what Windows sends (2..=254, about 2 %..200 %).
+pub fn strength_to_intensity(percent: f64) -> Option<u8> {
+    let (lo, hi) = INTENSITY_RANGE;
+    percent.is_finite().then(|| (INK_INTENSITY as f64 * percent / 100.0).round().clamp(lo as f64, hi as f64) as u8)
+}
+
+pub fn intensity_to_strength(intensity: u8) -> f64 {
+    intensity as f64 * 100.0 / INK_INTENSITY as f64
+}
 
 pub struct PenHaptic {
     pub node: String,
@@ -64,21 +76,34 @@ impl PenHaptic {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InkAction {
+    /// start the inking waveform
     Start,
+    /// stop it
     Stop,
+    /// one click: the eraser end touched down
+    Click,
 }
 
 /// Edge detector for the inking feedback: feed every tip state, act on the returned edge.
+/// The tip end gets a start on touch-down and a stop on lift. The eraser end plays no
+/// continuous waveform (on Windows neither), so its touch-down gets one click when
+/// `eraser_click` is on, and nothing else.
 #[derive(Default)]
 pub struct InkFeedback {
     active: bool,
+    /// the stroke in progress began with a start report
+    started: bool,
 }
 
 impl InkFeedback {
-    pub fn update(&mut self, contact: bool) -> Option<InkAction> {
+    pub fn update(&mut self, contact: bool, rubber: bool, eraser_click: bool) -> Option<InkAction> {
         let r = match (contact, self.active) {
-            (true, false) => Some(InkAction::Start),
-            (false, true) => Some(InkAction::Stop),
+            (true, false) if rubber => eraser_click.then_some(InkAction::Click),
+            (true, false) => {
+                self.started = true;
+                Some(InkAction::Start)
+            }
+            (false, true) => std::mem::take(&mut self.started).then_some(InkAction::Stop),
             _ => None,
         };
         self.active = contact;
@@ -154,10 +179,37 @@ mod tests {
     #[test]
     fn ink_edges() {
         let mut i = InkFeedback::default();
-        assert_eq!(i.update(false), None);
-        assert_eq!(i.update(true), Some(InkAction::Start));
-        assert_eq!(i.update(true), None);
-        assert_eq!(i.update(false), Some(InkAction::Stop));
+        assert_eq!(i.update(false, false, true), None);
+        assert_eq!(i.update(true, false, true), Some(InkAction::Start));
+        assert_eq!(i.update(true, false, true), None);
+        assert_eq!(i.update(false, false, true), Some(InkAction::Stop));
+    }
+
+    #[test]
+    fn eraser_end_clicks_once() {
+        let mut i = InkFeedback::default();
+        assert_eq!(i.update(true, true, true), Some(InkAction::Click));
+        assert_eq!(i.update(true, true, true), None, "nothing while rubbing");
+        assert_eq!(i.update(false, true, true), None, "no stop: nothing was started");
+        // switched off: the eraser end is silent
+        assert_eq!(i.update(true, true, false), None);
+        assert_eq!(i.update(false, true, false), None);
+        // the tip end afterwards is as before
+        assert_eq!(i.update(true, false, true), Some(InkAction::Start));
+        assert_eq!(i.update(false, false, true), Some(InkAction::Stop));
+    }
+
+    #[test]
+    fn strength_is_the_intensity_byte() {
+        assert_eq!(strength_to_intensity(100.0), Some(127));
+        assert_eq!(strength_to_intensity(200.0), Some(254));
+        assert_eq!(strength_to_intensity(50.0), Some(64));
+        assert_eq!(strength_to_intensity(0.0), Some(2), "Windows' minimum");
+        assert_eq!(strength_to_intensity(1000.0), Some(254), "Windows' maximum");
+        assert_eq!(strength_to_intensity(f64::NAN), None);
+        assert_eq!(intensity_to_strength(127), 100.0);
+        assert_eq!(intensity_to_strength(254), 200.0);
+        assert_eq!(strength_to_intensity(intensity_to_strength(90)), Some(90));
     }
 
     #[test]

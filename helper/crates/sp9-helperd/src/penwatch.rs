@@ -3,12 +3,15 @@
 //! Pen haptics from iptsd's virtual stylus ("IPTSD Virtual Stylus"), on its own thread while
 //! `pen.ink_feedback` is on:
 //!
-//! - inking haptics: one start report to the pen on tip down (ink, or eraser while the eraser
-//!   end is in range) and one stop report on tip up, as Windows applications do;
-//! - with `pen.speed_feedback`, the pen speed to the digitizer (`pen_feedback::Feeder`):
-//!   `8e a1` with the FastHostId when the digitizer node appears, after resume and when the
-//!   pen comes into range after 30 s, `8e a5` whenever the quantised speed or the tip changes.
-//!   The pen plays the continuous waveforms only while the digitizer has a speed.
+//! - inking haptics: one start report to the pen on tip down and one stop report on tip up,
+//!   as Windows applications do. The eraser end plays no continuous waveform (on Windows
+//!   neither): with `pen.eraser_click` its touch-down gets one click, nothing else;
+//! - with `pen.speed_feedback`, the pen state to the digitizer (`pen_feedback::Feeder`):
+//!   `8e a1` with the FastHostId when the digitizer node appears, after resume (and once
+//!   more a few seconds later, as Windows does after the display comes back) and when the
+//!   pen comes into range after 30 s; `8e a5` whenever the state changes: hovering, tip
+//!   contact with the quantised speed, eraser contact (no speed). The pen plays the
+//!   continuous waveforms only while the digitizer has a speed.
 //!
 //! The standalone surface-pen-feedback (userspace/pen) writes the same report; only one of
 //! the two may run.
@@ -30,7 +33,7 @@ mod linux {
     use crate::clock;
     use sp9_helper_core::config;
     use sp9_helper_core::input::SYS_INPUT;
-    use sp9_helper_core::pen::{self, InkAction, InkFeedback, ORDINAL_ERASER, ORDINAL_INK};
+    use sp9_helper_core::pen::{self, InkAction, InkFeedback, ORDINAL_CLICK, ORDINAL_INK};
     use sp9_helper_core::pen_feedback::{self as fb, Feeder};
     use std::io::Read;
     use std::os::fd::AsRawFd;
@@ -52,6 +55,8 @@ mod linux {
     const CONFIG_EVERY_S: f64 = 0.25;
     /// how often a missing digitizer node is looked for again
     const DIGITIZER_RETRY_S: f64 = 2.0;
+    /// Windows repeats `8e a1` this long after the display came back
+    const DISPLAY_AGAIN_S: f64 = 3.8;
 
     fn stylus_event_node(shared: &Shared) -> Option<String> {
         shared
@@ -106,11 +111,13 @@ mod linux {
         node: Option<String>,
         looked_at: f64,
         resume_mark: f64,
+        /// when to send `8e a1` once more after a resume
+        display_again: Option<f64>,
     }
 
     impl Digitizer {
         fn new() -> Self {
-            Digitizer { feeder: None, node: None, looked_at: f64::NEG_INFINITY, resume_mark: clock::suspended() }
+            Digitizer { feeder: None, node: None, looked_at: f64::NEG_INFINITY, resume_mark: clock::suspended(), display_again: None }
         }
 
         fn feeder(&mut self, shared: &Shared) -> &mut Feeder {
@@ -128,6 +135,10 @@ mod linux {
         /// The node to write to; a node that appears (again) is told the FastHostId first.
         fn node(&mut self, shared: &Shared, now: f64) -> Option<String> {
             if clock::resumed(&mut self.resume_mark) {
+                self.feeder(shared).forget();
+                self.display_again = Some(now + DISPLAY_AGAIN_S);
+            } else if self.display_again.is_some_and(|t| now >= t) {
+                self.display_again = None;
                 self.feeder(shared).forget();
             }
             if self.node.is_none() && now - self.looked_at >= DIGITIZER_RETRY_S {
@@ -186,11 +197,12 @@ mod linux {
         }
     }
 
-    fn ink_edge(shared: &Shared, cfg: &config::Pen, action: InkAction, rubber: bool) {
+    fn ink_edge(shared: &Shared, cfg: &config::Pen, action: InkAction) {
         // the pen's BLE node comes and goes as it sleeps: look it up on each edge
         let Some(p) = pen::find(&*shared.b.hid) else { return };
         let r = match action {
-            InkAction::Start => p.trigger(&*shared.b.hid, if rubber { ORDINAL_ERASER } else { ORDINAL_INK }, cfg.intensity),
+            InkAction::Start => p.trigger(&*shared.b.hid, ORDINAL_INK, cfg.intensity),
+            InkAction::Click => p.trigger(&*shared.b.hid, ORDINAL_CLICK, cfg.intensity),
             InkAction::Stop => p.stop(&*shared.b.hid),
         };
         if let Err(e) = r {
@@ -235,15 +247,19 @@ mod linux {
                     cfg = shared.cfg().pen;
                     cfg_at = now;
                     if !cfg.ink_feedback {
-                        if ink.update(false).is_some() {
-                            ink_edge(&shared, &cfg, InkAction::Stop, rubber);
+                        if let Some(action) = ink.update(false, rubber, false) {
+                            ink_edge(&shared, &cfg, action);
                         }
                         break;
                     }
                 }
                 if !ready {
                     if cfg.speed_feedback {
-                        let m = dig.feeder(&shared).idle(now);
+                        // after a resume (and once more a few seconds later) without waiting for the pen
+                        if dig.node(&shared, now).is_some() && dig.feeder(&shared).display_pending() {
+                            dig.display(&shared, now);
+                        }
+                        let m = dig.feeder(&shared).idle(now, cfg.full_scale());
                         dig.send(&shared, now, m);
                     }
                     continue;
@@ -264,7 +280,7 @@ mod linux {
                         (EV_KEY, BTN_TOOL_PEN | BTN_TOOL_RUBBER) => {
                             rubber = code == BTN_TOOL_RUBBER && value != 0;
                             if cfg.speed_feedback {
-                                dig.feeder(&shared).range(value != 0);
+                                dig.feeder(&shared).range(value != 0, rubber);
                                 if value != 0 {
                                     dig.display(&shared, now);
                                 }
@@ -274,8 +290,8 @@ mod linux {
                             if cfg.speed_feedback {
                                 dig.feeder(&shared).tip(value != 0);
                             }
-                            if let Some(action) = ink.update(value != 0) {
-                                ink_edge(&shared, &cfg, action, rubber);
+                            if let Some(action) = ink.update(value != 0, rubber, cfg.eraser_click) {
+                                ink_edge(&shared, &cfg, action);
                             }
                         }
                         (EV_SYN, _) if cfg.speed_feedback => {
@@ -284,7 +300,7 @@ mod linux {
                                 feeder.position(now, x as f64 / rx, y as f64 / ry);
                             }
                             moved = false;
-                            let m = feeder.frame(now, cfg.speed_full_scale);
+                            let m = feeder.frame(now, cfg.full_scale());
                             dig.send(&shared, now, m);
                         }
                         (EV_SYN, _) => moved = false,
@@ -293,7 +309,7 @@ mod linux {
                 }
             }
             if let Some(feeder) = dig.feeder.as_mut() {
-                feeder.range(false);
+                feeder.range(false, false);
                 feeder.tip(false);
             }
             std::thread::sleep(Duration::from_secs(1));

@@ -162,6 +162,51 @@ pub fn seen_address(seen: &Seen, host: &Addr) -> Addr {
     coupled_address(&seen.pen_id, seen.flag_0012.then_some(host))
 }
 
+/// What the coupling thread knows when the cover announces a pen.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SeatedPen {
+    /// a manual request is waiting for this announcement
+    pub requested: bool,
+    /// BlueZ has a bond under the pen's coupling address
+    pub bonded: bool,
+    /// encryption with that bond failed since it was made
+    pub stale: bool,
+    /// a coupling of this pen failed a moment ago
+    pub failed_recently: bool,
+    /// this pen was coupled a moment ago
+    pub coupled_recently: bool,
+    /// the cover was only asked again because the machine resumed
+    pub after_resume: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Seated {
+    /// run the coupling now (replacing a bond)
+    Couple,
+    /// leave the pen alone
+    Skip,
+    /// bonded and nothing known against the bond: see whether the pen connects. A pen that
+    /// Windows coupled since has new keys and a new IRK for this host address, so Linux does
+    /// not recognise its adverts and no encryption failure ever shows; the only sign is that
+    /// it stays unconnected while it sits in the slot.
+    CheckConnection,
+}
+
+/// What to do with a pen the cover announced.
+pub fn on_seated(p: SeatedPen) -> Seated {
+    if p.requested {
+        Seated::Couple
+    } else if p.failed_recently {
+        Seated::Skip
+    } else if !p.bonded || p.stale {
+        Seated::Couple
+    } else if p.coupled_recently || p.after_resume {
+        Seated::Skip
+    } else {
+        Seated::CheckConnection
+    }
+}
+
 /// SHA-1 (FIPS 180-4); only for the address derivation above.
 pub fn sha1(msg: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
@@ -297,6 +342,23 @@ mod tests {
         want.extend(tk);
         assert_eq!(c.key_report(&seen, &tk).unwrap(), want);
         assert_eq!(c.key_report(&Seen { flag_0008: false, ..seen }, &tk).unwrap()[11], 0);
+    }
+
+    #[test]
+    fn what_to_do_with_a_seated_pen() {
+        let p = SeatedPen::default();
+        assert_eq!(on_seated(p), Seated::Couple, "no bond");
+        let bonded = SeatedPen { bonded: true, ..p };
+        assert_eq!(on_seated(bonded), Seated::CheckConnection, "a bond Windows may have replaced since");
+        assert_eq!(on_seated(SeatedPen { stale: true, ..bonded }), Seated::Couple);
+        assert_eq!(on_seated(SeatedPen { coupled_recently: true, ..bonded }), Seated::Skip, "no loop");
+        assert_eq!(on_seated(SeatedPen { after_resume: true, ..bonded }), Seated::Skip, "Windows did not run meanwhile");
+        assert_eq!(on_seated(SeatedPen { after_resume: true, ..p }), Seated::Couple);
+        assert_eq!(on_seated(SeatedPen { failed_recently: true, ..p }), Seated::Skip);
+        assert_eq!(on_seated(SeatedPen { failed_recently: true, stale: true, ..bonded }), Seated::Skip);
+        let all =
+            SeatedPen { requested: true, bonded: true, stale: false, failed_recently: true, coupled_recently: true, after_resume: true };
+        assert_eq!(on_seated(all), Seated::Couple, "a request always couples");
     }
 
     #[test]

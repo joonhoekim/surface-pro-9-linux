@@ -24,19 +24,25 @@ pub const FHID_ECHO_REPORT: u8 = 115;
 
 const T_DISPLAY: u8 = 0xA1;
 const T_PEN_V06: u8 = 0xA5;
-const A_TIP: u8 = 0x01;
 const LOCAL_ID_NONE: u8 = 0xFF;
+/// Attribute bitmap: bits 2, 3 and 6 are always set on Windows, bit 1 is contact.
+const A_BASE: u8 = 0x4C;
+const A_CONTACT: u8 = 0x02;
+/// Zero-force-inking indication: 3 while hovering (and for the eraser end), 1 in tip contact.
+const ZFI_HOVER: u8 = 3;
+const ZFI_CONTACT: u8 = 1;
+/// Process type: alternates between these from frame to frame.
+const PROCESS: [u8; 2] = [2, 4];
 pub const SPEED_INVALID: u8 = 0xFF;
 pub const SPEED_MAX: u8 = 63;
 
-const V_PEN_ID: u16 = 0x0081;
-const V_FHID: u16 = 0x0040;
-const V_PEN: u16 = 0x0252;
+/// Validity bitmap of a frame without pen ID and LocalId; `V_SPEED` when the speed is valid.
+const V_BASE: u16 = 0x0352;
 const V_SPEED: u16 = 0x0400;
 
-/// Pen speed that maps to the largest value: the user judged 290 mm/s "about as strong as on
-/// Windows" on this device.
-pub const DEFAULT_FULL_SCALE: f64 = 290.0;
+/// Pen speed that maps to the largest value. Windows' step is 5.6 mm/s (measured against raw
+/// input), so 63 is reached at about 353 mm/s.
+pub const DEFAULT_FULL_SCALE: f64 = 353.0;
 pub const FULL_SCALE_RANGE: (f64, f64) = (50.0, 2000.0);
 
 /// File in the helper's state directory; the standalone surface-pen-feedback keeps its own in
@@ -58,29 +64,43 @@ pub fn display_states(fhid: u16, pen_id: u32) -> [u8; REPORT_LEN] {
     b
 }
 
-/// `8e a5` (V06): the pen feedback with the fields a host without the pen's digital data can
-/// fill. LocalId, AckStatus, DigitizerAck and the protocol type belong to the pen <->
-/// digitizer identification and stay at "none". `speed` None is "unknown" (0xFF).
-pub fn pen_feedback(seq: u8, fhid: u16, speed: Option<u8>, tip: bool, pen_id: u32) -> [u8; REPORT_LEN] {
+/// What the pen does, as far as the feedback frame says it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PenState {
+    /// in range, not touching
+    Hover,
+    /// the tip touches, moving at this speed value (0..=63)
+    Tip(u8),
+    /// the eraser end touches: Windows gives no speed for it, and the pen plays no continuous
+    /// waveform with that end
+    Eraser,
+}
+
+/// `8e a5` (V06) as Windows' touch processor sends it for a pen it has no pen ID and LocalId
+/// for (about half of its own contact frames; the pen vibrates with them). Pen ID, the
+/// energy value and LocalId stay empty; `frame` picks the alternating process type.
+/// docs/research/gaps/pen-vendor-exchange.md section 1.
+pub fn pen_feedback(seq: u8, fhid: u16, state: PenState) -> [u8; REPORT_LEN] {
     let mut b = [0u8; REPORT_LEN];
     b[0] = REPORT_ID;
     b[1] = 0x8E;
     b[2] = T_PEN_V06;
     b[3] = seq;
     b[4] = 0x02; // pen section
-    b[9..13].copy_from_slice(&pen_id.to_le_bytes());
+    b[5] = 0x01;
+    b[7] = 0x90;
+    b[8] = 0x01;
     b[37] = LOCAL_ID_NONE;
-    b[38] = if tip { A_TIP } else { 0 };
+    b[38] = if state == PenState::Hover { A_BASE } else { A_BASE | A_CONTACT };
     b[40..42].copy_from_slice(&fhid.to_le_bytes());
-    b[43] = u8::from(tip); // zero-force-inking indication
-    b[45] = speed.unwrap_or(SPEED_INVALID);
-    let mut valid = V_FHID | V_PEN;
-    if pen_id != 0 {
-        valid |= V_PEN_ID;
-    }
-    if speed.is_some() {
-        valid |= V_SPEED;
-    }
+    b[42] = 1; // protocol type
+    b[43] = if matches!(state, PenState::Tip(_)) { ZFI_CONTACT } else { ZFI_HOVER };
+    b[44] = PROCESS[(seq & 1) as usize];
+    let (speed, valid) = match state {
+        PenState::Tip(q) => (q.min(SPEED_MAX), V_BASE | V_SPEED),
+        _ => (SPEED_INVALID, V_BASE),
+    };
+    b[45] = speed;
     b[47..49].copy_from_slice(&valid.to_le_bytes());
     b
 }
@@ -169,10 +189,11 @@ pub struct Feeder {
     pub fhid: u16,
     seq: u8,
     est: SpeedEstimator,
-    sent: Option<(u8, bool)>,
+    sent: Option<PenState>,
     sent_at: f64,
     display_at: Option<f64>,
     in_range: bool,
+    rubber: bool,
     tip: bool,
     last_pos: f64,
 }
@@ -180,9 +201,9 @@ pub struct Feeder {
 impl Feeder {
     /// resend an unchanged value this often while the pen is in range
     pub const KEEPALIVE_S: f64 = 1.0;
-    /// no position for this long while in range: the pen stands still
+    /// no position for this long while in contact: the pen stands still
     pub const STILL_S: f64 = 0.06;
-    /// Windows sends about 130 messages a second
+    /// Windows sends about 134 messages a second
     pub const MIN_INTERVAL_S: f64 = 0.007;
     pub const DISPLAY_EVERY_S: f64 = 30.0;
 
@@ -195,6 +216,7 @@ impl Feeder {
             sent_at: f64::NEG_INFINITY,
             display_at: None,
             in_range: false,
+            rubber: false,
             tip: false,
             last_pos: f64::NEG_INFINITY,
         }
@@ -211,6 +233,11 @@ impl Feeder {
         self.sent = None;
     }
 
+    /// The digitizer has not been told the FastHostId since the last `forget`.
+    pub fn display_pending(&self) -> bool {
+        self.display_at.is_none()
+    }
+
     /// `8e a1` is due: never sent, forgotten, or older than `DISPLAY_EVERY_S`.
     pub fn display_due(&self, now: f64) -> bool {
         self.display_at.is_none_or(|t| now - t > Self::DISPLAY_EVERY_S)
@@ -221,9 +248,10 @@ impl Feeder {
         display_states(self.fhid, 0)
     }
 
-    /// BTN_TOOL_PEN / BTN_TOOL_RUBBER.
-    pub fn range(&mut self, in_range: bool) {
+    /// BTN_TOOL_PEN / BTN_TOOL_RUBBER; `rubber` says which end came into range.
+    pub fn range(&mut self, in_range: bool, rubber: bool) {
         self.in_range = in_range;
+        self.rubber = in_range && rubber;
         self.est.reset();
     }
 
@@ -238,38 +266,46 @@ impl Feeder {
         self.last_pos = now;
     }
 
-    fn feedback(&mut self, now: f64, q: u8) -> Option<[u8; REPORT_LEN]> {
-        let state = (q, self.tip);
+    fn feedback(&mut self, now: f64, state: PenState) -> Option<[u8; REPORT_LEN]> {
         if self.sent == Some(state) && now - self.sent_at < Self::KEEPALIVE_S {
             return None;
         }
         if now - self.sent_at < Self::MIN_INTERVAL_S {
             return None;
         }
-        let m = pen_feedback(self.seq, self.fhid, Some(q), self.tip, 0);
+        let m = pen_feedback(self.seq, self.fhid, state);
         self.seq = self.seq.wrapping_add(1);
         self.sent = Some(state);
         self.sent_at = now;
         Some(m)
     }
 
-    /// End of an event frame (SYN_REPORT): the message to send, if the quantised speed or the
-    /// tip changed (or the keepalive is due). Nothing while the pen is out of range.
+    /// End of an event frame (SYN_REPORT): the message to send, if the state changed (or the
+    /// keepalive is due). The speed goes out only while the tip touches: the frame after the
+    /// tip lifts and every eraser-end frame carry "no speed", so the digitizer does not keep
+    /// a stale one. A pen that left the range gets one last hover frame.
     pub fn frame(&mut self, now: f64, full_scale_mm_s: f64) -> Option<[u8; REPORT_LEN]> {
         if !self.in_range {
-            return None;
+            return match self.sent {
+                Some(PenState::Hover) | None => None,
+                Some(_) => self.feedback(now, PenState::Hover),
+            };
         }
-        let q = quantize(self.est.value(), full_scale_mm_s);
-        self.feedback(now, q)
+        let state = match (self.tip, self.rubber) {
+            (false, _) => PenState::Hover,
+            (true, true) => PenState::Eraser,
+            (true, false) => PenState::Tip(quantize(self.est.value(), full_scale_mm_s)),
+        };
+        self.feedback(now, state)
     }
 
-    /// No event for a while: a pen in range without a new position stands still (speed 0).
-    pub fn idle(&mut self, now: f64) -> Option<[u8; REPORT_LEN]> {
-        if !self.in_range || now - self.last_pos < Self::STILL_S {
-            return None;
+    /// No event for a while: a tip in contact without a new position stands still (speed 0);
+    /// otherwise the keepalive of the state it is in.
+    pub fn idle(&mut self, now: f64, full_scale_mm_s: f64) -> Option<[u8; REPORT_LEN]> {
+        if self.in_range && self.tip && !self.rubber && now - self.last_pos >= Self::STILL_S {
+            self.est.reset();
         }
-        self.est.reset();
-        self.feedback(now, 0)
+        self.frame(now, full_scale_mm_s)
     }
 }
 
@@ -283,22 +319,36 @@ mod tests {
         b.iter().map(|x| format!("{x:02x}")).collect()
     }
 
-    /// The buffers that were sent to the digitizer when the continuous waveforms played
-    /// (userspace/pen/tests/test_reports.py test_digitizer_feedback).
+    fn bytes(text: &str) -> Vec<u8> {
+        text.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect()
+    }
+
+    /// Frames read out of Windows' touch processor for a pen without pen ID and LocalId
+    /// (FastHostId 0x0143): hovering, and the tip in contact at speed 0.
     #[test]
-    fn buffers_match_the_reference() {
-        assert_eq!(
-            hex(&pen_feedback(1, 0x143, Some(10), true, 0)),
-            format!(
-                "098ea501020000000000000000000000000000000000000000000000000000000000000000ff0100\
-                 43010001000a005206{}",
-                "00".repeat(15)
-            )
-        );
+    fn frames_match_windows() {
+        let zeros = |n: usize| "00 ".repeat(n);
+        let head = |seq: &str| format!("09 8e a5 {seq} 02 01 00 90 01 {}", zeros(8 + 20));
+        let hover = bytes(&format!("{} ff 4c 00 43 01 01 03 02 ff 00 52 03 {}", head("00"), zeros(15)));
+        assert_eq!(hover.len(), REPORT_LEN);
+        assert_eq!(pen_feedback(0, 0x143, PenState::Hover).to_vec(), hover);
+        let contact = bytes(&format!("{} ff 4e 00 43 01 01 01 04 00 00 52 07 {}", head("01"), zeros(15)));
+        assert_eq!(pen_feedback(1, 0x143, PenState::Tip(0)).to_vec(), contact);
+        // the process type alternates 2, 4 with the sequence
+        assert_eq!([0u8, 1, 2, 255].map(|s| pen_feedback(s, 0x143, PenState::Hover)[44]), [2, 4, 2, 4]);
+        // speed only for the tip; bit 0 of the attributes is never set
+        let m = pen_feedback(2, 0x143, PenState::Tip(40));
+        assert_eq!((m[38], m[43], m[45], &m[47..49]), (0x4E, 1, 40, &[0x52, 0x07][..]));
+        assert_eq!(pen_feedback(2, 0x143, PenState::Tip(200))[45], 63);
+        // eraser end in contact: contact bit, ZFI as when hovering, no speed
+        let m = pen_feedback(2, 0x143, PenState::Eraser);
+        assert_eq!((m[38], m[43], m[45], &m[47..49]), (0x4E, 3, 0xFF, &[0x52, 0x03][..]));
+        assert!(m[9..37].iter().all(|b| *b == 0), "no pen ID, no energy value");
+    }
+
+    #[test]
+    fn display_states_buffer() {
         assert_eq!(hex(&display_states(0x143, 0)), format!("098ea10100900100{}4301{}", "00".repeat(33), "00".repeat(21)));
-        let m = pen_feedback(0, 0x143, None, false, 0);
-        assert_eq!((m[38], m[43], m[45], &m[47..49]), (0, 0, 0xFF, &[0x52, 0x02][..]));
-        assert_eq!(&pen_feedback(0, 0x143, Some(5), false, 1)[47..49], &[0xD3, 0x06]);
     }
 
     #[test]
@@ -313,8 +363,9 @@ mod tests {
         assert_eq!(quantize(5000.0, 860.0), 63);
         assert_eq!(quantize(0.0, 860.0), 0);
         assert_eq!(quantize(f64::NAN, 290.0), 0);
-        assert_eq!(quantize(145.0, DEFAULT_FULL_SCALE), 32); // 31.5 rounds to even
-        assert_eq!(quantize(290.0, DEFAULT_FULL_SCALE), 63);
+        assert_eq!(quantize(145.0, 290.0), 32); // 31.5 rounds to even
+        assert_eq!(quantize(353.0, DEFAULT_FULL_SCALE), 63);
+        assert_eq!(quantize(5.6, DEFAULT_FULL_SCALE), 1, "Windows' step");
         e.reset();
         assert_eq!(e.value(), 0.0);
         // one sample, or samples closer than 14 ms, give no estimate
@@ -324,40 +375,76 @@ mod tests {
 
     #[test]
     fn feeder_sends_on_change_only() {
+        let fs = 290.0;
         let mut f = Feeder::new(0x143);
         assert!(f.display_due(0.0));
         assert_eq!(&f.display(0.0)[..3], &[9, 0x8E, 0xA1]);
-        assert!(!f.display_due(10.0) && f.display_due(31.0));
-        assert!(f.frame(0.0, 290.0).is_none(), "out of range");
-        f.range(true);
-        // 100 mm/s at 130 Hz: the value settles, then nothing more is sent until the keepalive
+        assert!(!f.display_due(10.0) && f.display_due(31.0) && !f.display_pending());
+        assert!(f.frame(0.0, fs).is_none(), "out of range, nothing sent before");
+        f.range(true, false);
+        // hovering at 100 mm/s: one hover frame, the speed stays out
+        let mut sent = Vec::new();
+        for i in 0..60 {
+            let t = 1.0 + i as f64 * 0.0077;
+            f.position(t, i as f64 * 0.77, 0.0);
+            sent.extend(f.frame(t, fs));
+        }
+        assert_eq!(sent.len(), 1);
+        assert_eq!((sent[0][38], sent[0][45]), (0x4C, 0xFF));
+        // the tip comes down while moving: the speed is there at once, then only on change
+        f.tip(true);
+        let mut sent = Vec::new();
+        for i in 60..130 {
+            let t = 1.0 + i as f64 * 0.0077;
+            f.position(t, i as f64 * 0.77, 0.0);
+            sent.extend(f.frame(t, fs));
+        }
+        assert_eq!(sent.len(), 1, "100 mm/s all the way");
+        assert_eq!((sent[0][38], sent[0][43], sent[0][45], sent[0][3]), (0x4E, 1, 22, 1), "100 / 290 * 63");
+        // standing still: 0 once after STILL_S, then the keepalive
+        assert!(f.idle(2.02, fs).is_none());
+        assert_eq!(f.idle(2.2, fs).unwrap()[45], 0);
+        assert!(f.idle(2.3, fs).is_none());
+        assert_eq!(f.idle(3.3, fs).unwrap()[45], 0, "keepalive");
+        // the tip lifts: a frame without a speed, so the digitizer does not keep the last one
+        f.tip(false);
+        let m = f.frame(3.4, fs).unwrap();
+        assert_eq!((m[38], m[43], m[45], &m[47..49]), (0x4C, 3, 0xFF, &[0x52, 0x03][..]));
+        assert!(f.idle(3.5, fs).is_none());
+        // forgetting resends the same state
+        f.forget();
+        assert!(f.display_due(3.6) && f.display_pending());
+        assert!(f.frame(3.6, fs).is_some());
+        // leaving the range in contact: one last hover frame
+        f.tip(true);
+        f.position(4.0, 0.0, 0.0);
+        assert!(f.frame(4.0, fs).is_some());
+        f.range(false, false);
+        f.tip(false);
+        assert_eq!(f.frame(4.1, fs).unwrap()[45], 0xFF);
+        assert!(f.frame(5.0, fs).is_none() && f.idle(9.0, fs).is_none());
+    }
+
+    #[test]
+    fn eraser_end_never_gets_a_speed() {
+        let mut f = Feeder::new(0x143);
+        f.range(true, true);
+        f.tip(true);
         let mut sent = Vec::new();
         for i in 0..130 {
             let t = 1.0 + i as f64 * 0.0077;
             f.position(t, i as f64 * 0.77, 0.0);
-            if let Some(m) = f.frame(t, 290.0) {
-                sent.push((t, m));
-            }
+            sent.extend(f.frame(t, 353.0));
         }
-        assert_eq!(sent[0].1[45], 0, "the first frame has no estimate yet");
-        assert_eq!(sent.last().unwrap().1[45], 22, "100 / 290 * 63");
-        assert!(sent.len() < 8, "{} messages", sent.len());
-        assert_eq!(sent.iter().map(|m| m.1[3]).collect::<Vec<_>>(), (0..sent.len() as u8).collect::<Vec<_>>(), "sequence");
-        // the tip is a change
-        f.tip(true);
-        let m = f.frame(2.01, 290.0).unwrap();
-        assert_eq!((m[38], m[43], m[45]), (1, 1, 22));
-        // standing still: 0 once, after STILL_S
-        assert!(f.idle(2.02).is_none());
-        assert_eq!(f.idle(2.2).unwrap()[45], 0);
-        assert!(f.idle(2.3).is_none());
-        assert_eq!(f.idle(3.3).unwrap()[45], 0, "keepalive");
-        // forgetting resends the same value
-        f.forget();
-        assert!(f.display_due(3.4));
-        assert!(f.frame(3.4, 290.0).is_some());
-        f.range(false);
-        assert!(f.frame(5.0, 290.0).is_none() && f.idle(5.0).is_none());
+        sent.extend(f.idle(2.5, 353.0));
+        assert_eq!(sent.len(), 2, "the contact frame and its keepalive");
+        for m in &sent {
+            assert_eq!((m[38], m[43], m[45], &m[47..49]), (0x4E, 3, 0xFF, &[0x52, 0x03][..]));
+        }
+        // the tip end afterwards gets its speed again
+        f.range(false, false);
+        f.range(true, false);
+        assert!(matches!(f.frame(3.0, 353.0), Some(m) if m[45] == 0));
     }
 
     #[test]

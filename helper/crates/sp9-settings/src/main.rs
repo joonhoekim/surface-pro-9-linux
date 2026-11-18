@@ -384,18 +384,15 @@ struct InputUi {
 struct PenUi {
     avail: gtk::Label,
     ink: adw::SwitchRow,
-    intensity: adw::SpinRow,
+    strength: adw::SpinRow,
+    eraser: adw::SwitchRow,
     test: gtk::Button,
     speed: adw::SwitchRow,
-    strength: adw::SpinRow,
     auto_couple: adw::SwitchRow,
     couple_state: gtk::Label,
     couple_row: adw::ActionRow,
     couple: gtk::Button,
 }
-
-/// Pen speed (mm/s) at the largest speed value for "100 %": about as strong as on Windows.
-const PEN_FULL_SCALE_100: f64 = 290.0;
 
 struct DiagUi {
     last: LongInfo,
@@ -702,16 +699,16 @@ fn build_pen() -> (gtk::ScrolledWindow, PenUi) {
     let g = group(&b, tr("Slim Pen 2 Haptics"), tr("Short vibrations in the pen while it writes, as on Windows."));
     let avail = info(&g, tr("Pen"));
     let ink = switch(&g, tr("Ink Feedback"), tr("Vibrates while the pen tip touches the screen"));
-    let intensity = spin(&g, tr("Intensity"), "1–255", 1.0, 255.0, 5.0);
+    let strength = spin(&g, tr("Strength"), tr("Percent; 100 is the Windows default"), 2.0, 200.0, 5.0);
+    let eraser = switch(&g, tr("Eraser Click"), tr("One click when the eraser end touches the screen; it has no continuous vibration"));
     let (_, test) = button(&g, tr("Try It"), tr("One click in the pen"), tr("Test"));
     let g = group(
         &b,
         tr("Writing Texture"),
         tr("The pen vibrates like pen on paper only while the screen knows how fast the pen moves. The helper tells it."),
     );
-    group_help(&g, tr("The pen plays its continuous vibrations only while the touch controller has a pen speed from the computer. With this on, the helper computes the speed from the pen's movement and sends it. It works while Ink Feedback is on. Do not run the separate surface-pen-feedback service at the same time."));
+    group_help(&g, tr("The pen plays its continuous vibrations only while the touch controller has a pen speed from the computer. With this on, the helper computes the speed from the pen's movement and sends it, as Windows does. It works while Ink Feedback is on. Do not run the separate surface-pen-feedback service at the same time."));
     let speed = switch(&g, tr("Send Pen Speed"), tr("Needed for the continuous vibration while writing"));
-    let strength = spin(&g, tr("Strength"), tr("Percent; 100 is about as on Windows"), 25.0, 400.0, 5.0);
     let g = group(
         &b,
         tr("Pairing Through the Cover"),
@@ -721,7 +718,7 @@ fn build_pen() -> (gtk::ScrolledWindow, PenUi) {
     let auto_couple = switch(&g, tr("Pair Automatically"), tr("When a pen is placed in the cover"));
     let couple_state = info(&g, tr("Last Pairing"));
     let (couple_row, couple) = button(&g, tr("Pair Now"), tr("Pairs the pen that is in the cover, replacing its pairing"), tr("Pair"));
-    (sw, PenUi { avail, ink, intensity, test, speed, strength, auto_couple, couple_state, couple_row, couple })
+    (sw, PenUi { avail, ink, strength, eraser, test, speed, auto_couple, couple_state, couple_row, couple })
 }
 
 fn build_diag(toasts: &adw::ToastOverlay) -> (gtk::ScrolledWindow, DiagUi) {
@@ -1240,30 +1237,23 @@ impl Ui {
     fn connect_pen(self: &Rc<Self>) {
         self.switch_sends(&self.pen.ink, "Pen", "SetInkFeedback");
         let ui = self.clone();
-        self.pen.intensity.connect_value_notify(move |r| {
-            if ui.updating.get() {
-                return;
-            }
-            let v = r.value().round().clamp(1.0, 255.0) as u32;
-            ui.debounce("pen-intensity", "Pen", move |ui| ui.call_simple("Pen", "SetIntensity", (v,)));
-        });
-        let ui = self.clone();
-        self.pen.test.connect_clicked(move |_| ui.call_simple("Pen", "TestPulse", ()));
-        self.switch_sends(&self.pen.speed, "Pen", "SetSpeedFeedback");
-        let ui = self.clone();
         self.pen.strength.connect_value_notify(move |r| {
             if ui.updating.get() {
                 return;
             }
-            let full_scale = PEN_FULL_SCALE_100 * 100.0 / r.value().clamp(25.0, 400.0);
-            ui.debounce("pen-strength", "Pen", move |ui| ui.call_simple("Pen", "SetSpeedFullScale", (full_scale,)));
+            let v = r.value().round().clamp(2.0, 200.0);
+            ui.debounce("pen-strength", "Pen", move |ui| ui.call_simple("Pen", "SetStrength", (v,)));
         });
+        let ui = self.clone();
+        self.pen.test.connect_clicked(move |_| ui.call_simple("Pen", "TestPulse", ()));
+        self.switch_sends(&self.pen.eraser, "Pen", "SetEraserClick");
+        self.switch_sends(&self.pen.speed, "Pen", "SetSpeedFeedback");
         self.confirm_on(
             &self.pen.auto_couple,
             "Pen",
             "SetAutoCouple",
             n_("Pair Pens Automatically?"),
-            n_("Any pen placed in the cover's slot is paired with this computer over Bluetooth without asking, and a pairing it already has with this computer is replaced when its key no longer works."),
+            n_("Any pen placed in the cover's slot is paired with this computer over Bluetooth without asking, and a pairing it already has with this computer is replaced when it no longer works, for example after the pen was paired on Windows."),
             n_("Turn On"),
         );
         let ui = self.clone();
@@ -1651,13 +1641,12 @@ impl Ui {
         let avail = dbus::b(x, "Available").unwrap_or(false);
         set_text(&p.avail, if avail { tr("Connected") } else { tr("Not connected (pair it over Bluetooth)") });
         set_switch(&p.ink, dbus::b(x, "InkFeedback"));
-        set_spin(&p.intensity, dbus::n(x, "Intensity").map(|v| v as f64));
+        set_spin(&p.strength, dbus::f(x, "Strength").map(f64::round));
+        set_switch(&p.eraser, dbus::b(x, "EraserClick"));
         p.test.set_sensitive(avail);
         set_switch(&p.speed, dbus::b(x, "SpeedFeedback"));
         let digitizer = dbus::b(x, "DigitizerAvailable").unwrap_or(false);
         p.speed.set_sensitive(digitizer);
-        p.strength.set_sensitive(digitizer);
-        set_spin(&p.strength, dbus::f(x, "SpeedFullScale").filter(|v| *v > 0.0).map(|v| (PEN_FULL_SCALE_100 * 100.0 / v).round()));
         set_switch(&p.auto_couple, dbus::b(x, "AutoCouple"));
         let state = dbus::s(x, "CoupleState").unwrap_or_default();
         let result = dbus::s(x, "CoupleResult").unwrap_or_default();
