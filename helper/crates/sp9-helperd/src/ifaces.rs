@@ -1064,8 +1064,21 @@ impl Pen {
         Ok(())
     }
 
-    /// Couple the pen that sits in the cover slot now, replacing a bond it already has with
-    /// this host. Returns at once; CoupleState and CoupleResult tell how it went.
+    fn start_couple(&self, force: bool) -> fdo::Result<()> {
+        if !self.0.hardware {
+            return Err(fdo::Error::NotSupported("coupling needs the system bus and the real device".into()));
+        }
+        if self.0.couple.status().state == couple::STATE_COUPLING {
+            return Err(failed("a coupling is in progress"));
+        }
+        self.0.couple.request(force);
+        Ok(())
+    }
+
+    /// Look at the pen that sits in the cover slot now: couple it when it has no bond with
+    /// this host; leave it when it is connected; otherwise probe its bond and replace it only
+    /// when the probe shows it dead. Returns at once; CoupleState and CoupleResult tell how
+    /// it went.
     async fn couple(
         &self,
         #[zbus(header)] hdr: Header<'_>,
@@ -1073,13 +1086,21 @@ impl Pen {
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
     ) -> fdo::Result<()> {
         polkit::check(conn, &hdr, "pen-couple", self.0.no_polkit).await?;
-        if !self.0.hardware {
-            return Err(fdo::Error::NotSupported("coupling needs the system bus and the real device".into()));
-        }
-        if self.0.couple.status().state == couple::STATE_COUPLING {
-            return Err(failed("a coupling is in progress"));
-        }
-        self.0.couple.request();
+        self.start_couple(false)?;
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
+    }
+
+    /// As Couple, but the bond of a pen that is not connected is replaced without probing
+    /// it. If the pen then takes no connection it is left without a bond.
+    async fn couple_force(
+        &self,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "pen-couple", self.0.no_polkit).await?;
+        self.start_couple(true)?;
         invalidate(&em, Self::IFACE, Self::PROPS).await;
         Ok(())
     }

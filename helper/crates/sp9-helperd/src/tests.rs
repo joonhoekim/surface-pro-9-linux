@@ -286,8 +286,10 @@ fn pen_feedback_and_coupling_settings() {
     assert_eq!(String::try_from(r.get(P_PEN, "Pen", "CoupleResult")).unwrap(), "");
     assert_eq!(String::try_from(r.get(P_PEN, "Pen", "CoupledAddress")).unwrap(), "");
     // no Bluetooth, no cover node to read in a test: the method refuses, nothing is written
-    let e = err_name(r.call(P_PEN, "Pen", "Couple", &()));
-    assert!(e.ends_with("NotSupported"), "{e}");
+    for method in ["Couple", "CoupleForce"] {
+        let e = err_name(r.call(P_PEN, "Pen", method, &()));
+        assert!(e.ends_with("NotSupported"), "{method}: {e}");
+    }
     let h = r.hid.0.lock().unwrap();
     assert!(h.feature_writes.is_empty() && h.writes.is_empty());
 }
@@ -296,7 +298,7 @@ fn pen_feedback_and_coupling_settings() {
 fn couple_request_reaches_the_thread_state() {
     let c = crate::couple::Couple::default();
     assert_eq!(c.status().state, crate::couple::STATE_IDLE);
-    c.request();
+    c.request(false);
     assert_eq!(c.status().state, crate::couple::STATE_WAITING);
 }
 

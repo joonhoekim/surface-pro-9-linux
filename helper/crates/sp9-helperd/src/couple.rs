@@ -7,22 +7,45 @@
 //! The thread keeps the cover's pen-bonding node open. When the node appears, after resume
 //! and for a manual request it writes Feature 112 and Feature 86 (the host address); the
 //! cover then announces a seated pen with Input 110, and by itself whenever a pen is seated
-//! later. What happens then is `cover::on_seated`: a pen BlueZ has no bond for under its
-//! coupling address, one whose bond failed to encrypt since, and a manual request are
-//! coupled at once. A pen with a bond is given 6 s to be connected; if it is not, the cover
-//! is asked once more, and if the pen is still seated its bond is replaced (Windows coupled
-//! it in between: its keys and IRK for this host changed, Linux no longer recognises its
-//! adverts). Nothing here disconnects a pen except Adapter1.RemoveDevice in step 1: after a
-//! link the host terminated the pen does not advertise for at least 30 s. The sequence:
+//! later. What happens then is `cover::on_seated`:
 //!
-//!   1. remove the device BlueZ has under the coupling address (Adapter1.RemoveDevice)
+//! - no bond under the pen's coupling address: the coupling sequence below;
+//! - a bond and BlueZ shows the pen connected: nothing, also for a request;
+//! - a bond, not connected: nothing is assumed. That is a normal state: a healthy pen sits
+//!   in the slot asleep, and after a resume it does not reconnect by itself. After 6 s (it
+//!   may connect by itself) the cover is asked again and, when it still announces the pen,
+//!   the pen is probed: a fresh key goes to the cover (Output 111; the pen takes no
+//!   connection without one) but not to the kernel, then LE Create Connection to the
+//!   coupling address. Nothing is unpaired or paired. bluetoothd encrypts a link to a bonded
+//!   device with the stored key as soon as its ATT channel is up (src/device.c
+//!   device_attach_att; measured: LE Start Encryption 0.1 s after the connection, and the
+//!   pen accepts its old key while it holds the unused new one). A link that stays is a good
+//!   bond ("connected"), and the sleeping pen is online again. A link the kernel drops with
+//!   "authentication failure" is a dead bond: Windows coupled the pen since. No connection
+//!   says nothing ("no-answer"); the bond stays, and the pen is not probed again for 60 s.
+//!   After a resume nothing is done by itself; a request probes;
+//! - a bond proven dead that way (or seen failing earlier, or a forced request): the bond
+//!   is dropped and the coupling sequence runs.
+//!
+//! A bond is never given up because the pen is not connected or does not answer: a coupling
+//! that gets no answer after the old bond is gone leaves the pen with none. It cannot be
+//! kept until the new key is there either: with a key present Pair Device answers Already
+//! Paired, bluetoothd starts encryption with the old key on the new link (and the kernel
+//! drops the link when that fails), and Unpair Device on a connected device makes bluetoothd
+//! disconnect it (src/device.c device_set_unpaired). So the dead bond goes first, with Unpair
+//! Device while the pen is not connected, which also removes bluetoothd's device object.
+//! Adapter1.RemoveDevice is not used, and nothing here terminates a link: after a link the
+//! host terminated the pen does not advertise for at least 30 s. The sequence:
+//!
+//!   1. only for a dead bond: MGMT Unpair Device (disconnect = 0)
 //!   2. Pairable on (Adapter1.Pairable; restored afterwards)
 //!   3. 16 random bytes as the Temporary Key: MGMT Add Remote OOB Data (hash192, patch 0023)
 //!   4. the same bytes to the cover (Output 111, a plain write)
 //!   5. HCI LE Extended Create Connection to the coupling address on a raw HCI socket. The
 //!      kernel only connects to devices its scan reported (mgmt Pair Device, an L2CAP
 //!      connect and BlueZ's Device1.Connect all go through hci_connect_le_scan), and the
-//!      pen's advert, directed to the host for about 1 s, was never reported by a scan here
+//!      pen's advert, directed to the host for about 1 s, was never reported by a scan here.
+//!      No connection: "no-answer", nothing else is done
 //!   6. MGMT Pair Device (NoInputNoOutput): LE legacy OOB pairing, the pen gives LTK and IRK
 //!   7. drop the Temporary Key, Trusted on, wait for BlueZ's HID-over-GATT node
 //!
@@ -43,6 +66,8 @@ pub struct Status {
     /// "coupling"
     pub state: String,
     /// result of the last attempt, "" none: "coupled", "coupled-no-hid", "already-coupled",
+    /// "connected" (a probed bond works), "no-answer" (the pen took no connection; a bond it
+    /// has is kept), "stale-bond" (a probed bond is dead; the coupling follows),
     /// "no-cover", "no-pen", "unsupported-kernel", "bluetooth-off", "failed: <why>"
     pub result: String,
     /// coupling address of the last pen the cover announced, masked; "" none
@@ -52,7 +77,8 @@ pub struct Status {
 /// What the D-Bus object and the coupling thread share.
 pub struct Couple {
     pub status: Mutex<Status>,
-    request: Mutex<bool>,
+    /// a manual request: Some(forced)
+    request: Mutex<Option<bool>>,
     wake: Condvar,
 }
 
@@ -60,7 +86,7 @@ impl Default for Couple {
     fn default() -> Self {
         Couple {
             status: Mutex::new(Status { state: STATE_IDLE.into(), ..Status::default() }),
-            request: Mutex::new(false),
+            request: Mutex::new(None),
             wake: Condvar::new(),
         }
     }
@@ -71,9 +97,11 @@ impl Couple {
         self.status.lock().unwrap().clone()
     }
 
-    /// Ask for one coupling of the pen in the cover slot, replacing an existing bond.
-    pub fn request(&self) {
-        *self.request.lock().unwrap() = true;
+    /// Ask for the pen in the cover slot to be looked at now: coupled when it has no bond,
+    /// probed when it has one, its bond replaced when that is dead. `force` replaces the
+    /// bond of a pen that is not connected without the proof.
+    pub fn request(&self, force: bool) {
+        *self.request.lock().unwrap() = Some(force);
         self.status.lock().unwrap().state = STATE_WAITING.into();
         self.wake.notify_all();
     }
@@ -84,19 +112,19 @@ impl Couple {
     }
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    fn take_request(&self) -> bool {
-        std::mem::take(&mut *self.request.lock().unwrap())
+    fn take_request(&self) -> Option<bool> {
+        self.request.lock().unwrap().take()
     }
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn pending(&self) -> bool {
-        *self.request.lock().unwrap()
+        self.request.lock().unwrap().is_some()
     }
 
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn wait(&self, d: std::time::Duration) {
         let g = self.request.lock().unwrap();
-        if !*g {
+        if g.is_none() {
             let _ = self.wake.wait_timeout(g, d);
         }
     }
@@ -131,7 +159,7 @@ mod linux {
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::fs::OpenOptionsExt;
     use std::time::{Duration, Instant};
-    use zbus::zvariant::{ObjectPath, OwnedValue, Value};
+    use zbus::zvariant::{OwnedValue, Value};
 
     const HCI_INDEX: u16 = 0;
     const ADAPTER: &str = "/org/bluez/hci0";
@@ -154,6 +182,13 @@ mod linux {
     const RECOUPLE_AFTER: Duration = Duration::from_secs(60);
     /// the pen does not answer a second coupling right after one, and the bond would be gone
     const MANUAL_AFTER: Duration = Duration::from_secs(15);
+    /// a bonded pen that took no connection is not probed again by itself before this
+    const PROBE_AFTER: Duration = Duration::from_secs(60);
+    /// a probed link that is still up after this was encrypted with the stored key
+    const PROBE_SETTLE: Duration = Duration::from_secs(2);
+    const PROBE_WAIT: Duration = Duration::from_secs(8);
+    /// `Status::result` and the error of a connection the pen did not take
+    const NO_ANSWER: &str = "no-answer";
 
     fn log(msg: impl std::fmt::Display) {
         eprintln!("sp9-helperd: pen coupling: {msg}");
@@ -208,11 +243,18 @@ mod linux {
         auth_failed: Vec<Addr>,
         /// devices that gave a long term key since the last look
         new_ltk: Vec<Addr>,
+        /// devices whose link went down for another reason since the last look
+        disconnected: Vec<Addr>,
     }
 
     impl Mgmt {
         fn open() -> io::Result<Mgmt> {
-            Ok(Mgmt { sock: hci_socket(bt::HCI_DEV_NONE, bt::HCI_CHANNEL_CONTROL)?, auth_failed: Vec::new(), new_ltk: Vec::new() })
+            Ok(Mgmt {
+                sock: hci_socket(bt::HCI_DEV_NONE, bt::HCI_CHANNEL_CONTROL)?,
+                auth_failed: Vec::new(),
+                new_ltk: Vec::new(),
+                disconnected: Vec::new(),
+            })
         }
 
         /// Read what is queued; replies to `opcode` are returned, the rest is noted.
@@ -231,6 +273,7 @@ mod linux {
                     Some((HCI_INDEX, Event::AuthFailed { addr, .. })) => self.auth_failed.push(addr),
                     Some((HCI_INDEX, Event::NewLongTermKey { addr })) => self.new_ltk.push(addr),
                     Some((HCI_INDEX, Event::Disconnected { addr, reason: bt::DISCONN_AUTH_FAILURE, .. })) => self.auth_failed.push(addr),
+                    Some((HCI_INDEX, Event::Disconnected { addr, .. })) => self.disconnected.push(addr),
                     _ => {}
                 }
             }
@@ -260,7 +303,20 @@ mod linux {
         }
     }
 
+    /// The raw HCI socket of the adapter, hearing command status and LE meta events only.
+    fn open_raw() -> Result<std::fs::File, String> {
+        let raw = hci_socket(HCI_INDEX, bt::HCI_CHANNEL_RAW).map_err(|e| format!("HCI socket: {e}"))?;
+        let filter = bt::hci_event_filter();
+        // SAFETY: filter is a struct hci_filter (16 bytes); SOL_HCI = 0, HCI_FILTER = 2.
+        let r = unsafe { libc::setsockopt(raw.as_raw_fd(), 0, 2, filter.as_ptr() as *const libc::c_void, filter.len() as u32) };
+        if r < 0 {
+            return Err(format!("HCI filter: {}", io::Error::last_os_error()));
+        }
+        Ok(raw)
+    }
+
     /// LE Extended Create Connection on a raw HCI socket, waiting for the connection.
+    /// `NO_ANSWER` when the pen takes none.
     fn connect(raw: &mut std::fs::File, peer: &Addr) -> Result<(), String> {
         raw.write_all(&bt::le_ext_create_conn(peer, true)).map_err(|e| format!("create connection: {e}"))?;
         let end = Instant::now() + CONNECT_WAIT;
@@ -269,7 +325,7 @@ mod linux {
             let left = end.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 let _ = raw.write_all(&bt::le_create_conn_cancel());
-                return Err("the pen did not answer the connection".into());
+                return Err(NO_ANSWER.into());
             }
             if !poll_in(&[raw], left).map_err(|e| e.to_string())?[0] {
                 continue;
@@ -317,11 +373,6 @@ mod linux {
                 .map_err(|e| format!("{prop}: {e}"))
         }
 
-        /// BlueZ has a device under this address (bonded or not).
-        fn known(&self, addr: &Addr) -> bool {
-            self.get(&Self::device_path(addr), "org.bluez.Device1", "Paired").is_some()
-        }
-
         fn bonded(&self, addr: &Addr) -> bool {
             let p = Self::device_path(addr);
             self.get_bool(&p, "org.bluez.Device1", "Paired") == Some(true)
@@ -330,14 +381,6 @@ mod linux {
 
         fn connected(&self, addr: &Addr) -> bool {
             self.get_bool(&Self::device_path(addr), "org.bluez.Device1", "Connected") == Some(true)
-        }
-
-        fn remove(&self, addr: &Addr) -> Result<(), String> {
-            let p = Self::device_path(addr);
-            let path = ObjectPath::try_from(p.as_str()).map_err(|e| e.to_string())?;
-            zbus::block_on(self.0.call_method(Some("org.bluez"), ADAPTER, Some("org.bluez.Adapter1"), "RemoveDevice", &(path,)))
-                .map(|_| ())
-                .map_err(|e| format!("RemoveDevice: {e}"))
         }
     }
 
@@ -369,13 +412,7 @@ mod linux {
     fn pair(cover: &CoverPen, dev: &mut std::fs::File, mgmt: &mut Mgmt, seen: &Seen, addr: &Addr, tk: &[u8; 16]) -> Result<(), String> {
         let report = cover.key_report(seen, tk)?;
         // before the key goes out: the pen's advert only lasts about a second
-        let mut raw = hci_socket(HCI_INDEX, bt::HCI_CHANNEL_RAW).map_err(|e| format!("HCI socket: {e}"))?;
-        let filter = bt::hci_event_filter();
-        // SAFETY: filter is a struct hci_filter (16 bytes); SOL_HCI = 0, HCI_FILTER = 2.
-        let r = unsafe { libc::setsockopt(raw.as_raw_fd(), 0, 2, filter.as_ptr() as *const libc::c_void, filter.len() as u32) };
-        if r < 0 {
-            return Err(format!("HCI filter: {}", io::Error::last_os_error()));
-        }
+        let mut raw = open_raw()?;
         dev.write_all(&report).map_err(|e| format!("Output {}: {e}", cover::OUTPUT_KEY))?;
         connect(&mut raw, addr)?;
         drop(raw);
@@ -389,7 +426,9 @@ mod linux {
             mgmt.new_ltk.clear();
             let mut status = mgmt.command(bt::OP_PAIR_DEVICE, &cmd, PAIR_WAIT).map_err(|e| format!("Pair Device: {e}"))?.0;
             if status == bt::STATUS_ALREADY_PAIRED {
-                // keys the kernel still has although BlueZ did not know the device
+                // keys the kernel still has although BlueZ shows no bond (a bond BlueZ shows is
+                // dropped before the connection, never here: bluetoothd disconnects a connected
+                // device that gets unpaired)
                 let un = bt::unpair_device(HCI_INDEX, addr, bt::ADDR_LE_RANDOM, false);
                 mgmt.command(bt::OP_UNPAIR_DEVICE, &un, Duration::from_secs(5)).map_err(|e| format!("Unpair Device: {e}"))?;
                 status = mgmt.command(bt::OP_PAIR_DEVICE, &cmd, PAIR_WAIT).map_err(|e| format!("Pair Device: {e}"))?.0;
@@ -414,7 +453,55 @@ mod linux {
         Err("the pen did not give a key".into())
     }
 
+    /// How a connection to a bonded pen ends when the kernel is not given the key the cover
+    /// hands the pen: the stored bond has to carry the link. bluetoothd gets the link through
+    /// its ATT listener and encrypts it with the stored key by itself; this only watches.
+    fn probe(bz: &Bluez, cover: &CoverPen, dev: &mut std::fs::File, mgmt: &mut Mgmt, seen: &Seen, addr: &Addr) -> cover::Probe {
+        let _ = mgmt.drain(None);
+        mgmt.auth_failed.clear();
+        mgmt.disconnected.clear();
+        let _ = mgmt.drain(None);
+        mgmt.auth_failed.clear();
+        mgmt.disconnected.clear();
+        // the pen only advertises once it has been handed a key; this one is never used
+        let connected = random_key().map_err(|e| format!("key: {e}")).and_then(|tk| cover.key_report(seen, &tk)).and_then(|report| {
+            let mut raw = open_raw()?;
+            dev.write_all(&report).map_err(|e| format!("Output {}: {e}", cover::OUTPUT_KEY))?;
+            connect(&mut raw, addr)
+        });
+        if let Err(e) = connected {
+            if e != NO_ANSWER {
+                log(format!("probe: {e}"));
+            }
+            return cover::Probe::NoAnswer;
+        }
+        let up = Instant::now();
+        loop {
+            if mgmt.drain(None).is_err() {
+                return cover::Probe::NoAnswer;
+            }
+            if mgmt.auth_failed.contains(addr) {
+                return cover::Probe::AuthFailure;
+            }
+            if mgmt.disconnected.contains(addr) {
+                log("probe: the link went down again without an encryption failure");
+                return cover::Probe::NoAnswer;
+            }
+            // an encryption failure shows within a fraction of a second
+            if up.elapsed() >= PROBE_SETTLE && bz.connected(addr) {
+                return cover::Probe::Connected;
+            }
+            if up.elapsed() >= PROBE_WAIT {
+                return cover::Probe::NoAnswer;
+            }
+            let _ = poll_in(&[&mgmt.sock], Duration::from_millis(250));
+        }
+    }
+
     /// The whole sequence for a pen the cover announced; the result text for `Status`.
+    /// `replace`: the pen has a bond that is known to be dead (or the request was forced);
+    /// it is dropped first. Never called for a pen that is connected.
+    #[allow(clippy::too_many_arguments)]
     fn couple(
         shared: &Shared,
         bz: &Bluez,
@@ -423,11 +510,18 @@ mod linux {
         mgmt: &mut Mgmt,
         seen: &Seen,
         addr: &Addr,
+        replace: bool,
     ) -> Result<&'static str, String> {
         let masked = mask_addr(addr);
-        if bz.known(addr) {
-            bz.remove(addr)?;
-            log(format!("removed the device BlueZ had for {masked}"));
+        if replace {
+            let un = bt::unpair_device(HCI_INDEX, addr, bt::ADDR_LE_RANDOM, false);
+            let status = mgmt.command(bt::OP_UNPAIR_DEVICE, &un, Duration::from_secs(5)).map_err(|e| format!("Unpair Device: {e}"))?.0;
+            if status != bt::STATUS_SUCCESS && status != bt::STATUS_NOT_PAIRED {
+                return Err(format!("Unpair Device: {}", bt::status_name(status)));
+            }
+            // bluetoothd drops its keys and, the pen not being connected, its device object
+            wait_for(Duration::from_secs(2), || !bz.bonded(addr));
+            log(format!("dropped the dead bond of {masked}"));
         }
         let pairable = bz.get_bool(ADAPTER, "org.bluez.Adapter1", "Pairable");
         if pairable == Some(false) {
@@ -485,6 +579,7 @@ mod linux {
         stale: HashSet<Addr>,
         failed_at: HashMap<Addr, Instant>,
         coupled_at: HashMap<Addr, Instant>,
+        probed_at: HashMap<Addr, Instant>,
     }
 
     /// Feature 112 and 86: the cover announces a seated pen at once and later ones by itself.
@@ -512,7 +607,8 @@ mod linux {
             .open(shared.root.p(&format!("/dev/{}", cover.node)))
             .map_err(|e| format!("{}: {e}", cover.node))?;
         let bz = Bluez(conn);
-        let mut manual_until = c.take_request().then(|| Instant::now() + ANNOUNCE_WAIT);
+        // a manual request waits for the cover's announcement until then; whether it is forced
+        let mut manual: Option<(Instant, bool)> = c.take_request().map(|force| (Instant::now() + ANNOUNCE_WAIT, force));
         announce(shared, cover, &host)?;
         log(format!("cover {} told the host address {}", cover.node, mask_addr(&host)));
         {
@@ -525,29 +621,36 @@ mod linux {
         let mut resume_mark = clock::suspended();
         // the cover was asked again only because of a resume, until then
         let mut quiet_until = Instant::now();
-        // a bonded pen that was seated: is it connected by then?
+        // a bonded pen that was seated unconnected: look again then
         let mut check: Option<(Addr, Instant)> = None;
-        // it was not, and the cover was asked whether the pen is still there
+        // it was still not connected, and the cover was asked whether the pen is still there
         let mut confirm: Option<(Addr, Instant)> = None;
+        // a coupling got no answer: ask the cover again then
+        let mut retry_at: Option<Instant> = None;
         let mut buf = [0u8; 64];
         loop {
             let ready = poll_in(&[&dev, &mgmt.sock], Duration::from_secs(1)).map_err(|_| String::new())?;
-            if c.take_request() {
-                manual_until = Some(Instant::now() + ANNOUNCE_WAIT);
+            if let Some(force) = c.take_request() {
+                manual = Some((Instant::now() + ANNOUNCE_WAIT, force));
                 announce(shared, cover, &host)?;
             } else if clock::resumed(&mut resume_mark) {
                 quiet_until = Instant::now() + CONFIRM_WAIT;
                 announce(shared, cover, &host)?;
+            } else if retry_at.is_some_and(|t| Instant::now() >= t) {
+                retry_at = None;
+                announce(shared, cover, &host)?;
             }
-            if !shared.cfg().pen.auto_couple && manual_until.is_none() {
+            let auto = shared.cfg().pen.auto_couple;
+            if !auto && manual.is_none() {
                 return Ok(());
             }
             if ready[1] {
                 mgmt.drain(None).map_err(|e| format!("management socket: {e}"))?;
             }
+            mgmt.disconnected.clear();
             for a in mgmt.auth_failed.drain(..) {
                 if mem.stale.insert(a) {
-                    log(format!("encryption with {} failed: its bond is replaced when that pen is seated", mask_addr(&a)));
+                    log(format!("encryption with {} failed: its bond is dead and is replaced when that pen is seated", mask_addr(&a)));
                 }
             }
             if let Some((addr, _)) = check.filter(|(_, t)| Instant::now() >= *t) {
@@ -556,7 +659,7 @@ mod linux {
                     c.set(STATE_IDLE, Some("already-coupled".into()));
                 } else {
                     log(format!(
-                        "{} has a bond but did not connect within {} s: asking the cover whether it is still seated",
+                        "{} has a bond and is not connected after {} s: asking the cover whether it is still seated, to probe the bond",
                         mask_addr(&addr),
                         CONNECT_GRACE.as_secs()
                     ));
@@ -577,47 +680,94 @@ mod linux {
             }
             if let Some(seen) = seen {
                 let addr = cover::seen_address(&seen, &host);
-                let manual = manual_until.take().is_some();
-                c.status.lock().unwrap().address = mask_addr(&addr);
+                let masked = mask_addr(&addr);
+                let request = manual.take();
+                let requested = request.is_some();
+                c.status.lock().unwrap().address = masked.clone();
                 let within = |m: &HashMap<Addr, Instant>, d: Duration| m.get(&addr).is_some_and(|t| t.elapsed() < d);
                 let confirmed = confirm.take_if(|(a, _)| *a == addr).is_some();
-                if manual && within(&mem.coupled_at, MANUAL_AFTER) {
-                    log("coupled a moment ago: the pen would not answer and its bond would be lost; request ignored");
+                if requested && within(&mem.coupled_at, MANUAL_AFTER) {
+                    log("coupled a moment ago: request ignored");
                     c.set(STATE_IDLE, Some("failed: coupled a moment ago, try again in a few seconds".into()));
                     continue;
                 }
                 let facts = cover::SeatedPen {
-                    requested: manual,
+                    requested,
+                    forced: request.is_some_and(|r| r.1),
                     bonded: bz.bonded(&addr),
+                    connected: bz.connected(&addr),
                     stale: mem.stale.contains(&addr),
                     failed_recently: within(&mem.failed_at, RETRY_AFTER),
                     coupled_recently: within(&mem.coupled_at, RECOUPLE_AFTER),
+                    probed_recently: within(&mem.probed_at, PROBE_AFTER),
                     after_resume: Instant::now() < quiet_until,
                 };
-                let why = match cover::on_seated(facts) {
-                    cover::Seated::Couple if manual => " (requested)",
-                    cover::Seated::Couple if facts.bonded => " (its bond no longer encrypts)",
-                    cover::Seated::Couple => "",
-                    cover::Seated::CheckConnection if confirmed => " (bonded, but not connected: its keys were replaced elsewhere)",
-                    cover::Seated::CheckConnection => {
-                        if bz.connected(&addr) {
-                            c.set(STATE_IDLE, Some("already-coupled".into()));
-                        } else if check.is_none() {
+                let replace = match cover::on_seated(facts) {
+                    cover::Seated::Connected => {
+                        if requested {
+                            log(format!("{masked} is connected under its bond: left alone"));
+                        }
+                        c.set(STATE_IDLE, Some("already-coupled".into()));
+                        continue;
+                    }
+                    cover::Seated::Skip => {
+                        if requested {
+                            c.set(STATE_IDLE, None);
+                        }
+                        continue;
+                    }
+                    cover::Seated::Probe if !requested && !confirmed => {
+                        // it may connect by itself: look again before touching anything
+                        if check.is_none() {
                             check = Some((addr, Instant::now() + CONNECT_GRACE));
                         }
                         continue;
                     }
-                    cover::Seated::Skip => {
-                        if facts.bonded && !facts.failed_recently {
-                            c.set(STATE_IDLE, Some("already-coupled".into()));
+                    cover::Seated::Probe => {
+                        c.set(STATE_COUPLING, None);
+                        log(format!(
+                            "{masked} has a bond and is not connected: probing it (a key to the cover only, connection, no pairing)"
+                        ));
+                        let outcome = probe(&bz, cover, &mut dev, &mut mgmt, &seen, &addr);
+                        mgmt.auth_failed.clear();
+                        while matches!(dev.read(&mut buf), Ok(n) if n > 0) {}
+                        mem.probed_at.insert(addr, Instant::now());
+                        let (text, dead) = cover::after_probe(outcome);
+                        if dead {
+                            log(format!("probe of {masked}: connected, encryption with the stored key failed: the bond is dead (coupled elsewhere since); asking the cover again to couple"));
+                            mem.stale.insert(addr);
+                            if requested {
+                                manual = Some((Instant::now() + ANNOUNCE_WAIT, false));
+                            }
+                            c.set(if requested { STATE_WAITING } else { STATE_IDLE }, Some(text.into()));
+                            announce(shared, cover, &host)?;
+                        } else {
+                            match outcome {
+                                cover::Probe::Connected => log(format!(
+                                    "probe of {masked}: connected and encrypted with the stored key: the bond is good, the pen is online"
+                                )),
+                                _ => log(format!(
+                                    "probe of {masked}: no answer: nothing is known, the bond is kept (not probed again for {} s)",
+                                    PROBE_AFTER.as_secs()
+                                )),
+                            }
+                            c.set(STATE_IDLE, Some(text.into()));
                         }
                         continue;
                     }
+                    cover::Seated::Couple => false,
+                    cover::Seated::Replace => true,
                 };
                 check = None;
                 c.set(STATE_COUPLING, None);
-                log(format!("pen in the cover slot, coupling address {}{why}", mask_addr(&addr)));
-                let r = couple(shared, &bz, cover, &mut dev, &mut mgmt, &seen, &addr);
+                let why = match (replace, facts.stale, requested) {
+                    (true, true, _) => "its bond is dead: replacing it",
+                    (true, false, _) => "forced: replacing its bond",
+                    (false, _, true) => "no bond: coupling (requested)",
+                    (false, _, false) => "no bond: coupling",
+                };
+                log(format!("pen in the cover slot, coupling address {masked}, {why}"));
+                let r = couple(shared, &bz, cover, &mut dev, &mut mgmt, &seen, &addr, replace);
                 // the attempt's own failures are not a stale bond
                 mgmt.auth_failed.clear();
                 // what the cover sent meanwhile belongs to this attempt
@@ -631,7 +781,11 @@ mod linux {
                     }
                     Err(e) => {
                         mem.failed_at.insert(addr, Instant::now());
-                        if e == "unsupported-kernel" {
+                        if e == NO_ANSWER {
+                            log(format!("{masked} did not answer the connection; asking the cover again in {} s", RETRY_AFTER.as_secs()));
+                            retry_at = Some(Instant::now() + RETRY_AFTER + Duration::from_secs(1));
+                            e
+                        } else if e == "unsupported-kernel" {
                             log("this kernel does not take a Temporary Key (Add Remote OOB Data: invalid parameters; kernel patch 0023)");
                             e
                         } else {
@@ -641,13 +795,13 @@ mod linux {
                 };
                 log(format!("result: {text}"));
                 c.set(STATE_IDLE, Some(text));
-            } else if manual_until.is_some_and(|t| Instant::now() >= t) {
-                manual_until = None;
+            } else if manual.is_some_and(|(t, _)| Instant::now() >= t) {
+                manual = None;
                 log("the cover announced no pen");
                 c.set(STATE_IDLE, Some("no-pen".into()));
             } else if confirm.is_some_and(|(_, t)| Instant::now() >= t) {
                 confirm = None;
-                log("the pen is no longer in the cover; its bond is kept");
+                log("the pen is no longer in the cover; nothing done");
             }
         }
     }
@@ -661,7 +815,7 @@ mod linux {
                 continue;
             }
             let Some(cover) = cover::find(&*shared.b.hid) else {
-                if c.take_request() {
+                if c.take_request().is_some() {
                     log("no cover with a pen slot");
                     c.set(STATE_IDLE, Some("no-cover".into()));
                 }
@@ -683,7 +837,7 @@ mod linux {
                 }
                 Err(e) => {
                     log(&e);
-                    if c.take_request() || c.status().state != STATE_IDLE {
+                    if c.take_request().is_some() || c.status().state != STATE_IDLE {
                         c.set(STATE_IDLE, Some(format!("failed: {e}")));
                     }
                     std::thread::sleep(Duration::from_secs(10));

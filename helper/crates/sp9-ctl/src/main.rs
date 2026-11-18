@@ -47,7 +47,11 @@ const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
   pen full-scale MM_S|default            advanced: pen speed that gives the largest speed value,
                                          50..2000 mm/s (default 353, Windows' scale)
   pen auto-couple on|off                 couple a pen put into the cover slot (Bluetooth bond)
-  pen couple                             couple the pen in the cover slot now, replacing its bond
+  pen couple [--force]                   look at the pen in the cover slot now: couple it when it has
+                                         no bond; a bonded pen is left alone when connected, else
+                                         probed (brought online) and its bond replaced only when it
+                                         is dead. --force replaces the bond of an unconnected pen
+                                         without the probe
   diagnostics                            run the post-install check, print the tarball path
   reload                                 read /etc/sp9/helper.toml again";
 
@@ -307,7 +311,7 @@ fn main() {
             }
             Some("auto-couple") => c.act("Pen", "SetAutoCouple", &(onoff(a(2)),)),
             Some("couple") => {
-                c.act("Pen", "Couple", &());
+                c.act("Pen", if a(2).map(String::as_str) == Some("--force") { "CoupleForce" } else { "Couple" }, &());
                 // the daemon works on its own thread: wait for the attempt to end
                 let state = |c: &Ctl| c.props("Pen").get("CoupleState").and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
                 let mut last = String::new();
@@ -323,7 +327,11 @@ fn main() {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
                 c.show("Pen", &["CoupleState", "CoupleResult", "CoupledAddress"]);
-                let ok = c.props("Pen").get("CoupleResult").and_then(|v| v.as_str().map(|r| r.starts_with("coupled"))).unwrap_or(false);
+                let ok = c
+                    .props("Pen")
+                    .get("CoupleResult")
+                    .and_then(|v| v.as_str().map(|r| r.starts_with("coupled") || r == "already-coupled" || r == "connected"))
+                    .unwrap_or(false);
                 if !ok {
                     exit(1);
                 }

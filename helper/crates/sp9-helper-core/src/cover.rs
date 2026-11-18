@@ -167,43 +167,83 @@ pub fn seen_address(seen: &Seen, host: &Addr) -> Addr {
 pub struct SeatedPen {
     /// a manual request is waiting for this announcement
     pub requested: bool,
+    /// the request asked to replace the bond without proof that it is dead
+    pub forced: bool,
     /// BlueZ has a bond under the pen's coupling address
     pub bonded: bool,
-    /// encryption with that bond failed since it was made
+    /// BlueZ shows the device connected
+    pub connected: bool,
+    /// encryption with that bond failed since it was made: the pen no longer has the key
     pub stale: bool,
     /// a coupling of this pen failed a moment ago
     pub failed_recently: bool,
     /// this pen was coupled a moment ago
     pub coupled_recently: bool,
+    /// this pen was probed a moment ago
+    pub probed_recently: bool,
     /// the cover was only asked again because the machine resumed
     pub after_resume: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Seated {
-    /// run the coupling now (replacing a bond)
+    /// no bond: run the coupling
     Couple,
-    /// leave the pen alone
+    /// a bond that is known to be dead (or a forced request): drop it, then run the coupling
+    Replace,
+    /// a bond, not connected, nothing known against it: find out by connecting (the cover
+    /// hands the pen a key the kernel never gets). A good bond encrypts the link and stays;
+    /// nothing is removed on the way
+    Probe,
+    /// connected under its bond: it works
+    Connected,
+    /// leave the pen alone for now
     Skip,
-    /// bonded and nothing known against the bond: see whether the pen connects. A pen that
-    /// Windows coupled since has new keys and a new IRK for this host address, so Linux does
-    /// not recognise its adverts and no encryption failure ever shows; the only sign is that
-    /// it stays unconnected while it sits in the slot.
-    CheckConnection,
 }
 
-/// What to do with a pen the cover announced.
+/// What to do with a pen the cover announced. A bond is only ever given up when encryption
+/// with it has failed (or on a forced request), never because the pen is not connected: a
+/// healthy pen can sit in the slot unconnected, and a coupling that gets no answer after the
+/// old bond is gone leaves the pen with none.
 pub fn on_seated(p: SeatedPen) -> Seated {
+    if p.bonded && p.connected {
+        return Seated::Connected;
+    }
+    if !p.requested && p.failed_recently {
+        return Seated::Skip;
+    }
+    if !p.bonded {
+        return Seated::Couple;
+    }
+    if p.stale || p.forced {
+        return Seated::Replace;
+    }
     if p.requested {
-        Seated::Couple
-    } else if p.failed_recently {
-        Seated::Skip
-    } else if !p.bonded || p.stale {
-        Seated::Couple
-    } else if p.coupled_recently || p.after_resume {
-        Seated::Skip
-    } else {
-        Seated::CheckConnection
+        return Seated::Probe;
+    }
+    if p.coupled_recently || p.probed_recently || p.after_resume {
+        return Seated::Skip;
+    }
+    Seated::Probe
+}
+
+/// How a probe of a bonded pen ended.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Probe {
+    /// connected and still up: the stored key encrypted the link
+    Connected,
+    /// connected, then the link was dropped because encryption failed: the bond is dead
+    AuthFailure,
+    /// no connection (or it went away for another reason): nothing is known
+    NoAnswer,
+}
+
+/// What a probe means: the result to show, and whether the bond is now known to be dead.
+pub fn after_probe(p: Probe) -> (&'static str, bool) {
+    match p {
+        Probe::Connected => ("connected", false),
+        Probe::AuthFailure => ("stale-bond", true),
+        Probe::NoAnswer => ("no-answer", false),
     }
 }
 
@@ -348,17 +388,40 @@ mod tests {
     fn what_to_do_with_a_seated_pen() {
         let p = SeatedPen::default();
         assert_eq!(on_seated(p), Seated::Couple, "no bond");
-        let bonded = SeatedPen { bonded: true, ..p };
-        assert_eq!(on_seated(bonded), Seated::CheckConnection, "a bond Windows may have replaced since");
-        assert_eq!(on_seated(SeatedPen { stale: true, ..bonded }), Seated::Couple);
-        assert_eq!(on_seated(SeatedPen { coupled_recently: true, ..bonded }), Seated::Skip, "no loop");
-        assert_eq!(on_seated(SeatedPen { after_resume: true, ..bonded }), Seated::Skip, "Windows did not run meanwhile");
         assert_eq!(on_seated(SeatedPen { after_resume: true, ..p }), Seated::Couple);
         assert_eq!(on_seated(SeatedPen { failed_recently: true, ..p }), Seated::Skip);
-        assert_eq!(on_seated(SeatedPen { failed_recently: true, stale: true, ..bonded }), Seated::Skip);
-        let all =
-            SeatedPen { requested: true, bonded: true, stale: false, failed_recently: true, coupled_recently: true, after_resume: true };
-        assert_eq!(on_seated(all), Seated::Couple, "a request always couples");
+        assert_eq!(on_seated(SeatedPen { failed_recently: true, requested: true, ..p }), Seated::Couple);
+
+        let bonded = SeatedPen { bonded: true, ..p };
+        // connected: it works, whatever else is known and whoever asks
+        let connected = SeatedPen { connected: true, ..bonded };
+        assert_eq!(on_seated(connected), Seated::Connected);
+        assert_eq!(on_seated(SeatedPen { requested: true, ..connected }), Seated::Connected);
+        assert_eq!(on_seated(SeatedPen { requested: true, forced: true, stale: true, ..connected }), Seated::Connected);
+        // not connected is not a reason to give the bond up: probe
+        assert_eq!(on_seated(bonded), Seated::Probe);
+        assert_eq!(on_seated(SeatedPen { requested: true, ..bonded }), Seated::Probe);
+        assert_eq!(on_seated(SeatedPen { requested: true, coupled_recently: true, probed_recently: true, ..bonded }), Seated::Probe);
+        for quiet in [
+            SeatedPen { coupled_recently: true, ..bonded },
+            SeatedPen { probed_recently: true, ..bonded },
+            SeatedPen { after_resume: true, ..bonded },
+        ] {
+            assert_eq!(on_seated(quiet), Seated::Skip, "{quiet:?}");
+        }
+        // only a failed encryption (or a forced request) replaces a bond
+        assert_eq!(on_seated(SeatedPen { stale: true, ..bonded }), Seated::Replace);
+        assert_eq!(on_seated(SeatedPen { stale: true, probed_recently: true, ..bonded }), Seated::Replace);
+        assert_eq!(on_seated(SeatedPen { stale: true, failed_recently: true, ..bonded }), Seated::Skip);
+        assert_eq!(on_seated(SeatedPen { stale: true, failed_recently: true, requested: true, ..bonded }), Seated::Replace);
+        assert_eq!(on_seated(SeatedPen { requested: true, forced: true, ..bonded }), Seated::Replace);
+    }
+
+    #[test]
+    fn what_a_probe_means() {
+        assert_eq!(after_probe(Probe::Connected), ("connected", false));
+        assert_eq!(after_probe(Probe::AuthFailure), ("stale-bond", true));
+        assert_eq!(after_probe(Probe::NoAnswer), ("no-answer", false), "no answer keeps the bond");
     }
 
     #[test]

@@ -267,7 +267,10 @@ pub const KO: &[(&str, &str)] = &[
     ("When a pen is placed in the cover", "펜을 커버에 놓을 때"),
     ("Last Pairing", "마지막 페어링"),
     ("Pair Now", "지금 페어링"),
-    ("Pairs the pen that is in the cover, replacing its pairing", "커버에 놓인 펜을 페어링한다. 있던 페어링은 바꾼다"),
+    ("Pairs the pen that is in the cover; a pairing that works is kept", "커버에 놓인 펜을 페어링한다. 통하는 페어링은 그대로 둔다"),
+    ("Already paired ({}); the pen is connected again", "이미 페어링됨({}). 펜이 다시 연결됐다"),
+    ("The pen did not answer; a pairing it has was kept", "펜이 답하지 않았다. 있던 페어링은 그대로 뒀다"),
+    ("The pairing no longer works; pairing again…", "페어링이 더 통하지 않는다. 다시 페어링하는 중…"),
     ("Pair", "페어링"),
     ("Pair Pens Automatically?", "펜을 자동으로 페어링할까?"),
     (

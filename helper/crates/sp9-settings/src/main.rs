@@ -717,7 +717,8 @@ fn build_pen() -> (gtk::ScrolledWindow, PenUi) {
     group_help(&g, tr("The cover hands the pen a key and the helper pairs with it over Bluetooth. A pen that was paired on Windows afterwards has a new key: put it back into the slot, or pair it again here. Needs a kernel with LE legacy OOB pairing."));
     let auto_couple = switch(&g, tr("Pair Automatically"), tr("When a pen is placed in the cover"));
     let couple_state = info(&g, tr("Last Pairing"));
-    let (couple_row, couple) = button(&g, tr("Pair Now"), tr("Pairs the pen that is in the cover, replacing its pairing"), tr("Pair"));
+    let (couple_row, couple) =
+        button(&g, tr("Pair Now"), tr("Pairs the pen that is in the cover; a pairing that works is kept"), tr("Pair"));
     (sw, PenUi { avail, ink, strength, eraser, test, speed, auto_couple, couple_state, couple_row, couple })
 }
 
@@ -1658,6 +1659,9 @@ impl Ui {
             (_, "coupled") => trf("Paired ({})", &[&addr]),
             (_, "coupled-no-hid") => trf("Paired ({}); the pen's buttons and haptics come with its next connection", &[&addr]),
             (_, "already-coupled") => trf("Already paired ({})", &[&addr]),
+            (_, "connected") => trf("Already paired ({}); the pen is connected again", &[&addr]),
+            (_, "no-answer") => tr("The pen did not answer; a pairing it has was kept").to_string(),
+            (_, "stale-bond") => tr("The pairing no longer works; pairing again…").to_string(),
             (_, "no-cover") => tr("No cover with a pen slot").to_string(),
             (_, "no-pen") => tr("No pen in the cover").to_string(),
             (_, "unsupported-kernel") => tr("Not supported by this kernel").to_string(),

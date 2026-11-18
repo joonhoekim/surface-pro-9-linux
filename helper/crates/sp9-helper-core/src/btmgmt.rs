@@ -36,6 +36,7 @@ pub const EV_AUTH_FAILED: u16 = 0x0011;
 pub const DISCONN_AUTH_FAILURE: u8 = 0x04;
 
 pub const STATUS_SUCCESS: u8 = 0x00;
+pub const STATUS_NOT_PAIRED: u8 = 0x06;
 pub const STATUS_INVALID_PARAMS: u8 = 0x0D;
 pub const STATUS_ALREADY_PAIRED: u8 = 0x13;
 
