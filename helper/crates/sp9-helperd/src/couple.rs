@@ -19,7 +19,8 @@
 //!   coupling address. Nothing is unpaired or paired. bluetoothd encrypts a link to a bonded
 //!   device with the stored key as soon as its ATT channel is up (src/device.c
 //!   device_attach_att; measured: LE Start Encryption 0.1 s after the connection, and the
-//!   pen accepts its old key while it holds the unused new one). A link that stays is a good
+//!   pen accepts its old key while it holds the new one). The key stays in the pen and is
+//!   remembered as pending (see below). A link that stays is a good
 //!   bond ("connected"), and the sleeping pen is online again. A link the kernel drops with
 //!   "authentication failure" is a dead bond: Windows coupled the pen since. No connection
 //!   says nothing ("no-answer"); the bond stays, and the pen is not probed again for 60 s.
@@ -39,14 +40,20 @@
 //!
 //!   1. only for a dead bond: MGMT Unpair Device (disconnect = 0)
 //!   2. Pairable on (Adapter1.Pairable; restored afterwards)
-//!   3. 16 random bytes as the Temporary Key: MGMT Add Remote OOB Data (hash192, patch 0023)
+//!   3. the Temporary Key: MGMT Add Remote OOB Data (hash192, patch 0023). The pen pairs with
+//!      the key it was handed the time before, not the one written just now (measured), so
+//!      the key is the one last written for this pen that no pairing has used up
+//!      (`cover::PendingKeys`: a probe's, a failed attempt's), else 16 random bytes
 //!   4. the same bytes to the cover (Output 111, a plain write)
 //!   5. HCI LE Extended Create Connection to the coupling address on a raw HCI socket. The
 //!      kernel only connects to devices its scan reported (mgmt Pair Device, an L2CAP
 //!      connect and BlueZ's Device1.Connect all go through hci_connect_le_scan), and the
 //!      pen's advert, directed to the host for about 1 s, was never reported by a scan here.
 //!      No connection: "no-answer", nothing else is done
-//!   6. MGMT Pair Device (NoInputNoOutput): LE legacy OOB pairing, the pen gives LTK and IRK
+//!   6. MGMT Pair Device (NoInputNoOutput): LE legacy OOB pairing, the pen gives LTK and IRK.
+//!      Refused (the pen confirmed with another key, or answered without the OOB flag): the
+//!      cover is asked again and 4 to 6 are repeated with the same key, three times in all;
+//!      the pen then has that key from the attempt before
 //!   7. drop the Temporary Key, Trusted on, wait for BlueZ's HID-over-GATT node
 //!
 //! bluetoothd keeps running: it gets the connection through its ATT listener and the keys
@@ -189,6 +196,10 @@ mod linux {
     const PROBE_WAIT: Duration = Duration::from_secs(8);
     /// `Status::result` and the error of a connection the pen did not take
     const NO_ANSWER: &str = "no-answer";
+    /// error of a pairing the pen refused (Pair Device: authentication failed)
+    const REFUSED: &str = "Pair Device: authentication failed";
+    /// between the attempts of one coupling
+    const ATTEMPT_PAUSE: Duration = Duration::from_secs(3);
 
     fn log(msg: impl std::fmt::Display) {
         eprintln!("sp9-helperd: pen coupling: {msg}");
@@ -243,6 +254,9 @@ mod linux {
         auth_failed: Vec<Addr>,
         /// devices that gave a long term key since the last look
         new_ltk: Vec<Addr>,
+        /// the device being paired: a request to confirm its pairing is refused at once (the
+        /// pairing is not using the key then; bluetoothd would ask an agent)
+        pairing: Option<Addr>,
         /// devices whose link went down for another reason since the last look
         disconnected: Vec<Addr>,
     }
@@ -254,6 +268,7 @@ mod linux {
                 auth_failed: Vec::new(),
                 new_ltk: Vec::new(),
                 disconnected: Vec::new(),
+                pairing: None,
             })
         }
 
@@ -272,6 +287,10 @@ mod linux {
                     }
                     Some((HCI_INDEX, Event::AuthFailed { addr, .. })) => self.auth_failed.push(addr),
                     Some((HCI_INDEX, Event::NewLongTermKey { addr })) => self.new_ltk.push(addr),
+                    Some((HCI_INDEX, Event::UserConfirmRequest { addr, addr_type })) if self.pairing == Some(addr) => {
+                        log("the pen answered without the key (pairing without OOB): refused");
+                        let _ = self.sock.write_all(&bt::user_confirm_neg_reply(HCI_INDEX, &addr, addr_type));
+                    }
                     Some((HCI_INDEX, Event::Disconnected { addr, reason: bt::DISCONN_AUTH_FAILURE, .. })) => self.auth_failed.push(addr),
                     Some((HCI_INDEX, Event::Disconnected { addr, .. })) => self.disconnected.push(addr),
                     _ => {}
@@ -418,6 +437,7 @@ mod linux {
         drop(raw);
         log("connected, pairing");
         let cmd = bt::pair_device(HCI_INDEX, addr, bt::ADDR_LE_RANDOM, bt::IO_NO_INPUT_NO_OUTPUT);
+        mgmt.pairing = Some(*addr);
         // Pair Device answers "success" at once, without pairing, while the kernel has not set up the
         // security manager channel of a connection that has just come up. The proof of a pairing with
         // bonding is the pen's long term key.
@@ -432,6 +452,9 @@ mod linux {
                 let un = bt::unpair_device(HCI_INDEX, addr, bt::ADDR_LE_RANDOM, false);
                 mgmt.command(bt::OP_UNPAIR_DEVICE, &un, Duration::from_secs(5)).map_err(|e| format!("Unpair Device: {e}"))?;
                 status = mgmt.command(bt::OP_PAIR_DEVICE, &cmd, PAIR_WAIT).map_err(|e| format!("Pair Device: {e}"))?.0;
+            }
+            if status == bt::STATUS_AUTH_FAILED {
+                return Err(REFUSED.into());
             }
             if status != bt::STATUS_SUCCESS {
                 return Err(format!("Pair Device: {}", bt::status_name(status)));
@@ -456,19 +479,28 @@ mod linux {
     /// How a connection to a bonded pen ends when the kernel is not given the key the cover
     /// hands the pen: the stored bond has to carry the link. bluetoothd gets the link through
     /// its ATT listener and encrypts it with the stored key by itself; this only watches.
-    fn probe(bz: &Bluez, cover: &CoverPen, dev: &mut std::fs::File, mgmt: &mut Mgmt, seen: &Seen, addr: &Addr) -> cover::Probe {
+    fn probe(
+        bz: &Bluez,
+        cover: &CoverPen,
+        dev: &mut std::fs::File,
+        mgmt: &mut Mgmt,
+        keys: &mut cover::PendingKeys,
+        seen: &Seen,
+        addr: &Addr,
+    ) -> cover::Probe {
         let _ = mgmt.drain(None);
         mgmt.auth_failed.clear();
         mgmt.disconnected.clear();
-        let _ = mgmt.drain(None);
-        mgmt.auth_failed.clear();
-        mgmt.disconnected.clear();
-        // the pen only advertises once it has been handed a key; this one is never used
-        let connected = random_key().map_err(|e| format!("key: {e}")).and_then(|tk| cover.key_report(seen, &tk)).and_then(|report| {
-            let mut raw = open_raw()?;
-            dev.write_all(&report).map_err(|e| format!("Output {}: {e}", cover::OUTPUT_KEY))?;
-            connect(&mut raw, addr)
-        });
+        // the pen only advertises once it has been handed a key. The kernel does not get it, but
+        // the pen keeps it for its next pairing: it is pending from here on
+        let connected =
+            keys.key_for(addr, random_key).map_err(|e| format!("key: {e}")).and_then(|(tk, _)| cover.key_report(seen, &tk)).and_then(
+                |report| {
+                    let mut raw = open_raw()?;
+                    dev.write_all(&report).map_err(|e| format!("Output {}: {e}", cover::OUTPUT_KEY))?;
+                    connect(&mut raw, addr)
+                },
+            );
         if let Err(e) = connected {
             if e != NO_ANSWER {
                 log(format!("probe: {e}"));
@@ -508,6 +540,8 @@ mod linux {
         cover: &CoverPen,
         dev: &mut std::fs::File,
         mgmt: &mut Mgmt,
+        keys: &mut cover::PendingKeys,
+        host: &Addr,
         seen: &Seen,
         addr: &Addr,
         replace: bool,
@@ -527,20 +561,44 @@ mod linux {
         if pairable == Some(false) {
             bz.set_bool(ADAPTER, "org.bluez.Adapter1", "Pairable", true)?;
         }
-        let tk = random_key().map_err(|e| format!("key: {e}"))?;
+        let (tk, pending) = keys.key_for(addr, random_key).map_err(|e| format!("key: {e}"))?;
+        log(if pending { "using the key the pen was handed before (no pairing has used it)" } else { "a new key" });
         let add = bt::add_remote_oob(HCI_INDEX, addr, bt::ADDR_LE_RANDOM, &tk);
-        let r = match mgmt.command(bt::OP_ADD_REMOTE_OOB_DATA, &add, Duration::from_secs(5)) {
-            Ok((bt::STATUS_SUCCESS, _)) => pair(cover, dev, mgmt, seen, addr, &tk),
-            Ok((bt::STATUS_INVALID_PARAMS, _)) => Err("unsupported-kernel".to_string()),
-            Ok((s, _)) => Err(format!("Add Remote OOB Data: {}", bt::status_name(s))),
-            Err(e) => Err(format!("Add Remote OOB Data: {e}")),
-        };
         let clear = bt::add_remote_oob(HCI_INDEX, addr, bt::ADDR_LE_RANDOM, &[0; 16]);
-        if let Err(e) = mgmt.command(bt::OP_ADD_REMOTE_OOB_DATA, &clear, Duration::from_secs(5)) {
-            log(format!("dropping the key: {e}"));
-        }
-        if pairable == Some(false) {
-            let _ = bz.set_bool(ADAPTER, "org.bluez.Adapter1", "Pairable", false);
+        let mut seen = seen.clone();
+        let mut attempt = 0;
+        let r = loop {
+            let r = match mgmt.command(bt::OP_ADD_REMOTE_OOB_DATA, &add, Duration::from_secs(5)) {
+                Ok((bt::STATUS_SUCCESS, _)) => pair(cover, dev, mgmt, &seen, addr, &tk),
+                Ok((bt::STATUS_INVALID_PARAMS, _)) => Err("unsupported-kernel".to_string()),
+                Ok((s, _)) => Err(format!("Add Remote OOB Data: {}", bt::status_name(s))),
+                Err(e) => Err(format!("Add Remote OOB Data: {e}")),
+            };
+            mgmt.pairing = None;
+            if let Err(e) = mgmt.command(bt::OP_ADD_REMOTE_OOB_DATA, &clear, Duration::from_secs(5)) {
+                log(format!("dropping the key: {e}"));
+            }
+            let refused = r.as_ref().is_err_and(|e| e == REFUSED);
+            if !cover::retry_pairing(refused, attempt) {
+                break r;
+            }
+            attempt += 1;
+            log(format!(
+                "the pen refused the pairing: it pairs with the key it was handed the time before; attempt {} of {} with the same key",
+                attempt + 1,
+                cover::COUPLE_ATTEMPTS
+            ));
+            // the refused link goes down by itself; then the cover is asked for the pen again
+            wait_for(Duration::from_secs(8), || !bz.connected(addr));
+            std::thread::sleep(ATTEMPT_PAUSE);
+            match seen_again(shared, cover, dev, host, addr) {
+                Ok(Some(again)) => seen = again,
+                Ok(None) => break Err("the pen refused the pairing and the cover does not announce it any more".into()),
+                Err(e) => break Err(e),
+            }
+        };
+        if r.is_ok() {
+            keys.paired(addr);
         }
         r?;
         log(format!("paired with {masked}"));
@@ -580,6 +638,8 @@ mod linux {
         failed_at: HashMap<Addr, Instant>,
         coupled_at: HashMap<Addr, Instant>,
         probed_at: HashMap<Addr, Instant>,
+        /// keys written to the cover that no pairing has used up; never logged
+        keys: cover::PendingKeys,
     }
 
     /// Feature 112 and 86: the cover announces a seated pen at once and later ones by itself.
@@ -588,6 +648,31 @@ mod linux {
         let hostr = cover.host_report(host)?;
         shared.b.hid.set_feature(&cover.node, &cap).map_err(|e| format!("Feature {}: {e}", cover::FEATURE_CAPABILITY))?;
         shared.b.hid.set_feature(&cover.node, &hostr).map_err(|e| format!("Feature {}: {e}", cover::FEATURE_HOST))
+    }
+
+    /// Ask the cover for the pen once more (Feature 86) and wait for it to announce this pen.
+    fn seen_again(shared: &Shared, cover: &CoverPen, dev: &mut std::fs::File, host: &Addr, addr: &Addr) -> Result<Option<Seen>, String> {
+        let mut buf = [0u8; 64];
+        while matches!(dev.read(&mut buf), Ok(n) if n > 0) {}
+        announce(shared, cover, host)?;
+        let end = Instant::now() + CONFIRM_WAIT;
+        loop {
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Ok(None);
+            }
+            if !poll_in(&[dev], left).map_err(|e| format!("{}: {e}", cover.node))?[0] {
+                continue;
+            }
+            while let Ok(n) = dev.read(&mut buf) {
+                if n == 0 {
+                    return Err(format!("{}: gone", cover.node));
+                }
+                if let Some(seen) = cover.parse_seen(&buf[..n]).filter(|s| cover::seen_address(s, host) == *addr) {
+                    return Ok(Some(seen));
+                }
+            }
+        }
     }
 
     /// One life of the cover node; returns when the node goes away, on an error (the text)
@@ -728,7 +813,7 @@ mod linux {
                         log(format!(
                             "{masked} has a bond and is not connected: probing it (a key to the cover only, connection, no pairing)"
                         ));
-                        let outcome = probe(&bz, cover, &mut dev, &mut mgmt, &seen, &addr);
+                        let outcome = probe(&bz, cover, &mut dev, &mut mgmt, &mut mem.keys, &seen, &addr);
                         mgmt.auth_failed.clear();
                         while matches!(dev.read(&mut buf), Ok(n) if n > 0) {}
                         mem.probed_at.insert(addr, Instant::now());
@@ -767,7 +852,7 @@ mod linux {
                     (false, _, false) => "no bond: coupling",
                 };
                 log(format!("pen in the cover slot, coupling address {masked}, {why}"));
-                let r = couple(shared, &bz, cover, &mut dev, &mut mgmt, &seen, &addr, replace);
+                let r = couple(shared, &bz, cover, &mut dev, &mut mgmt, &mut mem.keys, &host, &seen, &addr, replace);
                 // the attempt's own failures are not a stale bond
                 mgmt.auth_failed.clear();
                 // what the cover sent meanwhile belongs to this attempt
@@ -789,6 +874,14 @@ mod linux {
                             log("this kernel does not take a Temporary Key (Add Remote OOB Data: invalid parameters; kernel patch 0023)");
                             e
                         } else {
+                            if e == REFUSED {
+                                // the pen has the key now: the next attempt, with the same key, can match
+                                log(format!(
+                                    "{masked} refused every attempt; asking the cover again in {} s, with the same key",
+                                    RETRY_AFTER.as_secs()
+                                ));
+                                retry_at = Some(Instant::now() + RETRY_AFTER + Duration::from_secs(1));
+                            }
                             format!("failed: {e}")
                         }
                     }

@@ -247,6 +247,47 @@ pub fn after_probe(p: Probe) -> (&'static str, bool) {
     }
 }
 
+/// The keys written to the cover (Output 111) that no pairing has used up yet, by coupling
+/// address. The pen pairs with the key it was handed the time before, not the one written a
+/// moment before the connection (measured: four couplings with a fresh key each failed with
+/// "Confirm value failed", and repeating the same 16 bytes paired at once). So a key that was
+/// written stays the key to use until a pairing succeeds with it: a coupling after a probe,
+/// or after a failed attempt, writes the same bytes again.
+#[derive(Default)]
+pub struct PendingKeys(std::collections::HashMap<Addr, [u8; 16]>);
+
+impl PendingKeys {
+    /// The key to write for this pen now: the pending one, else `fresh()`, which becomes
+    /// pending. The flag says whether it was pending already.
+    pub fn key_for(&mut self, addr: &Addr, fresh: impl FnOnce() -> std::io::Result<[u8; 16]>) -> std::io::Result<([u8; 16], bool)> {
+        if let Some(k) = self.0.get(addr) {
+            return Ok((*k, true));
+        }
+        let k = fresh()?;
+        self.0.insert(*addr, k);
+        Ok((k, false))
+    }
+
+    /// A pairing went through with the pending key: the pen has used it up.
+    pub fn paired(&mut self, addr: &Addr) {
+        self.0.remove(addr);
+    }
+
+    pub fn has(&self, addr: &Addr) -> bool {
+        self.0.contains_key(addr)
+    }
+}
+
+/// How often one coupling connects and pairs before it gives up.
+pub const COUPLE_ATTEMPTS: u32 = 3;
+
+/// After attempt `attempt` (0-based) failed: go round again with the same key? Only for a
+/// pairing the pen refused (it used another key: the one from the write before); a pen that
+/// does not answer, or any other error, ends the coupling.
+pub fn retry_pairing(authentication_failed: bool, attempt: u32) -> bool {
+    authentication_failed && attempt + 1 < COUPLE_ATTEMPTS
+}
+
 /// SHA-1 (FIPS 180-4); only for the address derivation above.
 pub fn sha1(msg: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
@@ -415,6 +456,39 @@ mod tests {
         assert_eq!(on_seated(SeatedPen { stale: true, failed_recently: true, ..bonded }), Seated::Skip);
         assert_eq!(on_seated(SeatedPen { stale: true, failed_recently: true, requested: true, ..bonded }), Seated::Replace);
         assert_eq!(on_seated(SeatedPen { requested: true, forced: true, ..bonded }), Seated::Replace);
+    }
+
+    #[test]
+    fn a_written_key_stays_until_a_pairing_used_it() {
+        let a = parse_addr("ED:08:D9:17:E1:E7").unwrap();
+        let b = parse_addr("C3:D5:15:AC:4B:7E").unwrap();
+        let mut keys = PendingKeys::default();
+        assert!(!keys.has(&a));
+        // a probe writes a key: it is pending
+        assert_eq!(keys.key_for(&a, || Ok([1; 16])).unwrap(), ([1; 16], false));
+        assert!(keys.has(&a));
+        // the coupling after it, and every retry, write the same bytes; nothing new is made
+        for _ in 0..3 {
+            assert_eq!(keys.key_for(&a, || panic!("a pending key is reused")).unwrap(), ([1; 16], true));
+        }
+        // another pen has its own
+        assert_eq!(keys.key_for(&b, || Ok([2; 16])).unwrap(), ([2; 16], false));
+        // only a pairing clears it; the next coupling starts with a new key
+        keys.paired(&a);
+        assert!(!keys.has(&a) && keys.has(&b));
+        assert_eq!(keys.key_for(&a, || Ok([3; 16])).unwrap(), ([3; 16], false));
+        // no random data: nothing becomes pending
+        keys.paired(&a);
+        assert!(keys.key_for(&a, || Err(std::io::Error::other("no random data"))).is_err());
+        assert!(!keys.has(&a));
+    }
+
+    #[test]
+    fn a_refused_pairing_is_tried_again_with_the_same_key() {
+        assert_eq!(COUPLE_ATTEMPTS, 3);
+        assert!(retry_pairing(true, 0) && retry_pairing(true, 1));
+        assert!(!retry_pairing(true, 2), "the third failure is the result");
+        assert!(!retry_pairing(false, 0), "no answer or another error is not retried");
     }
 
     #[test]
