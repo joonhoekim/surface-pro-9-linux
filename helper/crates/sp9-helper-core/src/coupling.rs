@@ -8,11 +8,19 @@
 //!
 //! - Everything that can fail without the pen (the kernel refusing the key, packing the
 //!   report, the raw socket) is done before an existing bond is dropped.
-//! - The key reaches the pen 0.4 to 1 s after it was written to the cover, and the pen takes
-//!   the connection before that. A pairing started earlier meets a pen without the key (its
-//!   response has no OOB flag) or with the previous one (Confirm value failed). So the first
-//!   Pair Device waits, and a refused pairing is repeated with the same key on the same link:
-//!   the link stays up after a failed pairing.
+//! - The pen takes the key from the cover only while it is not connected, and that takes
+//!   longer than the time between a write and a connection made right after it (inferred;
+//!   measured: a coupling that wrote the key and connected at once was refused, by a pen
+//!   without the key or with an earlier one, whether or not the key was repeated). So the
+//!   key is handed over first, without connecting (the priming write); 2.5 s later the cover
+//!   is asked again, the same key written again, and only then the connection made. That
+//!   paired at the first try, three times out of three.
+//! - After the connection the first Pair Device goes out after 0.4 s: bluetoothd starts a
+//!   pairing of its own on a new link about a second after the connection, and with a kernel
+//!   that forgets the key once it was used that pairing would use it up.
+//! - A refused pairing gets one repeat on the link, then the round ends; the next round
+//!   starts 20 s later with the priming write again (rounds a few seconds apart all failed,
+//!   an attempt 25 s later went through).
 //! - The kernel (patch 0023 as revised) forgets the key once a pairing used it: it is given
 //!   again before every Pair Device. An older build keeps it; giving it again does no harm.
 //! - bluetoothd starts a pairing of its own on a new link about a second after the
@@ -26,20 +34,22 @@ use crate::btmgmt::{self, Event};
 use crate::cover::Addr;
 use std::time::Duration;
 
-/// The pen gets the key this long after Output 111 at the latest (measured: 0.4 to 1 s).
-pub const KEY_SETTLE: Duration = Duration::from_millis(1000);
-/// Between two Pair Device on one link.
+/// Between the priming write (the key to the cover, no connection) and asking the cover again.
+pub const PRIME_WAIT: Duration = Duration::from_millis(2500);
+/// Between the connection and the first Pair Device.
+pub const KEY_SETTLE: Duration = Duration::from_millis(400);
+/// Before the one repeat of a refused pairing on the same link.
 pub const PAIR_PAUSE: Duration = Duration::from_millis(1000);
-/// Pair Device on one link, at most.
-pub const PAIR_ATTEMPTS: u32 = 4;
+/// Pair Device the pen may refuse on one link.
+pub const PAIR_ATTEMPTS: u32 = 2;
 /// The long term key event comes with the reply of a pairing that went through.
 pub const LTK_WAIT: Duration = Duration::from_secs(2);
 /// Someone else's pairing is under way (Busy): its key is waited for this long.
 pub const BUSY_WAIT: Duration = Duration::from_secs(5);
-/// Rounds of one coupling: asking the cover again, writing the key again.
-pub const ROUNDS: u32 = crate::cover::COUPLE_ATTEMPTS;
-/// Before the cover is asked again.
-pub const ROUND_PAUSE: Duration = Duration::from_secs(3);
+/// Rounds of one coupling, each beginning with the priming write.
+pub const ROUNDS: u32 = 2;
+/// Between two rounds.
+pub const ROUND_PAUSE: Duration = Duration::from_secs(20);
 
 /// Why a coupling ended without a bond.
 #[derive(Clone, Debug, PartialEq)]
@@ -109,16 +119,12 @@ pub trait Ops {
     fn announce(&mut self) -> Result<bool, Fail>;
 }
 
-/// Pair Device on a link that is up, until the pen gives its key. Ok(false): refused every
-/// time, or the link went down.
+/// Pair Device on a link that is up, until the pen gives its key. Ok(false): refused, or
+/// the link went down.
 fn pair_on_link(ops: &mut dyn Ops) -> Result<bool, Fail> {
-    // the key is still on its way to the pen
     ops.pause(KEY_SETTLE);
-    let mut unpaired = false;
-    for attempt in 0..PAIR_ATTEMPTS {
-        if attempt > 0 {
-            ops.pause(PAIR_PAUSE);
-        }
+    let (mut refused, mut unpaired, mut empty) = (0, false, 0);
+    loop {
         // bluetoothd's own pairing may have got there first
         if ops.key_arrived(Duration::ZERO) {
             return Ok(true);
@@ -136,7 +142,12 @@ fn pair_on_link(ops: &mut dyn Ops) -> Result<bool, Fail> {
                 }
                 // the kernel answers "success" without pairing while the security manager channel
                 // of a fresh link is not up
-                ops.log(&format!("Pair Device returned without a key (attempt {})", attempt + 1));
+                empty += 1;
+                ops.log(&format!("Pair Device returned without a key ({empty})"));
+                if empty >= 3 {
+                    return Ok(false);
+                }
+                ops.pause(KEY_SETTLE);
             }
             PairReply::AlreadyPaired => {
                 if ops.key_arrived(LTK_WAIT) {
@@ -152,15 +163,15 @@ fn pair_on_link(ops: &mut dyn Ops) -> Result<bool, Fail> {
             }
             PairReply::Busy => {
                 ops.log("another pairing is under way: waiting for its key");
-                if ops.key_arrived(BUSY_WAIT) {
-                    return Ok(true);
-                }
+                return Ok(ops.key_arrived(BUSY_WAIT));
             }
             PairReply::AuthFailed => {
-                ops.log(&format!(
-                    "the pen refused the pairing (attempt {} of {PAIR_ATTEMPTS} on this link): the key had not reached it",
-                    attempt + 1
-                ));
+                refused += 1;
+                ops.log(&format!("the pen refused the pairing ({refused} of {PAIR_ATTEMPTS} on this link)"));
+                if refused >= PAIR_ATTEMPTS {
+                    return Ok(ops.key_arrived(Duration::ZERO));
+                }
+                ops.pause(PAIR_PAUSE);
             }
             PairReply::NotConnected => {
                 ops.log("the link went down");
@@ -170,7 +181,6 @@ fn pair_on_link(ops: &mut dyn Ops) -> Result<bool, Fail> {
             PairReply::Other(s) => return Err(Fail::Other(format!("Pair Device: {}", btmgmt::status_name(s)))),
         }
     }
-    Ok(ops.key_arrived(Duration::ZERO))
 }
 
 fn rounds(ops: &mut dyn Ops, replace: bool) -> Result<(), Fail> {
@@ -180,7 +190,7 @@ fn rounds(ops: &mut dyn Ops, replace: bool) -> Result<(), Fail> {
     }
     for round in 0..ROUNDS {
         if round > 0 {
-            ops.log(&format!("asking the cover again, same key (round {} of {ROUNDS})", round + 1));
+            ops.log(&format!("round {} of {ROUNDS} in {} s", round + 1, ROUND_PAUSE.as_secs()));
             ops.pause(ROUND_PAUSE);
             if ops.key_arrived(Duration::ZERO) {
                 return Ok(());
@@ -189,13 +199,23 @@ fn rounds(ops: &mut dyn Ops, replace: bool) -> Result<(), Fail> {
                 return Err(Fail::Other("the pen refused the pairing and the cover does not announce it any more".into()));
             }
         }
-        ops.write_key()?;
         // never a second connection on a link that is up
         if ops.connected() {
             ops.log("the link is up: pairing on it");
-        } else if !ops.connect()? {
-            return Err(Fail::NoAnswer);
+            ops.write_key()?;
         } else {
+            // the pen takes the key only while it is not connected, and not at once: hand it over,
+            // wait, ask the cover again, write the same key again, then connect
+            ops.log("handing the key to the pen through the cover (no connection yet)");
+            ops.write_key()?;
+            ops.pause(PRIME_WAIT);
+            if !ops.announce()? {
+                return Err(Fail::Other("the cover does not announce the pen any more".into()));
+            }
+            ops.write_key()?;
+            if !ops.connect()? {
+                return Err(Fail::NoAnswer);
+            }
             ops.log("connected, pairing");
         }
         if pair_on_link(ops)? {
@@ -280,6 +300,10 @@ mod tests {
         pairs: usize,
         clock: Duration,
         key_in_kernel: bool,
+        key_added: bool,
+        /// when each write to the cover happened, and which key it carried
+        times: Vec<Duration>,
+        keys_written: Vec<u8>,
     }
 
     impl Fake {
@@ -314,6 +338,7 @@ mod tests {
                 return Err(Fail::UnsupportedKernel);
             }
             self.key_in_kernel = true;
+            self.key_added = true;
             Ok(())
         }
         fn clear_key(&mut self) {
@@ -333,7 +358,10 @@ mod tests {
             Ok(())
         }
         fn write_key(&mut self) -> Result<(), Fail> {
+            assert!(self.key_added, "the kernel gets the key before the cover does");
             self.call("write_key");
+            self.times.push(self.clock);
+            self.keys_written.push(1);
             Ok(())
         }
         fn connect(&mut self) -> Result<bool, Fail> {
@@ -365,61 +393,78 @@ mod tests {
         }
     }
 
+    /// The order that paired three times out of three on the device: the key to the cover
+    /// first, without a connection; 2.5 s; the cover asked again; the same key again; then the
+    /// connection and, 0.4 s later, Pair Device with the key in the kernel.
     #[test]
-    fn a_plain_coupling() {
+    fn a_primed_coupling() {
         let mut f = Fake::new();
         f.replies = [PairReply::Success].into();
         f.key_with_pair = Some(1);
         assert_eq!(couple(&mut f, false), Ok(()));
-        assert_eq!(f.calls, ["add_key", "prepare", "write_key", "connect", "add_key", "pair", "clear_key"]);
-        assert!(f.clock >= KEY_SETTLE, "the key is given time to reach the pen before the first Pair Device");
+        assert_eq!(f.calls, ["add_key", "prepare", "write_key", "announce", "write_key", "connect", "add_key", "pair", "clear_key"]);
+        assert_eq!(f.times[0], Duration::ZERO, "the priming write");
+        assert_eq!(f.times[1], PRIME_WAIT, "the second write, after the wait and the cover's new announcement");
+        assert_eq!(f.clock, PRIME_WAIT + KEY_SETTLE);
+        assert_eq!(f.keys_written, [1, 1], "the same key in both writes");
     }
 
-    /// The device after round 5: the first Pair Device meets a pen without the key; the same
-    /// key on the same link a second later works. No second connection, no new key.
+    /// A refused pairing: one repeat on the link with the key given to the kernel again, then
+    /// the round ends; the next one starts 20 s later with the priming write again.
     #[test]
-    fn a_refused_pairing_is_repeated_on_the_same_link() {
+    fn a_refused_pairing() {
+        // the repeat goes through: no second connection
+        let mut f = Fake::new();
+        f.replies = [PairReply::AuthFailed, PairReply::Success].into();
+        f.key_with_pair = Some(2);
+        assert_eq!(couple(&mut f, false), Ok(()));
+        assert_eq!((f.count("connect"), f.count("write_key"), f.count("pair"), f.count("announce")), (1, 2, 2, 1));
+        assert_eq!(f.count("add_key"), 3, "before the coupling and before every Pair Device");
+        // refused twice, the link went down: round 2 primes again, 20 s later
+        let mut f = Fake::new();
+        f.replies = [PairReply::AuthFailed, PairReply::AuthFailed, PairReply::Success].into();
+        f.link_down_after = Some(2);
+        f.key_with_pair = Some(3);
+        assert_eq!(couple(&mut f, false), Ok(()));
+        assert_eq!((f.count("connect"), f.count("write_key"), f.count("pair")), (2, 4, 3));
+        assert_eq!(f.count("announce"), 3, "round 1 priming, round 2 start, round 2 priming");
+        assert!(f.times[2] - f.times[1] >= ROUND_PAUSE, "{:?}", f.times);
+        assert_eq!(f.times[3] - f.times[2], PRIME_WAIT);
+        assert_eq!(f.keys_written, [1, 1, 1, 1], "the pending key stays");
+        // refused to the end: two rounds, two Pair Device each, and that is all
+        let mut f = Fake::new();
+        f.link_down_after = Some(2);
+        assert_eq!(couple(&mut f, false), Err(Fail::Refused));
+        assert_eq!(f.count("pair"), (ROUNDS * PAIR_ATTEMPTS) as usize);
+        assert_eq!(f.calls.last().unwrap(), "clear_key");
+    }
+
+    /// The link stayed up after the refusals: round 2 pairs on it without a second Create
+    /// Connection (review item 9); there is no priming on a link that is up.
+    #[test]
+    fn no_second_connection_on_a_link_that_is_up() {
         let mut f = Fake::new();
         f.replies = [PairReply::AuthFailed, PairReply::AuthFailed, PairReply::Success].into();
         f.key_with_pair = Some(3);
         assert_eq!(couple(&mut f, false), Ok(()));
-        assert_eq!((f.count("connect"), f.count("write_key"), f.count("pair"), f.count("announce")), (1, 1, 3, 0));
-        assert_eq!(f.count("add_key"), 4, "the key goes to the kernel again before every Pair Device");
-        assert_eq!(f.calls.last().unwrap(), "clear_key");
+        assert_eq!((f.count("connect"), f.count("write_key")), (1, 3));
+        // a link that is up from the start (no bond, connected)
+        let mut f = Fake::new();
+        f.connected = true;
+        f.replies = [PairReply::Success].into();
+        f.key_with_pair = Some(1);
+        assert_eq!(couple(&mut f, false), Ok(()));
+        assert_eq!((f.count("connect"), f.count("write_key"), f.count("announce")), (0, 1, 0));
     }
 
-    /// Refused on the link every time: the cover is asked again and the key written again;
-    /// the link is still up, so there is no second Create Connection (review item 9).
     #[test]
-    fn then_the_cover_is_asked_again_without_a_second_connection() {
+    fn the_cover_stops_announcing() {
+        // after the priming write: nothing is connected
         let mut f = Fake::new();
-        f.key_with_pair = Some(PAIR_ATTEMPTS as usize + 2);
-        f.replies = std::iter::repeat_n(PairReply::AuthFailed, PAIR_ATTEMPTS as usize + 1).chain([PairReply::Success]).collect();
-        assert_eq!(couple(&mut f, false), Ok(()));
-        assert_eq!((f.count("connect"), f.count("announce"), f.count("write_key")), (1, 1, 2));
-        // refused to the end
-        let mut f = Fake::new();
-        assert_eq!(couple(&mut f, false), Err(Fail::Refused));
-        assert_eq!((f.count("connect"), f.count("pair")), (1, (ROUNDS * PAIR_ATTEMPTS) as usize));
-        assert_eq!(f.count("announce"), ROUNDS as usize - 1);
-        assert_eq!(f.calls.last().unwrap(), "clear_key");
-    }
-
-    /// The link went down after the refusal: the next round connects again.
-    #[test]
-    fn a_link_that_went_down_is_made_again() {
-        let mut f = Fake::new();
-        f.replies = [PairReply::AuthFailed, PairReply::Success].into();
-        f.link_down_after = Some(1);
-        f.key_with_pair = Some(2);
-        assert_eq!(couple(&mut f, false), Ok(()));
-        assert_eq!((f.count("connect"), f.count("announce"), f.count("write_key")), (2, 1, 2));
-        // and when the cover does not announce the pen any more
-        let mut f = Fake::new();
-        f.link_down_after = Some(1);
         f.announces = false;
         assert!(matches!(couple(&mut f, false), Err(Fail::Other(_))));
-        assert_eq!(f.count("connect"), 1);
+        assert_eq!((f.count("connect"), f.count("write_key")), (0, 1));
+        assert_eq!(f.calls.last().unwrap(), "clear_key");
     }
 
     /// bluetoothd pairs on the new link by itself; with the key in the kernel its pairing
@@ -429,18 +474,18 @@ mod tests {
         // Busy: its pairing is under way, the key comes
         let mut f = Fake::new();
         f.replies = [PairReply::Busy].into();
-        f.key_at = Some(KEY_SETTLE + Duration::from_secs(1));
+        f.key_at = Some(PRIME_WAIT + KEY_SETTLE + Duration::from_secs(1));
         assert_eq!(couple(&mut f, false), Ok(()));
         assert_eq!((f.count("pair"), f.count("unpair")), (1, 0));
         // Already Paired with the key event: paired, nothing to unpair
         let mut f = Fake::new();
         f.replies = [PairReply::AuthFailed, PairReply::AlreadyPaired].into();
-        f.key_at = Some(KEY_SETTLE + PAIR_PAUSE + Duration::from_millis(500));
+        f.key_at = Some(PRIME_WAIT + KEY_SETTLE + PAIR_PAUSE + Duration::from_millis(500));
         assert_eq!(couple(&mut f, false), Ok(()));
         assert_eq!(f.count("unpair"), 0, "a bond that was just made is not removed");
         // the key came before our Pair Device was even sent
         let mut f = Fake::new();
-        f.key_at = Some(Duration::from_millis(500));
+        f.key_at = Some(PRIME_WAIT + Duration::from_millis(200));
         assert_eq!(couple(&mut f, false), Ok(()));
         assert_eq!(f.count("pair"), 0);
     }
@@ -487,20 +532,14 @@ mod tests {
         let mut f = Fake::new();
         f.answers = false;
         assert_eq!(couple(&mut f, false), Err(Fail::NoAnswer));
-        assert_eq!(f.calls, ["add_key", "prepare", "write_key", "connect", "clear_key"]);
-        // a link that is up already (no bond, connected): pairing on it
+        assert_eq!(f.calls, ["add_key", "prepare", "write_key", "announce", "write_key", "connect", "clear_key"]);
+        // "success" without a key (the security manager channel was not up): again, and that
+        // does not count as a refusal
         let mut f = Fake::new();
-        f.connected = true;
-        f.replies = [PairReply::Success].into();
-        f.key_with_pair = Some(1);
+        f.replies = [PairReply::Success, PairReply::Success, PairReply::AuthFailed, PairReply::Success].into();
+        f.key_with_pair = Some(4);
         assert_eq!(couple(&mut f, false), Ok(()));
-        assert_eq!((f.count("connect"), f.count("write_key")), (0, 1));
-        // "success" without a key (the security manager channel was not up): again
-        let mut f = Fake::new();
-        f.replies = [PairReply::Success, PairReply::Success].into();
-        f.key_with_pair = Some(2);
-        assert_eq!(couple(&mut f, false), Ok(()));
-        assert_eq!(f.count("pair"), 2);
+        assert_eq!((f.count("pair"), f.count("connect")), (4, 1));
         for (reply, text) in [(PairReply::Timeout, "no reply"), (PairReply::Other(0x03), "failed")] {
             let mut f = Fake::new();
             f.replies = [reply].into();

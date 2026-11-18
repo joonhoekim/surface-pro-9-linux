@@ -302,9 +302,6 @@ impl PendingKeys {
     }
 }
 
-/// How often one coupling asks the cover and writes the key before it gives up.
-pub const COUPLE_ATTEMPTS: u32 = 3;
-
 /// SHA-1 (FIPS 180-4); only for the address derivation above.
 pub fn sha1(msg: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
