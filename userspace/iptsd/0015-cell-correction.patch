@@ -1,0 +1,271 @@
+Optionally correct the antenna period error of the centroid (TipSignalReference, CellCorrection*, CentroidFadeMin/Max)
+
+The position between two antennas is interpolated from three amplitudes, and neither the parabola
+nor the centroid is linear in the true position: a slow straight diagonal stroke comes out wavy,
+once per antenna. Measured on the Surface Pro 9 with the Slim Pen 2 on strokes drawn along a
+straight edge (deviation from the fitted line, split into the part that repeats with the X and
+with the Y antennas, amplitude in mm on that axis):
+
+- parabola on X, centroid on Y: X 0.09 at 20 degrees of tilt and light pressure, 0.26 .. 0.35 at
+  45 degrees, 0.45 on a very slow stroke at 40 degrees with firm pressure (plus 0.32 twice per
+  antenna, where a neighbour antenna in antiphase pins the parabola to the cell border for a third
+  of the cell); Y 0.06 .. 0.24.
+- centroid on both axes: X 0.04 .. 0.28, Y 0.05 .. 0.23, almost only the first harmonic.
+
+Nothing else contributes: the tilt offset and its smoothing add 0.002 .. 0.013 mm, the jitter lock
+0 .. 0.014 mm, and the two MPP v2 position windows agree.
+
+The error of the centroid follows the strength of the tip signal (which grows with pressure and
+tilt), not the tilt or the pressure alone: its cosine part goes from +0.05 mm at the signal level
+of light writing through zero to -0.27 mm at 1.7 times that level, the same on both axes. With
+
+  level = summed amplitude of the three antennas, mean of both axes / TipSignalReference
+  error = (Cos + CosLevel (level - 1)) cos(2 pi x) + (Sin + SinLevel (level - 1)) sin(2 pi x)
+        + Cos2 cos(4 pi x) + Sin2 sin(4 pi x)                      (x and error in antennas)
+
+subtracted from the centroid (per axis: CellCorrectionCosX .. CellCorrectionSin2Y, level limited
+to CellCorrectionLevelMin .. Max), the same strokes give X 0.003 .. 0.030 mm and Y 0.008 ..
+0.034 mm, and the deviation from the line falls from 0.07 .. 0.35 mm rms to 0.02 .. 0.07 mm, which
+is what the hand contributes. With the coefficients fitted without the group of strokes that is
+evaluated: 0.005 .. 0.045 mm per axis at levels of 1.2 and more, 0.05 .. 0.06 mm at level 1.0
+(two strokes; without the correction 0.06 .. 0.09 mm there). The coefficients are a least squares
+fit to 14 strokes at four combinations of tilt and pressure, all with the pen leaning to the lower
+right; light upright writing and other leaning directions are not covered by a measurement.
+
+The correction applies where the centroid is selected (PositionCentroidX / Y), needs no state and
+adds no delay. Everything else of a sample is unchanged.
+
+CentroidFadeMin / CentroidFadeMax: with a weak signal (pen hovering high) the centroid jumps, one
+position in ten is off by 0.4 .. 1.3 mm from its neighbours where the parabola is off by 0.14 ..
+0.28 mm. Below CentroidFadeMin (in units of TipSignalReference) the parabola is used, above
+CentroidFadeMax the centroid, in between a mix.
+
+All off by default.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 9fbfb53..5064819 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -105,6 +105,23 @@ public:
+ 	usize dft_pressure_bit_min_mag = 3000;
+ 	bool dft_pressure_ramp = false;
+ 	bool dft_zero_force_pressure = false;
++	f64 dft_tip_signal_reference = 0;
++	f64 dft_centroid_fade_min = 0;
++	f64 dft_centroid_fade_max = 0;
++	f64 dft_cell_correction_level_min = 1;
++	f64 dft_cell_correction_level_max = 1;
++	f64 dft_cell_correction_cos_x = 0;
++	f64 dft_cell_correction_sin_x = 0;
++	f64 dft_cell_correction_cos_level_x = 0;
++	f64 dft_cell_correction_sin_level_x = 0;
++	f64 dft_cell_correction_cos2_x = 0;
++	f64 dft_cell_correction_sin2_x = 0;
++	f64 dft_cell_correction_cos_y = 0;
++	f64 dft_cell_correction_sin_y = 0;
++	f64 dft_cell_correction_cos_level_y = 0;
++	f64 dft_cell_correction_sin_level_y = 0;
++	f64 dft_cell_correction_cos2_y = 0;
++	f64 dft_cell_correction_sin2_y = 0;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index dcc80cd..4db29d0 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -714,11 +714,39 @@ private:
+ 		const f64 cx = this->interpolate_centroid(dft.x[0]);
+ 		const f64 cy = this->interpolate_centroid(dft.y[0]);
+ 
+-		if (m_config.dft_position_centroid_x && !std::isnan(cx))
+-			x = cx;
++		/*
++		 * The centroid is corrected for its antenna period error (see
++		 * correct_cell), and with a weak signal, where it is noisy, the parabola
++		 * takes over (see centroid_weight).
++		 */
++		const f64 level = this->tip_level(dft.x[0], dft.y[0]);
++		const f64 weight = this->centroid_weight(level);
++
++		if (m_config.dft_position_centroid_x && !std::isnan(cx)) {
++			const f64 c = this->correct_cell(cx,
++			                                 level,
++			                                 m_config.dft_cell_correction_cos_x,
++			                                 m_config.dft_cell_correction_sin_x,
++			                                 m_config.dft_cell_correction_cos_level_x,
++			                                 m_config.dft_cell_correction_sin_level_x,
++			                                 m_config.dft_cell_correction_cos2_x,
++			                                 m_config.dft_cell_correction_sin2_x);
++
++			x = weight >= 1 ? c : x + (weight * (c - x));
++		}
+ 
+-		if (m_config.dft_position_centroid_y && !std::isnan(cy))
+-			y = cy;
++		if (m_config.dft_position_centroid_y && !std::isnan(cy)) {
++			const f64 c = this->correct_cell(cy,
++			                                 level,
++			                                 m_config.dft_cell_correction_cos_y,
++			                                 m_config.dft_cell_correction_sin_y,
++			                                 m_config.dft_cell_correction_cos_level_y,
++			                                 m_config.dft_cell_correction_sin_level_y,
++			                                 m_config.dft_cell_correction_cos2_y,
++			                                 m_config.dft_cell_correction_sin2_y);
++
++			y = weight >= 1 ? c : y + (weight * (c - y));
++		}
+ 
+ 		this->update_tilt(dft, cx, cy, width, height);
+ 
+@@ -1886,6 +1914,122 @@ private:
+ 		return row.first + maxi + ((w[2] - w[0]) / sum);
+ 	}
+ 
++	/*!
++	 * The strength of the tip signal relative to TipSignalReference.
++	 *
++	 * The strength is the summed amplitude of the three antennas around the strongest
++	 * one, averaged over both axes. Unlike the amplitude of a single antenna it changes
++	 * little with the position of the tip between two antennas. The reference is meant
++	 * to be the strength with the tip resting lightly on the glass.
++	 *
++	 * @param[in] row_x The measurements of the tip signal on the X axis.
++	 * @param[in] row_y The measurements of the tip signal on the Y axis.
++	 * @return The level (1 = the reference), or NaN without TipSignalReference.
++	 */
++	[[nodiscard]] f64 tip_level(const ipts::protocol::dft::Row &row_x,
++	                            const ipts::protocol::dft::Row &row_y) const
++	{
++		const f64 reference = m_config.dft_tip_signal_reference;
++
++		if (reference <= 0)
++			return casts::to<f64>(NAN);
++
++		const u8 mid = ipts::protocol::dft::NUM_COMPONENTS / 2;
++
++		f64 sum = 0;
++
++		for (const ipts::protocol::dft::Row &row : {row_x, row_y}) {
++			for (u8 i = 0; i < 3; i++) {
++				const u8 j = casts::to<u8>(mid + i - 1);
++
++				sum += std::hypot(row.real.at(j), row.imag.at(j));
++			}
++		}
++
++		return sum / 2 / reference;
++	}
++
++	/*!
++	 * How much of the position is taken from the centroid, the rest is the parabola.
++	 *
++	 * Measured on the Surface Pro 9 with the Slim Pen 2: while the pen hovers high, with
++	 * less than about half of the signal it has on the glass, the centroid jumps (one
++	 * position in ten is off by 0.4 to 1.3 mm from the two around it, with the parabola
++	 * by 0.14 to 0.28 mm). Between CentroidFadeMin and CentroidFadeMax (in units of
++	 * TipSignalReference) the two are mixed.
++	 *
++	 * @param[in] level The strength of the tip signal, see tip_level().
++	 * @return The weight of the centroid, 0 to 1.
++	 */
++	[[nodiscard]] f64 centroid_weight(const f64 level) const
++	{
++		const f64 min = m_config.dft_centroid_fade_min;
++		const f64 max = m_config.dft_centroid_fade_max;
++
++		if (std::isnan(level) || max <= 0)
++			return 1;
++
++		if (max <= min)
++			return level >= max ? 1 : 0;
++
++		return std::clamp((level - min) / (max - min), 0.0, 1.0);
++	}
++
++	/*!
++	 * Removes the error of the centroid that repeats with the antenna pitch.
++	 *
++	 * The centroid of three antennas is not linear in the position of the tip between
++	 * two antennas. Measured on the Surface Pro 9 with the Slim Pen 2 on slow straight
++	 * diagonal strokes: the reported line deviates from a straight one once per antenna,
++	 * by 0.04 to 0.28 mm per axis (with the parabola 0.06 to 0.45 mm), and the size and
++	 * the sign of the deviation follow the strength of the tip signal, which grows with
++	 * the pressure and the tilt of the pen. It is described by the first two harmonics
++	 * of the antenna period, with the first one linear in the signal level:
++	 *
++	 *   error = (cos + cos_level * (level - 1)) * cos(2 pi x)
++	 *         + (sin + sin_level * (level - 1)) * sin(2 pi x)
++	 *         + cos2 * cos(4 pi x) + sin2 * sin(4 pi x)
++	 *
++	 * The level is limited to CellCorrectionLevelMin .. Max, the range in which the
++	 * coefficients were measured. They belong to a sensor and a pen. The antennas are
++	 * at the integer positions, so the correction is continuous where the strongest
++	 * antenna changes.
++	 *
++	 * @param[in] pos The centroid on one axis, in antennas.
++	 * @param[in] level The strength of the tip signal, see tip_level().
++	 * @param[in] cos The coefficient of cos(2 pi x) at level 1, in antennas.
++	 * @param[in] sin The coefficient of sin(2 pi x) at level 1.
++	 * @param[in] cos_level The change of the cosine coefficient per unit of level.
++	 * @param[in] sin_level The change of the sine coefficient per unit of level.
++	 * @param[in] cos2 The coefficient of cos(4 pi x).
++	 * @param[in] sin2 The coefficient of sin(4 pi x).
++	 * @return The corrected position on that axis, in antennas.
++	 */
++	[[nodiscard]] f64 correct_cell(const f64 pos,
++	                               const f64 level,
++	                               const f64 cos,
++	                               const f64 sin,
++	                               const f64 cos_level,
++	                               const f64 sin_level,
++	                               const f64 cos2,
++	                               const f64 sin2) const
++	{
++		if (std::isnan(level))
++			return pos;
++
++		const f64 min = m_config.dft_cell_correction_level_min;
++		const f64 max = std::max(min, m_config.dft_cell_correction_level_max);
++
++		const f64 l = std::clamp(level, min, max) - 1;
++		const f64 phase = 2 * M_PI * pos;
++
++		const f64 error = ((cos + (cos_level * l)) * std::cos(phase)) +
++		                  ((sin + (sin_level * l)) * std::sin(phase)) +
++		                  (cos2 * std::cos(2 * phase)) + (sin2 * std::sin(2 * phase));
++
++		return pos - error;
++	}
++
+ 	/*!
+ 	 * Calculates the position of the ring signal.
+ 	 *
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 32d00e8..ac6fc21 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -228,6 +228,23 @@ private:
+ 		this->get(ini, "DFT", "PressureBitMinMag", m_config.dft_pressure_bit_min_mag);
+ 		this->get(ini, "DFT", "PressureRamp", m_config.dft_pressure_ramp);
+ 		this->get(ini, "DFT", "ZeroForcePressure", m_config.dft_zero_force_pressure);
++		this->get(ini, "DFT", "TipSignalReference", m_config.dft_tip_signal_reference);
++		this->get(ini, "DFT", "CentroidFadeMin", m_config.dft_centroid_fade_min);
++		this->get(ini, "DFT", "CentroidFadeMax", m_config.dft_centroid_fade_max);
++		this->get(ini, "DFT", "CellCorrectionLevelMin", m_config.dft_cell_correction_level_min);
++		this->get(ini, "DFT", "CellCorrectionLevelMax", m_config.dft_cell_correction_level_max);
++		this->get(ini, "DFT", "CellCorrectionCosX", m_config.dft_cell_correction_cos_x);
++		this->get(ini, "DFT", "CellCorrectionSinX", m_config.dft_cell_correction_sin_x);
++		this->get(ini, "DFT", "CellCorrectionCosLevelX", m_config.dft_cell_correction_cos_level_x);
++		this->get(ini, "DFT", "CellCorrectionSinLevelX", m_config.dft_cell_correction_sin_level_x);
++		this->get(ini, "DFT", "CellCorrectionCos2X", m_config.dft_cell_correction_cos2_x);
++		this->get(ini, "DFT", "CellCorrectionSin2X", m_config.dft_cell_correction_sin2_x);
++		this->get(ini, "DFT", "CellCorrectionCosY", m_config.dft_cell_correction_cos_y);
++		this->get(ini, "DFT", "CellCorrectionSinY", m_config.dft_cell_correction_sin_y);
++		this->get(ini, "DFT", "CellCorrectionCosLevelY", m_config.dft_cell_correction_cos_level_y);
++		this->get(ini, "DFT", "CellCorrectionSinLevelY", m_config.dft_cell_correction_sin_level_y);
++		this->get(ini, "DFT", "CellCorrectionCos2Y", m_config.dft_cell_correction_cos2_y);
++		this->get(ini, "DFT", "CellCorrectionSin2Y", m_config.dft_cell_correction_sin2_y);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);
