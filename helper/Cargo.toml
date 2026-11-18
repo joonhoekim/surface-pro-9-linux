@@ -2,10 +2,23 @@
 # Copyright (C) 2026 Joonhoe Kim
 [workspace]
 resolver = "2"
-members = ["crates/sp9-helper-core", "crates/sp9-helperd", "crates/sp9-ctl", "crates/sp9-settings"]
+members = [
+    "crates/sp9-helper-core",
+    "crates/sp9-helperd",
+    "crates/sp9-ctl",
+    "crates/sp9-settings",
+    "crates/sp9-digitizer",
+    "crates/sp9-digitizerd",
+]
 # `cargo build`/`test` without -p or --workspace leaves out the GTK app, so the daemon and the CLI
 # build without GTK development libraries.
-default-members = ["crates/sp9-helper-core", "crates/sp9-helperd", "crates/sp9-ctl"]
+default-members = [
+    "crates/sp9-helper-core",
+    "crates/sp9-helperd",
+    "crates/sp9-ctl",
+    "crates/sp9-digitizer",
+    "crates/sp9-digitizerd",
+]
 
 [workspace.package]
 version = "0.1.0"

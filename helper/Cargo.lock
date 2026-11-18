@@ -986,6 +986,26 @@ name = "sp9-ctl"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "sp9-digitizer",
+ "zbus",
+]
+
+[[package]]
+name = "sp9-digitizer"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "sp9-digitizerd"
+version = "0.1.0"
+dependencies = [
+ "futures-lite",
+ "libc",
+ "sp9-digitizer",
+ "toml 0.9.12+spec-1.1.0",
  "zbus",
 ]
 
@@ -995,6 +1015,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "serde",
+ "sp9-digitizer",
  "toml 0.9.12+spec-1.1.0",
 ]
 
@@ -1006,6 +1027,7 @@ dependencies = [
  "blocking",
  "futures-lite",
  "libc",
+ "sp9-digitizer",
  "sp9-helper-core",
  "zbus",
 ]

@@ -31,9 +31,9 @@ rustPlatform.buildRustPackage {
   buildAndTestSubdir = "helper";
 
   # sp9-settings is outside the workspace's default members (so the daemon builds without GTK);
-  # build and test every member here.
-  cargoBuildFlags = [ "--workspace" ];
-  cargoTestFlags = [ "--workspace" ];
+  # build and test every member here, except the digitizer daemon (nix/digitizerd.nix).
+  cargoBuildFlags = [ "--workspace" "--exclude" "sp9-digitizer" "--exclude" "sp9-digitizerd" ];
+  cargoTestFlags = [ "--workspace" "--exclude" "sp9-digitizer" "--exclude" "sp9-digitizerd" ];
 
   nativeBuildInputs = [ pkg-config wrapGAppsHook4 ];
   # patchShebangs (fixup) resolves post-install-check.sh's `#!/usr/bin/env bash` against bash.

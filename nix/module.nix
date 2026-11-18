@@ -18,6 +18,7 @@ let
   };
   penTools = pkgs.callPackage ./pen-tools.nix { };
   helper = pkgs.callPackage ./helper.nix { };
+  digitizerd = pkgs.callPackage ./digitizerd.nix { };
 
   # The file is the one install.sh applies; a parameter switched off below is dropped by its name.
   kernelParams = lib.filter
@@ -136,7 +137,20 @@ in
     touch.enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
-      description = "iptsd with userspace/platform/iptsd/surface-pro-9.conf.";
+      description = "Touch and pen from the digitizer's raw data, by the daemon chosen with touch.daemon.";
+    };
+
+    touch.daemon = lib.mkOption {
+      type = lib.types.enum [ "iptsd" "digitizerd" ];
+      default = "iptsd";
+      description = ''
+        Which daemon turns the digitizer's raw data into the touchscreen and the stylus.
+        "iptsd": pkgs.iptsd with the patches of userspace/iptsd and the preset
+        userspace/platform/iptsd/surface-pro-9.conf, one instance per hidraw node, started by
+        its udev rule. "digitizerd": sp9-digitizerd (helper/crates/sp9-digitizerd), one service that finds the node by its ID, keeps its input devices
+        across suspend, and takes setting changes from sp9-helperd over D-Bus without a restart;
+        iptsd is then neither built nor installed. The input devices have the same names with
+        both.'';
     };
 
     diagnostics.enable = lib.mkOption {
@@ -252,6 +266,11 @@ in
       the digitizer (sp9-ctl pen ink on; replaces pen.feedbackService), and coupling a pen put
       into the cover slot (sp9-ctl pen auto-couple on, or pen couple once), which needs
       hardware.bluetooth and kernel.enable (kernel/patches 0023)'';
+
+    digitizerd.package = lib.mkEnableOption ''
+      the sp9-digitizerd package (helper/crates/sp9-digitizerd) next to
+      iptsd: the daemon, its replay tool and its unit, which nothing starts. To run it instead
+      of iptsd set touch.daemon = "digitizerd"'';
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
@@ -278,7 +297,26 @@ in
       boot.kernelParams = kernelParams;
     })
 
+    (lib.mkIf (cfg.touch.enable && cfg.touch.daemon == "digitizerd") {
+      environment.systemPackages = [ digitizerd ];
+      systemd.packages = [ digitizerd ];
+      services.dbus.packages = [ digitizerd ];
+      # NixOS ignores [Install] of packaged units.
+      systemd.services.sp9-digitizerd.wantedBy = [ "multi-user.target" ];
+      # /dev/uinput is opened once, when the digitizer is first seen.
+      boot.kernelModules = [ "uinput" ];
+      # sp9-helperd keeps the touch and pen settings in a drop-in there, which the daemon reads
+      # when it starts; without iptsd's preset nothing else creates the directory.
+      systemd.tmpfiles.rules = [ "d /etc/iptsd.d 0755 root root -" ];
+    })
+
     (lib.mkIf cfg.touch.enable {
+      # libinput reads one override file. `text` is of type lines, so other modules can add to it.
+      environment.etc."libinput/local-overrides.quirks".text =
+        builtins.readFile (platform + "/libinput/sp9-stylus.quirks");
+    })
+
+    (lib.mkIf (cfg.touch.enable && cfg.touch.daemon == "iptsd") {
       services.iptsd.enable = true;
       # services.iptsd takes pkgs.iptsd. The pen processing patches of userspace/iptsd (each behaviour is
       # off unless a config turns it on: the preset and the helper's drop-in do).
@@ -299,9 +337,6 @@ in
       # A drop-in, loaded after /etc/iptsd.conf (services.iptsd.config) and only for 045E:0C52.
       # The preset directory is inside the iptsd store path.
       environment.etc."iptsd.d/surface-pro-9.conf".source = platform + "/iptsd/surface-pro-9.conf";
-      # libinput reads one override file. `text` is of type lines, so other modules can add to it.
-      environment.etc."libinput/local-overrides.quirks".text =
-        builtins.readFile (platform + "/libinput/sp9-stylus.quirks");
     })
 
     (lib.mkIf cfg.diagnostics.enable {
@@ -310,7 +345,7 @@ in
         i2c-tools intel-gpu-tools acpica-tools lm_sensors pciutils usbutils
       ]
       # services.iptsd only registers the unit and the udev rule of the package.
-      ++ lib.optional cfg.touch.enable iptsd;
+      ++ lib.optional (cfg.touch.enable && cfg.touch.daemon == "iptsd") iptsd;
     })
 
     (lib.mkIf cfg.speakers.enable {
@@ -383,6 +418,11 @@ in
         ];
         environment.SP9_PYTHON = "${pkgs.python3}/bin/python3";
       };
+    })
+
+    (lib.mkIf cfg.digitizerd.package {
+      environment.systemPackages = [ digitizerd ];
+      systemd.packages = [ digitizerd ];
     })
 
     (lib.mkIf cfg.pen.feedbackService {

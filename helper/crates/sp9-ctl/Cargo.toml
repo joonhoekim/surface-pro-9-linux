@@ -10,4 +10,5 @@ license.workspace = true
 
 [dependencies]
 zbus = { workspace = true, features = ["blocking-api"] }
+sp9-digitizer = { path = "../sp9-digitizer" }
 serde_json.workspace = true

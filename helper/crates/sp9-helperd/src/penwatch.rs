@@ -56,7 +56,7 @@ mod linux {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
-    const STYLUS_NAME: &str = "IPTSD Virtual Stylus";
+    use sp9_helper_core::input::STYLUS_NAME;
     const EVENT_SIZE: usize = std::mem::size_of::<libc::input_event>();
     /// poll timeout while the pen is away; also how fast a stop request is seen
     const IDLE_POLL_S: f64 = 0.25;

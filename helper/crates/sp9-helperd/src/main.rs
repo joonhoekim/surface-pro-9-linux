@@ -223,15 +223,8 @@ async fn run(no_polkit: bool, session: bool, fake: bool) -> zbus::Result<()> {
     let shared = Arc::new(shared);
 
     // the iptsd drop-in follows the settings (also after a manual edit of helper.toml)
-    let input = shared.cfg().input;
-    match input.iptsd.apply(&input.zero_force, &shared.root) {
-        Ok(true) => {
-            if let Err(e) = jobs::restart_iptsd_blocking() {
-                eprintln!("sp9-helperd: iptsd restart: {e}");
-            }
-        }
-        Ok(false) => {}
-        Err(e) => eprintln!("sp9-helperd: iptsd drop-in: {e}"),
+    if let Err(e) = ifaces::apply_iptsd(&shared) {
+        eprintln!("sp9-helperd: touch and pen settings: {e}");
     }
     if let Err(e) = shared.withdraw_stale_fan_request() {
         eprintln!("sp9-helperd: withdrawing the fan request: {e}");

@@ -709,9 +709,16 @@ impl Display {
 
 pub struct Input(pub Arc<Shared>);
 
-fn apply_iptsd(s: &Shared) -> Result<(), String> {
+/// Makes the touch and pen settings take effect. The drop-in is written in any case (whoever
+/// processes touch reads it when it starts). A running sp9-digitizerd takes the values over
+/// D-Bus and is never restarted; without it, iptsd is restarted when the file changed.
+pub(crate) fn apply_iptsd(s: &Shared) -> Result<(), String> {
     let input = s.cfg().input;
-    if input.iptsd.apply(&input.zero_force, &s.root).map_err(|e| format!("iptsd drop-in: {e}"))? {
+    let changed = input.iptsd.apply(&input.zero_force, &s.root).map_err(|e| format!("iptsd drop-in: {e}"))?;
+    if s.hardware && jobs::push_digitizer_blocking(&input.iptsd, &input.zero_force)? {
+        return Ok(());
+    }
+    if changed {
         jobs::restart_iptsd_blocking()?;
     }
     Ok(())

@@ -31,6 +31,7 @@
         kernel = pkgs.callPackage ./nix/kernel.nix { inherit linux-surface; };
         surface-pen-tools = pkgs.callPackage ./nix/pen-tools.nix { };
         sp9-helper = pkgs.callPackage ./nix/helper.nix { };
+        sp9-digitizerd = pkgs.callPackage ./nix/digitizerd.nix { };
       };
 
       # tools/linux/kmod-dev.sh: module rebuilds against the booted kernel. The kernel derivation's own
@@ -48,31 +49,38 @@
         hardeningDisable = [ "all" ];
       };
 
-      checks.${system} = {
-        inherit (self.packages.${system}) surface-pen-tools sp9-helper;
-        # The module with every option on. Only the system's drvPath is written, so building this
-        # check evaluates the kernel without building it.
-        module-eval = pkgs.writeText "surface-pro-9-module-eval" (builtins.unsafeDiscardStringContext
-          (nixpkgs.lib.nixosSystem {
-            modules = [
-              self.nixosModules.default
-              {
-                nixpkgs.hostPlatform = system;
-                system.stateVersion = nixpkgs.lib.trivial.release;
-                boot.loader.grub.enable = false;
-                fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; };
-                services.pipewire.enable = true;
-                hardware.surface-pro-9 = {
-                  enable = true;
-                  audio = { legacy = true; codecPatch = "pins"; };
-                  hibernateReboot = true;
-                  pen.connectService = true;
-                  pen.feedbackService = true;
-                  helper.enable = true;
-                };
-              }
-            ];
-          }).config.system.build.toplevel.drvPath);
-      };
+      checks.${system} =
+        let
+          # The module with every option on. Only the system's drvPath is written, so building
+          # the check evaluates the kernel without building it.
+          moduleEval = name: touchDaemon: pkgs.writeText name (builtins.unsafeDiscardStringContext
+            (nixpkgs.lib.nixosSystem {
+              modules = [
+                self.nixosModules.default
+                {
+                  nixpkgs.hostPlatform = system;
+                  system.stateVersion = nixpkgs.lib.trivial.release;
+                  boot.loader.grub.enable = false;
+                  fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; };
+                  services.pipewire.enable = true;
+                  hardware.surface-pro-9 = {
+                    enable = true;
+                    audio = { legacy = true; codecPatch = "pins"; };
+                    hibernateReboot = true;
+                    pen.connectService = true;
+                    pen.feedbackService = true;
+                    helper.enable = true;
+                    digitizerd.package = true;
+                    touch.daemon = touchDaemon;
+                  };
+                }
+              ];
+            }).config.system.build.toplevel.drvPath);
+        in
+        {
+          inherit (self.packages.${system}) surface-pen-tools sp9-helper sp9-digitizerd;
+          module-eval = moduleEval "surface-pro-9-module-eval" "iptsd";
+          module-eval-digitizerd = moduleEval "surface-pro-9-module-eval-digitizerd" "digitizerd";
+        };
     };
 }

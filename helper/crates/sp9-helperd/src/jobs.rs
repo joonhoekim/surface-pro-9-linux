@@ -67,6 +67,67 @@ pub fn restart_iptsd_blocking() -> Result<(), String> {
     Ok(())
 }
 
+/// Hands the touch and pen settings to sp9-digitizerd if it is on the system bus: it takes
+/// them while it runs, without a restart (a restart replaces its input devices, and
+/// applications keep stale state for the old ones). `Ok(false)`: it is not there, and the
+/// settings reach whoever processes touch through the drop-in.
+#[cfg(not(test))]
+pub fn push_digitizer_blocking(
+    iptsd: &sp9_helper_core::input::Iptsd,
+    zero_force: &sp9_helper_core::input::ZeroForce,
+) -> Result<bool, String> {
+    use sp9_digitizer::control::{self, Param, Value};
+    use std::collections::HashMap;
+    use zbus::zvariant::Value as V;
+
+    let dict = |params: &[(Param, Value)]| -> HashMap<&'static str, V<'static>> {
+        params
+            .iter()
+            .map(|&(p, v)| {
+                let value = match v {
+                    Value::Bool(b) => V::from(b),
+                    Value::Number(n) => V::from(n),
+                };
+                (p.name(), value)
+            })
+            .collect()
+    };
+    let sp9_helper_core::input::DigitizerParams { pen, touch } = sp9_helper_core::input::digitizer_params(iptsd, zero_force);
+
+    zbus::block_on(async {
+        let conn = zbus::Connection::system().await.map_err(|e| format!("system bus: {e}"))?;
+        let owned = conn
+            .call_method(
+                Some("org.freedesktop.DBus"),
+                "/org/freedesktop/DBus",
+                Some("org.freedesktop.DBus"),
+                "NameHasOwner",
+                &(control::BUS_NAME,),
+            )
+            .await
+            .and_then(|r| r.body().deserialize::<bool>())
+            .map_err(|e| format!("system bus: {e}"))?;
+        if !owned {
+            return Ok(false);
+        }
+        for (interface, params) in [(control::PEN_INTERFACE, dict(&pen)), (control::TOUCH_INTERFACE, dict(&touch))] {
+            conn.call_method(Some(control::BUS_NAME), control::OBJECT_PATH, Some(interface), "SetParams", &(params,))
+                .await
+                .map_err(|e| format!("sp9-digitizerd: {e}"))?;
+        }
+        Ok(true)
+    })
+}
+
+/// The tests have no system bus to talk to.
+#[cfg(test)]
+pub fn push_digitizer_blocking(
+    _iptsd: &sp9_helper_core::input::Iptsd,
+    _zero_force: &sp9_helper_core::input::ZeroForce,
+) -> Result<bool, String> {
+    Ok(false)
+}
+
 fn stamp() -> String {
     let s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     s.to_string()

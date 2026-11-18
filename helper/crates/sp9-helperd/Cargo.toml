@@ -10,6 +10,7 @@ license.workspace = true
 
 [dependencies]
 sp9-helper-core = { path = "../sp9-helper-core" }
+sp9-digitizer = { path = "../sp9-digitizer" }
 zbus.workspace = true
 async-io = "2"
 blocking = "1"

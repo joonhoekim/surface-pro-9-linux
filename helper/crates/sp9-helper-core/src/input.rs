@@ -16,6 +16,7 @@
 use crate::hid::{self, HidBackend, Kind};
 use crate::sys::{self, Root};
 use serde::{Deserialize, Serialize};
+use sp9_digitizer::control::{Param, Value as ParamValue};
 use std::io;
 use std::sync::{Arc, Mutex};
 
@@ -221,8 +222,8 @@ impl KbdBacklight {
 }
 
 pub const SYS_INPUT: &str = "/sys/class/input";
-/// iptsd's uinput device for touch (iptsd, src/apps/daemon/touch.hpp).
-pub const TOUCHSCREEN_NAME: &str = "IPTSD Virtual Touchscreen";
+/// The names of the virtual touchscreen and stylus (iptsd's, which sp9-digitizerd keeps).
+pub use sp9_digitizer::output::{STYLUS_NAME, TOUCHSCREEN_NAME};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputDev {
@@ -392,6 +393,36 @@ impl Default for ZeroForce {
     }
 }
 
+/// The touch and pen settings as sp9-digitizerd takes them while it runs (`SetParams` of its
+/// Pen and its Touch interface): the same values the drop-in holds, with the built-in ones
+/// where the helper sets none.
+pub fn digitizer_params(iptsd: &Iptsd, zero_force: &ZeroForce) -> DigitizerParams {
+    let preset = sp9_digitizer::Config::default();
+    let pen = vec![
+        (Param::ZeroForce, ParamValue::Bool(zero_force.enabled)),
+        (Param::ZeroForceEnter, ParamValue::Number(zero_force.enter_percent / 100.0)),
+        (Param::ZeroForceExit, ParamValue::Number(zero_force.exit_percent / 100.0)),
+        (Param::PressureFloor, ParamValue::Number(zero_force.floor_percent / 100.0)),
+        (Param::ZeroForceReference, ParamValue::Number(zero_force.reference)),
+    ];
+    let touch = vec![
+        (Param::ActivationThreshold, ParamValue::Number(iptsd.activation_threshold.unwrap_or(preset.touch.contacts.activation_threshold))),
+        (
+            Param::DeactivationThreshold,
+            ParamValue::Number(iptsd.deactivation_threshold.unwrap_or(preset.touch.contacts.deactivation_threshold)),
+        ),
+        (Param::DisableOnStylus, ParamValue::Bool(iptsd.disable_on_stylus.unwrap_or(preset.touch.disable_on_stylus))),
+    ];
+    DigitizerParams { pen, touch }
+}
+
+/// Settings for the two interfaces of sp9-digitizerd.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DigitizerParams {
+    pub pen: Vec<(Param, ParamValue)>,
+    pub touch: Vec<(Param, ParamValue)>,
+}
+
 impl ZeroForce {
     pub const ENTER_MAX: f64 = 150.0;
     pub const FLOOR_MAX: f64 = 50.0;
@@ -545,6 +576,31 @@ mod tests {
     #[test]
     fn no_cover() {
         assert!(find_kbd(&FakeHid::default()).is_none());
+    }
+
+    /// What goes to the running daemon is what the drop-in says, and the daemon accepts it.
+    #[test]
+    fn digitizer_params_follow_the_dropin() {
+        use sp9_digitizer::control::set_params;
+        let zf = ZeroForce { enabled: true, enter_percent: 85.0, exit_percent: 75.0, floor_percent: 3.0, reference: 13_430_000.0 };
+        let iptsd = Iptsd { activation_threshold: Some(22.0), deactivation_threshold: None, disable_on_stylus: Some(false) };
+        let DigitizerParams { pen, touch } = digitizer_params(&iptsd, &zf);
+
+        let mut pushed = sp9_digitizer::Config::default();
+        set_params(&mut pushed, &pen).unwrap();
+        set_params(&mut pushed, &touch).unwrap();
+        let mut read = sp9_digitizer::Config::default();
+        read.apply_iptsd_conf(&iptsd.render(&zf)).unwrap();
+        assert_eq!(pushed, read);
+        assert_eq!(pushed.touch.contacts.deactivation_threshold, 20.0);
+
+        // Back to the preset: the values the daemon was built with.
+        let DigitizerParams { pen, touch } = digitizer_params(&Iptsd::default(), &ZeroForce::default());
+        set_params(&mut pushed, &pen).unwrap();
+        set_params(&mut pushed, &touch).unwrap();
+        let mut read = sp9_digitizer::Config::default();
+        read.apply_iptsd_conf(&Iptsd::default().render(&ZeroForce::default())).unwrap();
+        assert_eq!(pushed, read);
     }
 
     #[test]

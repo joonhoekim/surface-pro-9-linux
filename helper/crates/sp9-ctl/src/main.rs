@@ -50,6 +50,9 @@ const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
                                          50..2000 mm/s (default 300, Windows' scale)
   pen dead-zone MM_S|off                 pen speeds below this count as standing still (0..100;
                                          Windows has about 15; default off)
+  pen status                             the pen settings, and from sp9-digitizerd (if it runs) the
+                                         live pen: in range, contact, tool, tip signal level, the
+                                         reference in force, counters
   pen zero-force [on|off]                the pen writes without force once its tip signal is strong
                                          enough (iptsd; small light handwriting loses strokes without)
   pen zero-force ENTER EXIT              contact begins at ENTER and ends below EXIT percent of the
@@ -175,6 +178,44 @@ impl Ctl {
             for (k, v) in p {
                 println!("{k:28} {}", text(&v));
             }
+        }
+    }
+
+    /// The properties of an interface of sp9-digitizerd, or nothing if it is not on the bus.
+    fn digitizer(&self, interface: &str) -> Option<Map<String, J>> {
+        use sp9_digitizer::control::{BUS_NAME, OBJECT_PATH};
+        let bus = Proxy::new(&self.conn, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus").ok()?;
+        if !bus.call::<_, _, bool>("NameHasOwner", &(BUS_NAME,)).unwrap_or(false) {
+            return None;
+        }
+        let p = Proxy::new(&self.conn, BUS_NAME, OBJECT_PATH, "org.freedesktop.DBus.Properties").ok()?;
+        let all: HashMap<String, OwnedValue> = p.call("GetAll", &(interface,)).ok()?;
+        let mut keys: Vec<&String> = all.keys().collect();
+        keys.sort();
+        Some(keys.into_iter().map(|k| (k.clone(), to_json(&all[k]))).collect())
+    }
+
+    /// The helper's pen settings and, from the digitizer daemon, the pen as it is now.
+    fn pen_status(&self) {
+        use sp9_digitizer::control::{DIAGNOSTICS_INTERFACE, PEN_INTERFACE};
+        let helper = self.props("Pen");
+        let live = self.digitizer(PEN_INTERFACE);
+        let counters = self.digitizer(DIAGNOSTICS_INTERFACE);
+        if self.json {
+            println!("{}", json!({ "Pen": helper, "Digitizer": live, "DigitizerDiagnostics": counters }));
+            return;
+        }
+        for (k, v) in &helper {
+            println!("{k:28} {}", text(v));
+        }
+        match (live, counters) {
+            (Some(live), counters) => {
+                println!("\nsp9-digitizerd");
+                for (k, v) in live.iter().chain(counters.iter().flatten()) {
+                    println!("{k:28} {}", text(v));
+                }
+            }
+            _ => println!("\nsp9-digitizerd is not on the bus (touch and pen are processed by iptsd, or not at all)"),
         }
     }
 
@@ -310,6 +351,7 @@ fn main() {
         },
         "pen" => match a(1).map(String::as_str) {
             None => c.show("Pen", &[]),
+            Some("status") => c.pen_status(),
             Some("ink") => c.act("Pen", "SetInkFeedback", &(onoff(a(2)),)),
             Some("intensity") => c.act("Pen", "SetIntensity", &(num::<u32>(a(2), "intensity"),)),
             Some("test") => c.act("Pen", "TestPulse", &()),
