@@ -430,7 +430,7 @@ mod tests {
         assert!(sink.packets.last().unwrap().starts_with("S 1:330:1 1:320:1"));
         sink.packets.clear();
         d.release(&mut sink);
-        assert_eq!(sink.packets, vec!["S 1:330:0 1:320:0 1:321:0 1:331:0", "T 1:330:0"]);
+        assert_eq!(sink.packets, vec!["S 1:330:0 3:24:0", "S 1:330:0 1:320:0 1:321:0 1:331:0", "T 1:330:0"]);
         // Nothing is left of the stream: the pen comes into range anew.
         assert!(!d.pen().sample().proximity);
         sink.packets.clear();

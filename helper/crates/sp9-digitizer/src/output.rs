@@ -200,12 +200,14 @@ pub struct StylusOutput {
     active: bool,
     /// Whether the last sample was of the eraser end.
     eraser: bool,
+    /// Whether the last packet had the tool touching.
+    contact: bool,
 }
 
 impl StylusOutput {
     pub fn new(config: &Config, geometry: &Geometry) -> StylusOutput {
         let (max_x, max_y) = stylus_range(geometry, config.pen.axis_resolution);
-        StylusOutput { max_x, max_y, active: false, eraser: false }
+        StylusOutput { max_x, max_y, active: false, eraser: false, contact: false }
     }
 
     pub fn active(&self) -> bool {
@@ -218,7 +220,26 @@ impl StylusOutput {
         // Switching tools within one packet confuses clients: a pen that is in range goes
         // out of range for the packet in which its tool changes. One that comes into range
         // starts with the tool it has.
+        let was_active = self.active;
         self.active = s.proximity && !(self.active && self.eraser != s.eraser);
+
+        // A tool that comes into range touching, or leaves range touching, does so in two
+        // packets: clients keep the tool's cursor when contact and range change at once.
+        if self.active && !was_active && s.contact {
+            sink.event(D, EV_KEY, BTN_TOUCH, 0);
+            sink.event(D, EV_KEY, BTN_TOOL_PEN, i32::from(!s.eraser));
+            sink.event(D, EV_KEY, BTN_TOOL_RUBBER, i32::from(s.eraser));
+            sink.event(D, EV_ABS, ABS_X, (s.x * f64::from(self.max_x)).round() as i32);
+            sink.event(D, EV_ABS, ABS_Y, (s.y * f64::from(self.max_y)).round() as i32);
+            sink.event(D, EV_ABS, ABS_PRESSURE, 0);
+            sink.sync(D);
+        }
+        if !self.active && self.contact {
+            sink.event(D, EV_KEY, BTN_TOUCH, 0);
+            sink.event(D, EV_ABS, ABS_PRESSURE, 0);
+            sink.sync(D);
+        }
+        self.contact = self.active && s.contact;
 
         if self.active {
             let (tilt_x, tilt_y) = tilt_xy(s.altitude, s.azimuth);
@@ -478,22 +499,27 @@ mod tests {
         let mut sink = Packets::default();
         let mut s = PenSample { proximity: true, contact: true, x: 0.5, y: 0.25, pressure: 0.5, ..PenSample::default() };
         out.update(&s, &mut sink);
-        assert_eq!(sink.packets[0], "S 1:330:1 1:320:1 1:321:0 1:331:0 3:0:13695 3:1:4565 3:24:2048 3:40:0 3:26:0 3:27:0");
-        // The tool changes while in range: one packet out of range, then the eraser.
+        // Coming into range touching: the tool first, the contact in the next packet.
+        assert_eq!(sink.packets[0], "S 1:330:0 1:320:1 1:321:0 3:0:13695 3:1:4565 3:24:0");
+        assert_eq!(sink.packets[1], "S 1:330:1 1:320:1 1:321:0 1:331:0 3:0:13695 3:1:4565 3:24:2048 3:40:0 3:26:0 3:27:0");
+        // The tool changes while in range: the contact ends, one packet out of range, then the eraser.
         s.eraser = true;
         out.update(&s, &mut sink);
-        assert_eq!(sink.packets[1], "S 1:330:0 1:320:0 1:321:0 1:331:0");
+        assert_eq!(sink.packets[2], "S 1:330:0 3:24:0");
+        assert_eq!(sink.packets[3], "S 1:330:0 1:320:0 1:321:0 1:331:0");
         assert!(!out.active());
         out.update(&s, &mut sink);
-        assert!(sink.packets[2].starts_with("S 1:330:1 1:320:0 1:321:1"));
+        assert!(sink.packets[4].starts_with("S 1:330:0 1:320:0 1:321:1"));
+        assert!(sink.packets[5].starts_with("S 1:330:1 1:320:0 1:321:1"));
         s.proximity = false;
         out.update(&s, &mut sink);
-        assert_eq!(sink.packets[3], "S 1:330:0 1:320:0 1:321:0 1:331:0");
+        assert_eq!(sink.packets[6], "S 1:330:0 3:24:0");
+        assert_eq!(sink.packets[7], "S 1:330:0 1:320:0 1:321:0 1:331:0");
         // Coming into range with the other end: announced as that at once.
         s.proximity = true;
         s.eraser = false;
         out.update(&s, &mut sink);
-        assert!(sink.packets[4].starts_with("S 1:330:1 1:320:1 1:321:0"));
+        assert!(sink.packets[9].starts_with("S 1:330:1 1:320:1 1:321:0"));
     }
 
     #[test]
