@@ -402,6 +402,13 @@ struct PenUi {
     test: gtk::Button,
     speed: adw::SwitchRow,
     dead_zone: adw::SwitchRow,
+    zero_force: adw::SwitchRow,
+    zf_enter: adw::SpinRow,
+    zf_exit: adw::SpinRow,
+    zf_floor: adw::SpinRow,
+    zf_reference: gtk::Label,
+    /// ZeroForceContact, enter, exit, floor, reference as the helper last reported them
+    zf: Cell<(bool, f64, f64, f64, f64)>,
     auto_couple: adw::SwitchRow,
     couple_state: gtk::Label,
     couple_row: adw::ActionRow,
@@ -725,6 +732,13 @@ fn build_pen() -> (gtk::ScrolledWindow, PenUi) {
     group_help(&g, tr("The pen plays its continuous vibrations only while the touch controller has a pen speed from the computer. With this on, the helper computes the speed from the pen's movement and sends it, as Windows does. It works while Ink Feedback is on. Do not run the separate surface-pen-feedback service at the same time."));
     let speed = switch(&g, tr("Send Pen Speed"), tr("Needed for the continuous vibration while writing"));
     let dead_zone = switch(&g, tr("Ignore Very Slow Movement"), tr("As on Windows: below about 15 mm/s the pen counts as standing still"));
+    let g = group(&b, tr("Writing Without Pressure"), tr("The pen writes as soon as its tip signal is strong enough, even when it reports no pressure. Small, light handwriting loses strokes without it."));
+    group_help(&g, tr("The thresholds are percentages of the tip signal the pen has while writing with pressure. Contact begins at the first and ends below the second. Low values can draw while the pen hovers very close to the glass: raise them then. Needs the patched iptsd; changing a value restarts iptsd, so touch and pen pause for a moment."));
+    let zero_force = switch(&g, tr("Write Without Pressure"), tr("Counts the pen as touching from its tip signal"));
+    let zf_enter = spin(&g, tr("Contact Begins At"), tr("Percent of the signal while writing with pressure"), 2.0, 150.0, 5.0);
+    let zf_exit = spin(&g, tr("Contact Ends Below"), tr("Percent; lower than the value above"), 1.0, 149.0, 5.0);
+    let zf_floor = spin(&g, tr("Lightest Pressure"), tr("Percent of the pressure range reported without pressure"), 0.0, 50.0, 1.0);
+    let zf_reference = info(&g, tr("Reference Signal"));
     let g = group(
         &b,
         tr("Pairing Through the Cover"),
@@ -735,7 +749,28 @@ fn build_pen() -> (gtk::ScrolledWindow, PenUi) {
     let couple_state = info(&g, tr("Last Pairing"));
     let (couple_row, couple) =
         button(&g, tr("Pair Now"), tr("Pairs the pen that is in the cover; a pairing that works is kept"), tr("Pair"));
-    (sw, PenUi { avail, ink, strength, waveform, eraser, test, speed, dead_zone, auto_couple, couple_state, couple_row, couple })
+    let zf = Cell::new((true, 20.0, 10.0, 4.0, 0.0));
+    let ui = PenUi {
+        avail,
+        ink,
+        strength,
+        waveform,
+        eraser,
+        test,
+        speed,
+        dead_zone,
+        zero_force,
+        zf_enter,
+        zf_exit,
+        zf_floor,
+        zf_reference,
+        zf,
+        auto_couple,
+        couple_state,
+        couple_row,
+        couple,
+    };
+    (sw, ui)
 }
 
 fn build_diag(toasts: &adw::ToastOverlay) -> (gtk::ScrolledWindow, DiagUi) {
@@ -1280,6 +1315,29 @@ impl Ui {
             }
         });
         self.switch_sends(&self.pen.speed, "Pen", "SetSpeedFeedback");
+        // the zero-force rows send the whole setting; exit is kept below enter
+        let send = |ui: &Rc<Ui>| {
+            let p = &ui.pen;
+            let (_, _, _, _, reference) = p.zf.get();
+            let enter = p.zf_enter.value().round().clamp(2.0, 150.0);
+            let exit = p.zf_exit.value().round().clamp(1.0, enter - 1.0);
+            let z = (p.zero_force.is_active(), enter, exit, p.zf_floor.value().round().clamp(0.0, 50.0), reference);
+            ui.debounce("pen-zero-force", "Input", move |ui| ui.call_simple("Input", "SetZeroForce", z));
+        };
+        let ui = self.clone();
+        self.pen.zero_force.connect_active_notify(move |_| {
+            if !ui.updating.get() {
+                send(&ui);
+            }
+        });
+        for r in [&self.pen.zf_enter, &self.pen.zf_exit, &self.pen.zf_floor] {
+            let ui = self.clone();
+            r.connect_value_notify(move |_| {
+                if !ui.updating.get() {
+                    send(&ui);
+                }
+            });
+        }
         self.confirm_on(
             &self.pen.auto_couple,
             "Pen",
@@ -1641,6 +1699,27 @@ impl Ui {
     }
 
     fn update_input(&self, x: &Props) {
+        // the pen's zero-force contact lives on the Input object (it is an iptsd setting) and
+        // is shown on the pen page
+        if let (Some(on), Some(enter), Some(exit), Some(floor), Some(reference)) = (
+            dbus::b(x, "ZeroForceContact"),
+            dbus::f(x, "ZeroForceEnter"),
+            dbus::f(x, "ZeroForceExit"),
+            dbus::f(x, "ContactMinPressure"),
+            dbus::f(x, "ZeroForceReference"),
+        ) {
+            let p = &self.pen;
+            p.zf.set((on, enter, exit, floor, reference));
+            set_switch(&p.zero_force, Some(on));
+            set_spin(&p.zf_enter, Some(enter));
+            set_spin(&p.zf_exit, Some(exit));
+            set_spin(&p.zf_floor, Some(floor));
+            for r in [&p.zf_enter, &p.zf_exit, &p.zf_floor] {
+                r.set_sensitive(on);
+            }
+            let reference = if reference > 0.0 { format!("{reference}") } else { tr("Learnt while writing").to_string() };
+            set_text(&p.zf_reference, &reference);
+        }
         let i = &self.input;
         let avail = dbus::b(x, "KeyboardBacklightAvailable").unwrap_or(false);
         i.kbd.set_visible(avail);

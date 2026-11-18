@@ -43,6 +43,19 @@ touch_off_when_display_off = false
 # deactivation_threshold = 20.0
 # disable_on_stylus = true
 
+# The pen's zero-force contact in iptsd (needs the iptsd patch of this repository; another
+# iptsd ignores the keys): the pen counts as touching when its tip signal reaches enter_percent
+# of the level it has while writing with force, and stops below exit_percent
+# (1 <= exit < enter <= 150). Low values can ink while the pen hovers very close: raise them then.
+# floor_percent: pressure reported in contact without force (0-50 % of the range).
+# reference: 0 = iptsd learns the level from strokes written with force after each start.
+[input.zero_force]
+enabled = true
+enter_percent = 20.0
+exit_percent = 10.0
+floor_percent = 4.0
+reference = 0.0
+
 [pen]
 # Pen haptics as a whole. On: the inking waveform starts on tip down and stops on tip up (as
 # Windows applications do), and with speed_feedback the pen speed goes to the digitizer.

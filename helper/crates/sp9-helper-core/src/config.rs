@@ -5,7 +5,7 @@
 //! default. Experimental features are off by default.
 
 use crate::display::PsrMode;
-use crate::input::Iptsd;
+use crate::input::{Iptsd, ZeroForce};
 use crate::perf::{self, Limits};
 use crate::sys;
 use serde::{Deserialize, Serialize};
@@ -71,6 +71,8 @@ pub struct Display {
 pub struct Input {
     pub touch_off_when_display_off: bool,
     pub iptsd: Iptsd,
+    /// the pen's zero-force contact in iptsd (written into the same drop-in)
+    pub zero_force: ZeroForce,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -212,6 +214,10 @@ impl Config {
         if let Err(e) = self.input.iptsd.validate() {
             w.push(format!("input.iptsd: {e}, ignored"));
             self.input.iptsd = Iptsd::default();
+        }
+        if let Err(e) = self.input.zero_force.validate() {
+            w.push(format!("input.zero_force: {e}, ignored"));
+            self.input.zero_force = ZeroForce::default();
         }
         let (lo, hi) = crate::pen::INTENSITY_RANGE;
         self.pen.intensity = self.pen.intensity.clamp(lo, hi);
@@ -372,6 +378,34 @@ mod tests {
         assert_eq!(bad, t.root.p("/etc/sp9/helper.toml.bad"));
         Config::default().save(&p).unwrap();
         assert_eq!(t.read("/etc/sp9/helper.toml.bad"), text.trim());
+    }
+
+    #[test]
+    fn zero_force_settings() {
+        let t = FakeTree::new("cfg7");
+        let p = t.root.p("/etc/sp9/helper.toml");
+        let (c, _) = Config::load(&p);
+        assert_eq!(
+            c.input.zero_force,
+            ZeroForce { enabled: true, enter_percent: 20.0, exit_percent: 10.0, floor_percent: 4.0, reference: 0.0 }
+        );
+        t.file(
+            "/etc/sp9/helper.toml",
+            "[input.zero_force]\nenabled = false\nenter_percent = 60.0\nexit_percent = 45.0\nreference = 900.0\n",
+        );
+        let (c, w) = Config::load(&p);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(
+            c.input.zero_force,
+            ZeroForce { enabled: false, enter_percent: 60.0, exit_percent: 45.0, floor_percent: 4.0, reference: 900.0 }
+        );
+        c.save(&p).unwrap();
+        assert_eq!(Config::load(&p), (c, vec![]));
+        t.file("/etc/sp9/helper.toml", "[input]\ntouch_off_when_display_off = true\n[input.zero_force]\nenter_percent = 5.0\n");
+        let (c, w) = Config::load(&p);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(c.input.touch_off_when_display_off);
+        assert_eq!(c.input.zero_force, ZeroForce::default());
     }
 
     /// A table this version has no field for (a file written by another version) is neither an

@@ -710,7 +710,8 @@ impl Display {
 pub struct Input(pub Arc<Shared>);
 
 fn apply_iptsd(s: &Shared) -> Result<(), String> {
-    if s.cfg().input.iptsd.apply(&s.root).map_err(|e| format!("iptsd drop-in: {e}"))? {
+    let input = s.cfg().input;
+    if input.iptsd.apply(&input.zero_force, &s.root).map_err(|e| format!("iptsd drop-in: {e}"))? {
         jobs::restart_iptsd_blocking()?;
     }
     Ok(())
@@ -734,6 +735,11 @@ impl Snapshot for Input {
         "IptsdActivationThreshold",
         "IptsdDeactivationThreshold",
         "IptsdDisableOnStylus",
+        "ZeroForceContact",
+        "ZeroForceEnter",
+        "ZeroForceExit",
+        "ContactMinPressure",
+        "ZeroForceReference",
     ];
     fn snapshot(&self) -> String {
         // the LED level is a cheap sysfs read; hidraw level changes come from kbdwatch
@@ -814,6 +820,58 @@ impl Input {
     ) -> fdo::Result<()> {
         polkit::check(conn, &hdr, "touch", self.0.no_polkit).await?;
         persist(self.0.update(|c| c.input.touch_off_when_display_off = on))?;
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
+    }
+
+    /// the pen counts as touching without force once its tip signal is strong enough (iptsd)
+    #[zbus(property)]
+    fn zero_force_contact(&self) -> bool {
+        self.0.cfg().input.zero_force.enabled
+    }
+    /// contact begins at this percentage of the tip signal of writing with force
+    #[zbus(property)]
+    fn zero_force_enter(&self) -> f64 {
+        self.0.cfg().input.zero_force.enter_percent
+    }
+    /// contact ends below this percentage
+    #[zbus(property)]
+    fn zero_force_exit(&self) -> f64 {
+        self.0.cfg().input.zero_force.exit_percent
+    }
+    /// pressure reported while in contact without force, percent of the range
+    #[zbus(property)]
+    fn contact_min_pressure(&self) -> f64 {
+        self.0.cfg().input.zero_force.floor_percent
+    }
+    /// the reference level, 0 = learnt by iptsd from strokes written with force
+    #[zbus(property)]
+    fn zero_force_reference(&self) -> f64 {
+        self.0.cfg().input.zero_force.reference
+    }
+
+    /// The pen's zero-force contact in iptsd: on or off, enter and exit thresholds in percent
+    /// of the reference (1 <= exit < enter <= 150), the pressure floor in percent (0..50) and
+    /// the reference level (0 = learn). Writes /etc/iptsd.d/zz-sp9-helper.conf and restarts
+    /// iptsd when the file changed.
+    #[allow(clippy::too_many_arguments)]
+    async fn set_zero_force(
+        &self,
+        enabled: bool,
+        enter: f64,
+        exit: f64,
+        floor: f64,
+        reference: f64,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "touch", self.0.no_polkit).await?;
+        let z = input::ZeroForce { enabled, enter_percent: enter, exit_percent: exit, floor_percent: floor, reference };
+        z.validate().map_err(invalid)?;
+        persist(self.0.update(|c| c.input.zero_force = z))?;
+        let s = self.0.clone();
+        blocking::unblock(move || apply_iptsd(&s)).await.map_err(failed)?;
         invalidate(&em, Self::IFACE, Self::PROPS).await;
         Ok(())
     }

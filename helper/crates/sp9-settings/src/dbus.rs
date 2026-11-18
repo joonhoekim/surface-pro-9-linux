@@ -180,6 +180,7 @@ pub fn setting_name(method: &str) -> &'static str {
         "SetKeyboardBacklight" => n_("Keyboard Backlight"),
         "SetTouchOffWhenDisplayOff" => n_("Touch Screen"),
         "SetIptsd" => n_("Touch Sensitivity"),
+        "SetZeroForce" => n_("Writing Without Pressure"),
         "SetInkFeedback" | "SetIntensity" | "SetStrength" | "SetInkWaveform" | "SetEraserClick" | "TestPulse" => n_("Pen Haptics"),
         "SetSpeedFeedback" | "SetSpeedFullScale" | "SetSpeedDeadZone" => n_("Writing Texture"),
         "SetAutoCouple" | "Couple" => n_("Pen Pairing"),

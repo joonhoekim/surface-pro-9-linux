@@ -325,15 +325,9 @@ impl Iptsd {
         Ok(())
     }
 
-    /// The drop-in's text, None when nothing differs from the preset.
-    pub fn render(&self) -> Option<String> {
-        if self.is_empty() {
-            return None;
-        }
-        let mut s = String::from(
-            "# Written by sp9-helperd (sp9-ctl iptsd). Loaded after the platform preset;\n\
-             # removed when every value is back to the preset.\n[Device]\nVendor = 0x045E\nProduct = 0x0C52\n",
-        );
+    /// The sections of the drop-in for these values; empty when nothing differs from the preset.
+    fn sections(&self) -> String {
+        let mut s = String::new();
         if let Some(b) = self.disable_on_stylus {
             s.push_str(&format!("\n[Touchscreen]\nDisableOnStylus = {b}\n"));
         }
@@ -346,19 +340,86 @@ impl Iptsd {
                 s.push_str(&format!("DeactivationThreshold = {d}\n"));
             }
         }
-        Some(s)
+        s
     }
 
-    /// Write or remove the drop-in. Returns whether the file changed.
-    pub fn apply(&self, root: &Root) -> io::Result<bool> {
+    /// The drop-in's text: these values and the pen's zero-force contact settings.
+    pub fn render(&self, zero_force: &ZeroForce) -> String {
+        format!(
+            "# Written by sp9-helperd (sp9-ctl iptsd, sp9-ctl pen zero-force). Loaded after the platform preset.\n\
+             [Device]\nVendor = 0x045E\nProduct = 0x0C52\n{}{}",
+            self.sections(),
+            zero_force.section()
+        )
+    }
+
+    /// Write the drop-in. Returns whether the file changed (iptsd is to be restarted then).
+    pub fn apply(&self, zero_force: &ZeroForce, root: &Root) -> io::Result<bool> {
         let p = root.p(IPTSD_DROPIN);
-        let old = std::fs::read_to_string(&p).ok();
-        match self.render() {
-            Some(text) if old.as_deref() != Some(text.as_str()) => sys::write_atomic(&p, text.as_bytes()).map(|_| true),
-            Some(_) => Ok(false),
-            None if old.is_some() => std::fs::remove_file(&p).map(|_| true),
-            None => Ok(false),
+        let text = self.render(zero_force);
+        if std::fs::read_to_string(&p).ok().as_deref() == Some(text.as_str()) {
+            return Ok(false);
         }
+        sys::write_atomic(&p, text.as_bytes()).map(|_| true)
+    }
+}
+
+/// Zero-force contact of the pen (the iptsd patch of this repository, like Windows' ZFI): the
+/// pen counts as touching when its tip signal reaches a fraction of the level it has while
+/// writing with force, even when it reports no force. Without it small, light handwriting
+/// loses strokes. Keys of iptsd's `[DFT]` section; an iptsd without the patch never asks for
+/// them (its loader reads the keys it knows by name).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ZeroForce {
+    pub enabled: bool,
+    /// contact begins at or above this percentage of the reference level
+    pub enter_percent: f64,
+    /// contact ends below this percentage
+    pub exit_percent: f64,
+    /// pressure reported while in contact without force, percent of the pressure range
+    pub floor_percent: f64,
+    /// the reference level; 0 = iptsd learns it from strokes written with force after each start
+    pub reference: f64,
+}
+
+impl Default for ZeroForce {
+    /// The owner's values, chosen by feel on this device with the Slim Pen 2: at 20 / 10 no
+    /// strokes were lost.
+    fn default() -> Self {
+        ZeroForce { enabled: true, enter_percent: 20.0, exit_percent: 10.0, floor_percent: 4.0, reference: 0.0 }
+    }
+}
+
+impl ZeroForce {
+    pub const ENTER_MAX: f64 = 150.0;
+    pub const FLOOR_MAX: f64 = 50.0;
+
+    pub fn validate(&self) -> Result<(), String> {
+        let (enter, exit) = (self.enter_percent, self.exit_percent);
+        if !(enter.is_finite() && exit.is_finite() && 1.0 <= exit && exit < enter && enter <= Self::ENTER_MAX) {
+            return Err(format!("zero-force thresholds {enter} / {exit}: need 1 <= exit < enter <= 150 (percent)"));
+        }
+        if !(self.floor_percent.is_finite() && (0.0..=Self::FLOOR_MAX).contains(&self.floor_percent)) {
+            return Err(format!("pressure floor {} outside 0..50 percent", self.floor_percent));
+        }
+        if !(self.reference.is_finite() && self.reference >= 0.0) {
+            return Err(format!("zero-force reference {}: 0 (learn) or a positive level", self.reference));
+        }
+        Ok(())
+    }
+
+    /// The `[DFT]` section. Every key is written, also when the feature is off, so the file
+    /// says what is in force whatever the preset holds.
+    fn section(&self) -> String {
+        format!(
+            "\n[DFT]\nZeroForceContact = {}\nZeroForceEnter = {}\nZeroForceExit = {}\nContactMinPressure = {}\nZeroForceReference = {}\n",
+            self.enabled,
+            self.enter_percent / 100.0,
+            self.exit_percent / 100.0,
+            self.floor_percent / 100.0,
+            self.reference
+        )
     }
 }
 
@@ -488,21 +549,52 @@ mod tests {
     #[test]
     fn iptsd_dropin() {
         let t = FakeTree::new("iptsd");
-        let mut c = Iptsd::default();
-        assert_eq!(c.render(), None);
-        assert!(!c.apply(&t.root).unwrap());
-        c.activation_threshold = Some(20.0);
-        c.deactivation_threshold = Some(16.0);
-        c.disable_on_stylus = Some(false);
+        let zf = ZeroForce::default();
+        // the defaults: the pen's zero-force contact, nothing over the preset's thresholds
+        assert!(Iptsd::default().apply(&zf, &t.root).unwrap());
+        assert_eq!(
+            t.read(IPTSD_DROPIN),
+            "# Written by sp9-helperd (sp9-ctl iptsd, sp9-ctl pen zero-force). Loaded after the platform preset.\n\
+             [Device]\nVendor = 0x045E\nProduct = 0x0C52\n\n\
+             [DFT]\nZeroForceContact = true\nZeroForceEnter = 0.2\nZeroForceExit = 0.1\nContactMinPressure = 0.04\nZeroForceReference = 0"
+        );
+        assert!(!Iptsd::default().apply(&zf, &t.root).unwrap(), "nothing changed: no restart");
+        let mut c = Iptsd { activation_threshold: Some(22.0), deactivation_threshold: Some(18.0), disable_on_stylus: Some(false) };
         c.validate().unwrap();
-        assert!(c.apply(&t.root).unwrap());
+        assert!(c.apply(&zf, &t.root).unwrap());
         let text = t.read(IPTSD_DROPIN);
-        assert!(text.contains("ActivationThreshold = 20\n") && text.contains("DisableOnStylus = false"));
-        assert!(!c.apply(&t.root).unwrap());
-        assert!(Iptsd::default().apply(&t.root).unwrap());
-        assert!(!t.root.exists(IPTSD_DROPIN));
+        assert!(
+            text.contains("[Touchscreen]\nDisableOnStylus = false")
+                && text.contains("[Contacts]\nActivationThreshold = 22\nDeactivationThreshold = 18")
+        );
+        assert!(text.contains("[DFT]\nZeroForceContact = true"));
+        // switched off, other thresholds, a fixed reference: all keys stay in the file
+        let off = ZeroForce { enabled: false, enter_percent: 85.0, exit_percent: 75.0, floor_percent: 0.0, reference: 1234.5 };
+        assert!(c.apply(&off, &t.root).unwrap());
+        let text = t.read(IPTSD_DROPIN);
+        assert!(text.ends_with("[DFT]\nZeroForceContact = false\nZeroForceEnter = 0.85\nZeroForceExit = 0.75\nContactMinPressure = 0\nZeroForceReference = 1234.5"), "{text}");
+        assert!(!c.apply(&off, &t.root).unwrap());
         c.deactivation_threshold = Some(30.0);
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn zero_force_bounds() {
+        let ok = |enter, exit, floor, reference| {
+            ZeroForce { enabled: true, enter_percent: enter, exit_percent: exit, floor_percent: floor, reference }.validate()
+        };
+        ZeroForce::default().validate().unwrap();
+        ok(150.0, 1.0, 50.0, 0.0).unwrap();
+        ok(60.0, 45.0, 0.0, 800.0).unwrap();
+        for (enter, exit) in [(10.0, 10.0), (10.0, 20.0), (151.0, 10.0), (20.0, 0.5), (f64::NAN, 10.0), (20.0, f64::NAN)] {
+            assert!(ok(enter, exit, 4.0, 0.0).is_err(), "{enter} / {exit}");
+        }
+        for floor in [-1.0, 50.1, f64::NAN] {
+            assert!(ok(20.0, 10.0, floor, 0.0).is_err(), "floor {floor}");
+        }
+        for reference in [-1.0, f64::INFINITY, f64::NAN] {
+            assert!(ok(20.0, 10.0, 4.0, reference).is_err(), "reference {reference}");
+        }
     }
 
     #[test]

@@ -50,6 +50,13 @@ const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
                                          50..2000 mm/s (default 300, Windows' scale)
   pen dead-zone MM_S|off                 pen speeds below this count as standing still (0..100;
                                          Windows has about 15; default off)
+  pen zero-force [on|off]                the pen writes without force once its tip signal is strong
+                                         enough (iptsd; small light handwriting loses strokes without)
+  pen zero-force ENTER EXIT              contact begins at ENTER and ends below EXIT percent of the
+                                         signal of writing with force (1 <= EXIT < ENTER <= 150;
+                                         default 20 10); also turns it on
+  pen zero-force reference learn|N       the reference level: learnt by iptsd, or a fixed number
+  pen floor PERCENT                      pressure reported in contact without force, 0..50 (default 4)
   pen auto-couple on|off                 couple a pen put into the cover slot (Bluetooth bond)
   pen couple [--force]                   look at the pen in the cover slot now: couple it when it has
                                          no bond; a bonded pen is left alone when connected, else
@@ -315,6 +322,26 @@ fn main() {
             Some("dead-zone") => {
                 let v = if a(2).map(String::as_str) == Some("off") { 0.0 } else { num::<f64>(a(2), "dead zone") };
                 c.act("Pen", "SetSpeedDeadZone", &(v,))
+            }
+            Some("zero-force") | Some("floor") => {
+                const KEYS: [&str; 5] = ["ZeroForceContact", "ZeroForceEnter", "ZeroForceExit", "ContactMinPressure", "ZeroForceReference"];
+                let p = c.props("Input");
+                let f = |k: &str| p.get(k).and_then(J::as_f64).unwrap_or_else(|| die("the helper has no zero-force settings"));
+                let on = p.get(KEYS[0]).and_then(J::as_bool).unwrap_or_else(|| die("the helper has no zero-force settings"));
+                let (mut z, mut change) = ((on, f(KEYS[1]), f(KEYS[2]), f(KEYS[3]), f(KEYS[4])), true);
+                match (a(1).map(String::as_str), a(2).map(String::as_str), a(3)) {
+                    (_, None, _) => change = false,
+                    (Some("floor"), Some(_), _) => z.3 = num::<f64>(a(2), "floor"),
+                    (_, Some("on"), _) => z.0 = true,
+                    (_, Some("off"), _) => z.0 = false,
+                    (_, Some("reference"), Some(v)) => z.4 = if v == "learn" { 0.0 } else { num::<f64>(a(3), "reference") },
+                    (_, Some(_), Some(_)) => z = (true, num::<f64>(a(2), "enter"), num::<f64>(a(3), "exit"), z.3, z.4),
+                    _ => die("pen zero-force [on|off | ENTER EXIT | reference learn|N]"),
+                }
+                if change {
+                    c.act("Input", "SetZeroForce", &z);
+                }
+                c.show("Input", &KEYS);
             }
             Some("eraser-click") => c.act("Pen", "SetEraserClick", &(onoff(a(2)),)),
             Some("full-scale") => {

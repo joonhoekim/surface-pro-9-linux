@@ -200,6 +200,32 @@ fn input_and_pen() {
     // the drop-in is written even where iptsd cannot be restarted (no systemctl here)
     let _ = r.call(P_INPUT, "Input", "SetIptsd", &(20.0f64, 16.0f64, 0i32));
     assert!(r.tree.read(input::IPTSD_DROPIN).contains("ActivationThreshold = 20"));
+    // the pen's zero-force contact goes into the same file
+    assert!(bool::try_from(r.get(P_INPUT, "Input", "ZeroForceContact")).unwrap());
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ZeroForceEnter")).unwrap(), 20.0);
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ZeroForceExit")).unwrap(), 10.0);
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ContactMinPressure")).unwrap(), 4.0);
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ZeroForceReference")).unwrap(), 0.0);
+    assert!(r
+        .tree
+        .read(input::IPTSD_DROPIN)
+        .contains("[DFT]\nZeroForceContact = true\nZeroForceEnter = 0.2\nZeroForceExit = 0.1\nContactMinPressure = 0.04"));
+    r.call(P_INPUT, "Input", "SetZeroForce", &(true, 60.0f64, 45.0f64, 6.0f64, 900.0f64)).unwrap();
+    let text = r.tree.read(input::IPTSD_DROPIN);
+    assert!(text.contains("ZeroForceEnter = 0.6\nZeroForceExit = 0.45\nContactMinPressure = 0.06\nZeroForceReference = 900"), "{text}");
+    assert!(text.contains("ActivationThreshold = 20"), "the thresholds stay in the file");
+    assert!(r.tree.read("/etc/sp9/helper.toml").contains("enter_percent = 60.0"));
+    for bad in [
+        (true, 10.0f64, 10.0f64, 4.0f64, 0.0f64),
+        (true, 200.0, 10.0, 4.0, 0.0),
+        (true, 20.0, 0.0, 4.0, 0.0),
+        (true, 20.0, 10.0, 60.0, 0.0),
+        (true, 20.0, 10.0, 4.0, -1.0),
+    ] {
+        assert!(err_name(r.call(P_INPUT, "Input", "SetZeroForce", &bad)).ends_with("InvalidArgs"), "{bad:?}");
+    }
+    r.call(P_INPUT, "Input", "SetZeroForce", &(false, 60.0f64, 45.0f64, 6.0f64, 900.0f64)).unwrap();
+    assert!(r.tree.read(input::IPTSD_DROPIN).contains("ZeroForceContact = false"));
     assert!(err_name(r.call(P_INPUT, "Input", "SetIptsd", &(10.0f64, 16.0f64, 0i32))).ends_with("InvalidArgs"));
 }
 

@@ -223,7 +223,8 @@ async fn run(no_polkit: bool, session: bool, fake: bool) -> zbus::Result<()> {
     let shared = Arc::new(shared);
 
     // the iptsd drop-in follows the settings (also after a manual edit of helper.toml)
-    match shared.cfg().input.iptsd.apply(&shared.root) {
+    let input = shared.cfg().input;
+    match input.iptsd.apply(&input.zero_force, &shared.root) {
         Ok(true) => {
             if let Err(e) = jobs::restart_iptsd_blocking() {
                 eprintln!("sp9-helperd: iptsd restart: {e}");

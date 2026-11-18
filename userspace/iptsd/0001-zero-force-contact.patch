@@ -1,0 +1,240 @@
+Zero-force contact for DFT pens, and a pressure floor while in contact
+
+The Slim Pen 2 on the Surface Pro 9 reports force like a switch: no pressure tone at all until
+the tip is pressed, so small, light handwriting loses strokes. The tip signal itself tells
+whether the pen is on the glass: its interpolated peak energy, relative to the level the same pen
+has in frames where it reports force, is 0.85..1.0 with the pen resting on the glass without
+force and below 0.3 at 5 mm (measured on the device). With ZeroForceContact the pen counts as in
+contact at or above ZeroForceEnter of that reference and until it falls below ZeroForceExit; the
+reference is learned from frames with force (or given with ZeroForceReference). ContactMinPressure
+is the pressure reported while there is contact without force. Everything defaults to off.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 725e940..7b8c32a 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -68,6 +68,13 @@ public:
+ 	usize dft_mpp2_contact_min_mag = 50000;
+ 	f64 dft_tilt_distance = 0.6;
+ 	bool dft_allow_split_events = false;
++	f64 dft_contact_min_pressure = 0;
++	bool dft_zero_force_contact = false;
++	f64 dft_zero_force_enter = 0.85;
++	f64 dft_zero_force_exit = 0.75;
++	f64 dft_zero_force_exp = -0.5;
++	usize dft_zero_force_min_samples = 20;
++	f64 dft_zero_force_reference = 0;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index dcf6872..3f42ed9 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -45,10 +45,32 @@ private:
+ 	// This is used to override the contact state in the pressure frame handling.
+ 	std::optional<bool> m_mppv2_in_contact = std::nullopt;
+ 
++	// Zero force contact: the pen reports force only above its activation force. Below
++	// that the only sign of contact is the strength of the tip signal, which saturates
++	// when the tip is on the glass. The level at contact differs per pen, so it is
++	// learned from the frames in which the pen itself reports contact.
++
++	// Peak energy of the tip signal in the current MPP v2 position window.
++	std::optional<f64> m_tip_energy = std::nullopt;
++
++	// Running average of the peak energy while the pen reported force.
++	f64 m_zero_force_reference = 0;
++	usize m_zero_force_samples = 0;
++
++	// Whether the contact is currently derived from the signal strength alone.
++	bool m_zero_force_contact = false;
++
+ public:
+ 	DftStylus(Config config, const DeviceInfo &info)
+ 		: m_config {std::move(config)},
+-		  m_info {info} {};
++		  m_info {info}
++	{
++		if (m_config.dft_zero_force_reference > 0) {
++			m_zero_force_reference = m_config.dft_zero_force_reference;
++			m_zero_force_samples =
++				std::max<usize>(m_config.dft_zero_force_min_samples, 1);
++		}
++	};
+ 
+ 	/*!
+ 	 * Loads a DFT window and calculates stylus properties from it.
+@@ -238,13 +260,76 @@ private:
+ 		const f64 p =
+ 			1 - this->interpolate_frequency(dft, ipts::protocol::dft::PRESSURE_ROWS);
+ 
++		bool zero_force = false;
++
+ 		if (p > 0) {
+ 			m_stylus.contact = true;
+ 			m_stylus.pressure = std::clamp(p, 0.0, 1.0);
++
++			// Both the pressure signal and the MPP v2 flag say contact:
++			// this is what the tip signal looks like on the glass.
++			if (m_mppv2_in_contact.value_or(false) && m_tip_energy.has_value())
++				this->learn_zero_force_reference(m_tip_energy.value());
+ 		} else {
+ 			m_stylus.contact = m_mppv2_in_contact.value_or(false);
+ 			m_stylus.pressure = 0;
++
++			if (!m_stylus.contact)
++				zero_force = this->is_zero_force_contact();
++
++			m_stylus.contact = m_stylus.contact || zero_force;
+ 		}
++
++		m_zero_force_contact = zero_force;
++
++		// Applications and libinput derive the tip state from the pressure,
++		// a contact without pressure would not draw.
++		if (m_stylus.contact) {
++			m_stylus.pressure =
++				std::max(m_stylus.pressure, m_config.dft_contact_min_pressure);
++		}
++	}
++
++	/*!
++	 * Updates the tip signal level that is expected when the pen touches the screen.
++	 *
++	 * @param[in] energy The peak energy of the tip signal in a frame with pen reported force.
++	 */
++	void learn_zero_force_reference(const f64 energy)
++	{
++		if (m_zero_force_samples == 0)
++			m_zero_force_reference = energy;
++		else
++			m_zero_force_reference += (energy - m_zero_force_reference) / 64;
++
++		m_zero_force_samples++;
++	}
++
++	/*!
++	 * Checks whether the tip signal is as strong as it is when the pen touches the
++	 * screen, although the pen does not report any force.
++	 *
++	 * @return Whether the pen should be treated as being in contact.
++	 */
++	[[nodiscard]] bool is_zero_force_contact() const
++	{
++		if (!m_config.dft_zero_force_contact)
++			return false;
++
++		if (!m_stylus.proximity || m_stylus.rubber)
++			return false;
++
++		if (!m_tip_energy.has_value())
++			return false;
++
++		if (m_zero_force_samples < m_config.dft_zero_force_min_samples ||
++		    m_zero_force_samples == 0)
++			return false;
++
++		const f64 threshold = m_zero_force_contact ? m_config.dft_zero_force_exit
++							   : m_config.dft_zero_force_enter;
++
++		return m_tip_energy.value() >= threshold * m_zero_force_reference;
+ 	}
+ 
+ 	/*!
+@@ -290,11 +375,18 @@ private:
+ 	{
+ 		// Clearing the state in case we can't determine it.
+ 		m_mppv2_in_contact = std::nullopt;
++		m_tip_energy = std::nullopt;
+ 
+ 		if (dft.x.size() <= 3) { // not sure if this can happen?
+ 			return;
+ 		}
+ 
++		const f64 peak_x = this->interpolate_peak(dft.x[0]);
++		const f64 peak_y = this->interpolate_peak(dft.y[0]);
++
++		if (!std::isnan(peak_x) && !std::isnan(peak_y))
++			m_tip_energy = (peak_x * peak_x) + (peak_y * peak_y);
++
+ 		const auto mag_2 = dft.x[2].magnitude + dft.y[2].magnitude;
+ 		const auto mag_3 = dft.x[3].magnitude + dft.y[3].magnitude;
+ 
+@@ -360,6 +452,48 @@ private:
+ 		return row.first + maxi + std::clamp(d, mind, maxd);
+ 	}
+ 
++	/*!
++	 * Interpolates the amplitude that an antenna directly below the stylus would measure.
++	 *
++	 * The amplitude of the strongest antenna alone depends on where the tip is between
++	 * two antennas. Unlike the position this is not determined at the screen edge, where
++	 * a part of the signal is missing.
++	 *
++	 * @param[in] row A list of measurements on one axis.
++	 * @return The peak amplitude of the signal on that axis, or NaN.
++	 */
++	[[nodiscard]] f64 interpolate_peak(const ipts::protocol::dft::Row &row) const
++	{
++		const u8 maxi = ipts::protocol::dft::NUM_COMPONENTS / 2;
++
++		std::array<f64, 3> x {};
++
++		for (u8 i = 0; i < 3; i++) {
++			const u8 j = casts::to<u8>(maxi + i - 1);
++			const f64 amp = std::hypot(row.real.at(j), row.imag.at(j));
++
++			// off-screen components are always zero
++			if (amp < 1)
++				return casts::to<f64>(NAN);
++
++			x.at(i) = std::pow(amp, m_config.dft_zero_force_exp);
++		}
++
++		const f64 curvature = x[0] - (2 * x[1]) + x[2];
++
++		// check orientation of fitted parabola
++		if (curvature <= 0)
++			return casts::to<f64>(NAN);
++
++		const f64 d = std::clamp((x[0] - x[2]) / (2 * curvature), -0.5, 0.5);
++		const f64 peak = x[1] - ((x[0] - x[2]) * d / 4);
++
++		if (peak <= 0)
++			return casts::to<f64>(NAN);
++
++		return std::pow(peak, 1 / m_config.dft_zero_force_exp);
++	}
++
+ 	[[nodiscard]] f64 interpolate_frequency(const ipts::samples::DftWindow &dft,
+ 	                                        const u8 rows) const
+ 	{
+@@ -436,6 +570,9 @@ private:
+ 
+ 		m_mppv2_in_contact = std::nullopt;
+ 		m_mppv2_button_or_eraser = std::nullopt;
++
++		m_tip_energy = std::nullopt;
++		m_zero_force_contact = false;
+ 	}
+ };
+ 
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 0b40293..0236644 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -191,6 +191,13 @@ private:
+ 		this->get(ini, "DFT", "Mpp2ContactMinMag", m_config.dft_mpp2_contact_min_mag);
+ 		this->get(ini, "DFT", "Mpp2ButtonMinMag", m_config.dft_mpp2_button_min_mag);
+ 		this->get(ini, "DFT", "AllowSplitEvents", m_config.dft_allow_split_events);
++		this->get(ini, "DFT", "ContactMinPressure", m_config.dft_contact_min_pressure);
++		this->get(ini, "DFT", "ZeroForceContact", m_config.dft_zero_force_contact);
++		this->get(ini, "DFT", "ZeroForceEnter", m_config.dft_zero_force_enter);
++		this->get(ini, "DFT", "ZeroForceExit", m_config.dft_zero_force_exit);
++		this->get(ini, "DFT", "ZeroForceExp", m_config.dft_zero_force_exp);
++		this->get(ini, "DFT", "ZeroForceMinSamples", m_config.dft_zero_force_min_samples);
++		this->get(ini, "DFT", "ZeroForceReference", m_config.dft_zero_force_reference);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);

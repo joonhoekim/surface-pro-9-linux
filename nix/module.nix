@@ -280,6 +280,15 @@ in
 
     (lib.mkIf cfg.touch.enable {
       services.iptsd.enable = true;
+      # services.iptsd takes pkgs.iptsd. The patch adds zero-force contact (off unless a config turns
+      # it on; the helper's drop-in does): userspace/iptsd/.
+      nixpkgs.overlays = [
+        (final: prev: {
+          iptsd = prev.iptsd.overrideAttrs (old: {
+            patches = (old.patches or [ ]) ++ [ ../userspace/iptsd/0001-zero-force-contact.patch ];
+          });
+        })
+      ];
       # A drop-in, loaded after /etc/iptsd.conf (services.iptsd.config) and only for 045E:0C52.
       # The preset directory is inside the iptsd store path.
       environment.etc."iptsd.d/surface-pro-9.conf".source = platform + "/iptsd/surface-pro-9.conf";
