@@ -29,6 +29,7 @@ pub const OP_ADD_REMOTE_OOB_DATA: u16 = 0x0021;
 pub const EV_CMD_COMPLETE: u16 = 0x0001;
 pub const EV_CMD_STATUS: u16 = 0x0002;
 pub const EV_DEVICE_DISCONNECTED: u16 = 0x000C;
+pub const EV_NEW_LONG_TERM_KEY: u16 = 0x000A;
 pub const EV_AUTH_FAILED: u16 = 0x0011;
 /// Reason of Device Disconnected: encryption with the stored key failed (the controller's
 /// "PIN or key missing").
@@ -115,6 +116,10 @@ pub enum Event {
         addr_type: u8,
         reason: u8,
     },
+    /// The peer gave its long term key: the pairing went through with bonding.
+    NewLongTermKey {
+        addr: Addr,
+    },
     Other(u16),
 }
 
@@ -131,6 +136,8 @@ pub fn parse_event(pkt: &[u8]) -> Option<(u16, Event)> {
         EV_CMD_COMPLETE | EV_CMD_STATUS if body.len() >= 3 => {
             Event::Reply { opcode: u16::from_le_bytes([body[0], body[1]]), status: body[2], params: body[3..].to_vec() }
         }
+        // store hint (1), then the key: address (6), address type, ...
+        EV_NEW_LONG_TERM_KEY if body.len() >= 8 => Event::NewLongTermKey { addr: msb(&body[1..]) },
         EV_AUTH_FAILED if body.len() >= 8 => Event::AuthFailed { addr: msb(body), addr_type: body[6], status: body[7] },
         EV_DEVICE_DISCONNECTED if body.len() >= 8 => Event::Disconnected { addr: msb(body), addr_type: body[6], reason: body[7] },
         _ => Event::Other(code),

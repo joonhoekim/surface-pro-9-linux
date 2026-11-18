@@ -135,6 +135,9 @@ mod linux {
     /// the pen advertises for about 1 s after the key was written
     const CONNECT_WAIT: Duration = Duration::from_secs(3);
     const PAIR_WAIT: Duration = Duration::from_secs(30);
+    const PAIR_SETTLE: Duration = Duration::from_millis(300);
+    const PAIR_ATTEMPTS: u32 = 4;
+    const LTK_WAIT: Duration = Duration::from_secs(2);
     const HID_WAIT: Duration = Duration::from_secs(10);
     /// a pen whose coupling failed is not tried again by itself before this
     const RETRY_AFTER: Duration = Duration::from_secs(60);
@@ -190,11 +193,13 @@ mod linux {
         sock: std::fs::File,
         /// devices whose encryption or pairing failed since the last look
         auth_failed: Vec<Addr>,
+        /// devices that gave a long term key since the last look
+        new_ltk: Vec<Addr>,
     }
 
     impl Mgmt {
         fn open() -> io::Result<Mgmt> {
-            Ok(Mgmt { sock: hci_socket(bt::HCI_DEV_NONE, bt::HCI_CHANNEL_CONTROL)?, auth_failed: Vec::new() })
+            Ok(Mgmt { sock: hci_socket(bt::HCI_DEV_NONE, bt::HCI_CHANNEL_CONTROL)?, auth_failed: Vec::new(), new_ltk: Vec::new() })
         }
 
         /// Read what is queued; replies to `opcode` are returned, the rest is noted.
@@ -211,6 +216,7 @@ mod linux {
                         return Ok(Some((status, params)))
                     }
                     Some((HCI_INDEX, Event::AuthFailed { addr, .. })) => self.auth_failed.push(addr),
+                    Some((HCI_INDEX, Event::NewLongTermKey { addr })) => self.new_ltk.push(addr),
                     Some((HCI_INDEX, Event::Disconnected { addr, reason: bt::DISCONN_AUTH_FAILURE, .. })) => self.auth_failed.push(addr),
                     _ => {}
                 }
@@ -358,17 +364,37 @@ mod linux {
         drop(raw);
         log("connected, pairing");
         let cmd = bt::pair_device(HCI_INDEX, addr, bt::ADDR_LE_RANDOM, bt::IO_NO_INPUT_NO_OUTPUT);
-        let mut status = mgmt.command(bt::OP_PAIR_DEVICE, &cmd, PAIR_WAIT).map_err(|e| format!("Pair Device: {e}"))?.0;
-        if status == bt::STATUS_ALREADY_PAIRED {
-            // keys the kernel still has although BlueZ did not know the device
-            let un = bt::unpair_device(HCI_INDEX, addr, bt::ADDR_LE_RANDOM, false);
-            mgmt.command(bt::OP_UNPAIR_DEVICE, &un, Duration::from_secs(5)).map_err(|e| format!("Unpair Device: {e}"))?;
-            status = mgmt.command(bt::OP_PAIR_DEVICE, &cmd, PAIR_WAIT).map_err(|e| format!("Pair Device: {e}"))?.0;
+        // Pair Device answers "success" at once, without pairing, while the kernel has not set up the
+        // security manager channel of a connection that has just come up. The proof of a pairing with
+        // bonding is the pen's long term key.
+        for attempt in 0..PAIR_ATTEMPTS {
+            std::thread::sleep(PAIR_SETTLE);
+            mgmt.new_ltk.clear();
+            let mut status = mgmt.command(bt::OP_PAIR_DEVICE, &cmd, PAIR_WAIT).map_err(|e| format!("Pair Device: {e}"))?.0;
+            if status == bt::STATUS_ALREADY_PAIRED {
+                // keys the kernel still has although BlueZ did not know the device
+                let un = bt::unpair_device(HCI_INDEX, addr, bt::ADDR_LE_RANDOM, false);
+                mgmt.command(bt::OP_UNPAIR_DEVICE, &un, Duration::from_secs(5)).map_err(|e| format!("Unpair Device: {e}"))?;
+                status = mgmt.command(bt::OP_PAIR_DEVICE, &cmd, PAIR_WAIT).map_err(|e| format!("Pair Device: {e}"))?.0;
+            }
+            if status != bt::STATUS_SUCCESS {
+                return Err(format!("Pair Device: {}", bt::status_name(status)));
+            }
+            let end = Instant::now() + LTK_WAIT;
+            loop {
+                mgmt.drain(None).map_err(|e| format!("management socket: {e}"))?;
+                if mgmt.new_ltk.contains(addr) {
+                    return Ok(());
+                }
+                let left = end.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                poll_in(&[&mgmt.sock], left).map_err(|e| format!("management socket: {e}"))?;
+            }
+            log(format!("Pair Device returned without a key (attempt {})", attempt + 1));
         }
-        if status != bt::STATUS_SUCCESS {
-            return Err(format!("Pair Device: {}", bt::status_name(status)));
-        }
-        Ok(())
+        Err("the pen did not give a key".into())
     }
 
     /// The whole sequence for a pen the cover announced; the result text for `Status`.
