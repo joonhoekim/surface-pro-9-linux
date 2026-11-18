@@ -187,6 +187,12 @@ impl Pen {
         self.0.number(Param::PressureFloor)
     }
 
+    /// Prediction horizon in milliseconds; 0 = positions are reported as measured.
+    #[zbus(property(emits_changed_signal = "false"))]
+    fn prediction_ms(&self) -> f64 {
+        self.0.number(Param::PredictionMs)
+    }
+
     #[zbus(property(emits_changed_signal = "false"))]
     fn in_range(&self) -> bool {
         self.0.pen().in_range
@@ -216,8 +222,8 @@ impl Pen {
     }
 
     /// Changes pen settings by the names of the properties above (ZeroForce b; ZeroForceEnter,
-    /// ZeroForceExit, ZeroForceReference, ZeroForceStrokeLevel, PressureFloor d): all of them
-    /// or none. They are in force from the next report on; a stroke in progress goes on.
+    /// ZeroForceExit, ZeroForceReference, ZeroForceStrokeLevel, PressureFloor, PredictionMs d):
+    /// all of them or none. They are in force from the next report on; a stroke in progress goes on.
     async fn set_params(
         &self,
         params: HashMap<String, OwnedValue>,
@@ -464,6 +470,14 @@ mod tests {
         assert_eq!(r.set(pen, &[("InkFilter", V::from(true))]).unwrap_err(), invalid);
         assert_eq!(r.number(pen, "PressureFloor"), 0.03);
         assert!(r.shared.take_changed_config().is_none());
+
+        // The prediction horizon, within its range.
+        assert_eq!(r.number(pen, "PredictionMs"), 0.0);
+        r.set(pen, &[("PredictionMs", V::from(7.5))]).unwrap();
+        assert_eq!(r.shared.take_changed_config().unwrap().pen.prediction_ms, 7.5);
+        assert_eq!(r.set(pen, &[("PredictionMs", V::from(80.0))]).unwrap_err(), invalid);
+        assert_eq!(r.set(pen, &[("PredictionMs", V::from(-1.0))]).unwrap_err(), invalid);
+        assert_eq!(r.number(pen, "PredictionMs"), 7.5);
 
         // Back to a learned reference.
         r.set(pen, &[("ZeroForceReference", V::from(0.0))]).unwrap();

@@ -73,6 +73,9 @@ pub struct Input {
     pub iptsd: Iptsd,
     /// the pen's zero-force contact in iptsd (written into the same drop-in)
     pub zero_force: ZeroForce,
+    /// sp9-digitizerd reports the pen where it will be this many milliseconds from now;
+    /// 0 = off (written into the same drop-in)
+    pub pen_prediction_ms: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -218,6 +221,10 @@ impl Config {
         if let Err(e) = self.input.zero_force.validate() {
             w.push(format!("input.zero_force: {e}, ignored"));
             self.input.zero_force = ZeroForce::default();
+        }
+        if let Err(e) = crate::input::validate_prediction(self.input.pen_prediction_ms) {
+            w.push(format!("input.pen_prediction_ms: {e}, ignored"));
+            self.input.pen_prediction_ms = 0.0;
         }
         let (lo, hi) = crate::pen::INTENSITY_RANGE;
         self.pen.intensity = self.pen.intensity.clamp(lo, hi);

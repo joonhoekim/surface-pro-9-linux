@@ -48,6 +48,11 @@ impl LockStage {
         self.radius > 0.0
     }
 
+    /// Whether the last position passed through was replaced by the held one.
+    pub fn holding(&self) -> bool {
+        self.contact && self.anchored && self.held
+    }
+
     /// Passes a position (millimeters) through the lock and returns the one to report.
     pub fn apply(&mut self, mut x: f64, mut y: f64, contact: bool) -> (f64, f64) {
         if contact != self.contact || !contact {

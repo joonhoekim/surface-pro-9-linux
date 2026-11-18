@@ -75,6 +75,7 @@ pub fn restart_iptsd_blocking() -> Result<(), String> {
 pub fn push_digitizer_blocking(
     iptsd: &sp9_helper_core::input::Iptsd,
     zero_force: &sp9_helper_core::input::ZeroForce,
+    prediction_ms: f64,
 ) -> Result<bool, String> {
     use sp9_digitizer::control::{self, Param, Value};
     use std::collections::HashMap;
@@ -92,7 +93,7 @@ pub fn push_digitizer_blocking(
             })
             .collect()
     };
-    let sp9_helper_core::input::DigitizerParams { pen, touch } = sp9_helper_core::input::digitizer_params(iptsd, zero_force);
+    let sp9_helper_core::input::DigitizerParams { pen, touch } = sp9_helper_core::input::digitizer_params(iptsd, zero_force, prediction_ms);
 
     zbus::block_on(async {
         let conn = zbus::Connection::system().await.map_err(|e| format!("system bus: {e}"))?;
@@ -124,6 +125,7 @@ pub fn push_digitizer_blocking(
 pub fn push_digitizer_blocking(
     _iptsd: &sp9_helper_core::input::Iptsd,
     _zero_force: &sp9_helper_core::input::ZeroForce,
+    _prediction_ms: f64,
 ) -> Result<bool, String> {
     Ok(false)
 }

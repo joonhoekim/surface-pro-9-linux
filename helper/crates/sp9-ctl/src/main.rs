@@ -53,6 +53,9 @@ const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
   pen status                             the pen settings, and from sp9-digitizerd (if it runs) the
                                          live pen: in range, contact, tool, tip signal level, the
                                          reference in force, counters
+  pen predict [MS|off]                   sp9-digitizerd reports the pen where it will be MS milliseconds
+                                         from now (0..30, default off): the line trails the pen less;
+                                         turns and stroke ends lose accuracy the longer it is
   pen zero-force [on|off]                the pen writes without force once its tip signal is strong
                                          enough (iptsd; small light handwriting loses strokes without)
   pen zero-force ENTER EXIT              contact begins at ENTER and ends below EXIT percent of the
@@ -199,14 +202,21 @@ impl Ctl {
     fn pen_status(&self) {
         use sp9_digitizer::control::{DIAGNOSTICS_INTERFACE, PEN_INTERFACE};
         let helper = self.props("Pen");
+        let input = self.props("Input");
         let live = self.digitizer(PEN_INTERFACE);
         let counters = self.digitizer(DIAGNOSTICS_INTERFACE);
         if self.json {
-            println!("{}", json!({ "Pen": helper, "Digitizer": live, "DigitizerDiagnostics": counters }));
+            println!(
+                "{}",
+                json!({ "Pen": helper, "PenPredictionMs": input.get("PenPredictionMs"), "Digitizer": live, "DigitizerDiagnostics": counters })
+            );
             return;
         }
         for (k, v) in &helper {
             println!("{k:28} {}", text(v));
+        }
+        if let Some(v) = input.get("PenPredictionMs") {
+            println!("{:28} {}", "PenPredictionMs", text(v));
         }
         match (live, counters) {
             (Some(live), counters) => {
@@ -384,6 +394,14 @@ fn main() {
                     c.act("Input", "SetZeroForce", &z);
                 }
                 c.show("Input", &KEYS);
+            }
+            Some("predict") => {
+                match a(2).map(String::as_str) {
+                    None => {}
+                    Some("off") => c.act("Input", "SetPenPrediction", &(0.0f64,)),
+                    Some(_) => c.act("Input", "SetPenPrediction", &(num::<f64>(a(2), "milliseconds"),)),
+                }
+                c.show("Input", &["PenPredictionMs"]);
             }
             Some("eraser-click") => c.act("Pen", "SetEraserClick", &(onoff(a(2)),)),
             Some("full-scale") => {

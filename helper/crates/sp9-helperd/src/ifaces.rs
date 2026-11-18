@@ -714,8 +714,8 @@ pub struct Input(pub Arc<Shared>);
 /// D-Bus and is never restarted; without it, iptsd is restarted when the file changed.
 pub(crate) fn apply_iptsd(s: &Shared) -> Result<(), String> {
     let input = s.cfg().input;
-    let changed = input.iptsd.apply(&input.zero_force, &s.root).map_err(|e| format!("iptsd drop-in: {e}"))?;
-    if s.hardware && jobs::push_digitizer_blocking(&input.iptsd, &input.zero_force)? {
+    let changed = input.iptsd.apply(&input.zero_force, input.pen_prediction_ms, &s.root).map_err(|e| format!("iptsd drop-in: {e}"))?;
+    if s.hardware && jobs::push_digitizer_blocking(&input.iptsd, &input.zero_force, input.pen_prediction_ms)? {
         return Ok(());
     }
     if changed {
@@ -747,6 +747,7 @@ impl Snapshot for Input {
         "ZeroForceExit",
         "ContactMinPressure",
         "ZeroForceReference",
+        "PenPredictionMs",
     ];
     fn snapshot(&self) -> String {
         // the LED level is a cheap sysfs read; hidraw level changes come from kbdwatch
@@ -855,6 +856,32 @@ impl Input {
     #[zbus(property)]
     fn zero_force_reference(&self) -> f64 {
         self.0.cfg().input.zero_force.reference
+    }
+
+    /// sp9-digitizerd reports the pen where it will be this many milliseconds from now; 0 = off
+    #[zbus(property)]
+    fn pen_prediction_ms(&self) -> f64 {
+        self.0.cfg().input.pen_prediction_ms
+    }
+
+    /// The pen's prediction horizon in milliseconds (0 = off, at most 30). Only
+    /// sp9-digitizerd predicts: it takes the value while it runs, and reads it from
+    /// /etc/iptsd.d/zz-sp9-helper.conf when it starts. iptsd does not know the key; it is
+    /// restarted when the file changed, like for the other settings of the file.
+    async fn set_pen_prediction(
+        &self,
+        ms: f64,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "touch", self.0.no_polkit).await?;
+        input::validate_prediction(ms).map_err(invalid)?;
+        persist(self.0.update(|c| c.input.pen_prediction_ms = ms))?;
+        let s = self.0.clone();
+        blocking::unblock(move || apply_iptsd(&s)).await.map_err(failed)?;
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
     }
 
     /// The pen's zero-force contact in iptsd: on or off, enter and exit thresholds in percent

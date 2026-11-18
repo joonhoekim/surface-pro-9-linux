@@ -14,6 +14,9 @@
 //! | binary (0x0A, twice) | button bit | [`button`] |
 //! | pressure (0x0B) | pressure tone and bits | [`pressure`], [`contact`] |
 //!
+//! The position of a sample goes through [`lock`] and, if a horizon is configured, through
+//! [`predict`] last.
+//!
 //! Every stage owns its state and its part of the configuration; [`signal`] holds the
 //! stateless measurements on window rows. [`Pen::input`] is the only place that knows the order
 //! in which the stages run and what they hand to each other, and [`Pen::lift`] the only place
@@ -25,6 +28,7 @@ pub mod button;
 pub mod contact;
 pub mod lock;
 pub mod position;
+pub mod predict;
 pub mod pressure;
 pub mod signal;
 pub mod tilt;
@@ -69,6 +73,7 @@ pub struct Pen {
     contact: contact::ContactStage,
     pressure: pressure::PressureStage,
     lock: lock::LockStage,
+    predict: predict::PredictStage,
     button: button::ButtonStage,
 
     sample: PenSample,
@@ -92,6 +97,7 @@ impl Pen {
             contact: contact::ContactStage::new(&config.contact),
             pressure: pressure::PressureStage::new(&config.pressure),
             lock: lock::LockStage::new(&config.lock),
+            predict: predict::PredictStage::new(config.prediction_ms),
             button: button::ButtonStage::new(&config.button),
             sample: PenSample::default(),
             group: None,
@@ -109,6 +115,7 @@ impl Pen {
         self.contact.set_config(&config.contact);
         self.pressure.set_config(&config.pressure);
         self.lock.set_config(&config.lock);
+        self.predict.set_horizon(config.prediction_ms);
         self.button.set_config(&config.button);
     }
 
@@ -216,6 +223,8 @@ impl Pen {
 
         (self.sample.x, self.sample.y) = self.finish_position(self.sample.x, self.sample.y, 0.0, 0.0);
         self.sample.pressure = self.pressure.shape(self.sample.contact, false, self.tilt_for_pressure());
+        // A position of this window is not part of the stream the prediction follows.
+        self.predict.reset();
 
         // A pen that comes into range is not reported before it is known which end it is:
         // a client may take the tool it sees first. The tip shows in the MPP v2 position
@@ -298,6 +307,20 @@ impl Pen {
         let first_after_window = w.kind == window::POSITION_MPP2_SECOND;
         self.sample.pressure = self.shape_pressure(first_after_window);
 
+        // Last: where the tip will be a moment from now, if that is asked for.
+        let (w_mm, h_mm) = (self.position.mapping().width_mm(), self.position.mapping().height_mm());
+        let context = predict::Context {
+            contact: self.sample.contact,
+            pressure: self.sample.pressure,
+            holding: self.lock.holding(),
+            force_steady: self.contact.force_steady(),
+        };
+        let (px, py) = self.predict.apply(w.timestamp, self.sample.x * w_mm, self.sample.y * h_mm, &context);
+        if (px, py) != (self.sample.x * w_mm, self.sample.y * h_mm) {
+            self.sample.x = num::clamp(px / w_mm, 0.0, 1.0);
+            self.sample.y = num::clamp(py / h_mm, 0.0, 1.0);
+        }
+
         self.fine_samples += 1;
         self.tool_pending = false;
         true
@@ -342,5 +365,6 @@ impl Pen {
         self.pressure.reset();
         self.tilt.reset();
         self.lock.reset();
+        self.predict.reset();
     }
 }

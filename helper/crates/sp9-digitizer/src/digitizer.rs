@@ -210,6 +210,21 @@ mod tests {
         dft_report(&f)
     }
 
+    /// A frame of a hovering pen that moves: its two MPP v2 position windows see the tip at
+    /// different places.
+    fn moving_pen_frame(group: u32, x_first: f64, x_second: f64, y: f64) -> Vec<u8> {
+        let tone = |on: bool| row(0, [0; 9], if on { 200_000 } else { 10 });
+        let tip = |pos: f64, amplitude: f64| bump((pos.round() as i8) - 4, pos, amplitude, 1.0);
+        let fine = |pos: f64| vec![tip(pos, 3000.0), tip(pos, 2000.0), tone(true), tone(false)];
+        let position = |pos: f64| vec![tip(pos, 300.0), tone(false), tone(true)];
+        let base = group * 15_000;
+        let mut f = Vec::new();
+        f.extend(dft(group, 1, window::POSITION, base, &position(x_first), &position(y)));
+        f.extend(dft(group, 2, window::POSITION_MPP2, base + 2900, &fine(x_first), &fine(y)));
+        f.extend(dft(group, 6, window::POSITION_MPP2_SECOND, base + 10100, &fine(x_second), &fine(y)));
+        dft_report(&f)
+    }
+
     fn no_pen_frame(group: u32) -> Vec<u8> {
         let silent = vec![row(0, [0; 9], 10); 4];
         dft_report(&dft(group, 1, window::POSITION, 0, &silent, &silent))
@@ -413,6 +428,44 @@ mod tests {
         config.pen.axis_resolution = 50;
         assert!(d.set_config(&config).is_err());
         assert_eq!(d.config().pen.axis_resolution, 100);
+    }
+
+    #[test]
+    fn prediction_moves_a_moving_pen_ahead() {
+        use crate::control::{set_params, Param, Value};
+
+        // A hovering pen moving along X by a quarter of an antenna per frame (two samples).
+        let run = |prediction_ms: f64, switch_at: Option<u32>| {
+            let mut config = Config::default();
+            config.pen.prediction_ms = prediction_ms;
+            let mut d = Digitizer::new(&config, &Geometry::SP9);
+            let mut sink = Packets::default();
+            for i in 0..16u32 {
+                if switch_at == Some(i) {
+                    set_params(&mut config, &[(Param::PredictionMs, Value::Number(15.0))]).unwrap();
+                    d.set_config(&config).unwrap();
+                }
+                let x = 20.0 + 0.25 * f64::from(i);
+                d.process(&moving_pen_frame(i + 1, x, x + 0.12, 20.0), f64::from(i) * 0.015, &mut sink).unwrap();
+            }
+            sink.samples.iter().map(|s| s.x * 273.89).collect::<Vec<f64>>()
+        };
+        let plain = run(0.0, None);
+        let ahead = run(15.0, None);
+        assert_eq!(plain.len(), ahead.len());
+        // The first samples are the same (no velocity yet). Later ones lead by about the
+        // travel of 15 ms, 1 mm; the position estimate of the synthetic pen wobbles with the
+        // antenna pitch, and the predictor holds back where the velocity changes.
+        assert_eq!(plain[..2], ahead[..2]);
+        let lead: Vec<f64> = plain.iter().zip(&ahead).map(|(a, b)| b - a).collect();
+        assert!(lead[6..].iter().all(|l| (0.5..1.5).contains(l)), "{lead:?}");
+        let mean = lead[6..].iter().sum::<f64>() / (lead.len() - 6) as f64;
+        assert!((0.8..1.1).contains(&mean), "{mean}");
+
+        // Switched on in the middle: the same as plain before, the same as ahead after.
+        let switched = run(0.0, Some(8));
+        assert_eq!(switched[..16], plain[..16]);
+        assert_eq!(switched[18..], ahead[18..]);
     }
 
     #[test]

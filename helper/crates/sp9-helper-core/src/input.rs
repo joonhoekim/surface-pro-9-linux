@@ -344,20 +344,21 @@ impl Iptsd {
         s
     }
 
-    /// The drop-in's text: these values and the pen's zero-force contact settings.
-    pub fn render(&self, zero_force: &ZeroForce) -> String {
+    /// The drop-in's text: these values, the pen's prediction horizon (milliseconds; a key
+    /// only sp9-digitizerd reads) and its zero-force contact settings.
+    pub fn render(&self, zero_force: &ZeroForce, prediction_ms: f64) -> String {
         format!(
-            "# Written by sp9-helperd (sp9-ctl iptsd, sp9-ctl pen zero-force). Loaded after the platform preset.\n\
-             [Device]\nVendor = 0x045E\nProduct = 0x0C52\n{}{}",
+            "# Written by sp9-helperd (sp9-ctl iptsd, sp9-ctl pen zero-force, sp9-ctl pen predict). Loaded after the platform preset.\n\
+             [Device]\nVendor = 0x045E\nProduct = 0x0C52\n{}\n[Stylus]\nPredictionMs = {prediction_ms}\n{}",
             self.sections(),
             zero_force.section()
         )
     }
 
     /// Write the drop-in. Returns whether the file changed (iptsd is to be restarted then).
-    pub fn apply(&self, zero_force: &ZeroForce, root: &Root) -> io::Result<bool> {
+    pub fn apply(&self, zero_force: &ZeroForce, prediction_ms: f64, root: &Root) -> io::Result<bool> {
         let p = root.p(IPTSD_DROPIN);
-        let text = self.render(zero_force);
+        let text = self.render(zero_force, prediction_ms);
         if std::fs::read_to_string(&p).ok().as_deref() == Some(text.as_str()) {
             return Ok(false);
         }
@@ -393,10 +394,22 @@ impl Default for ZeroForce {
     }
 }
 
+/// The longest prediction horizon of the pen, milliseconds.
+pub const PREDICTION_MAX_MS: f64 = sp9_digitizer::config::MAX_PREDICTION_MS;
+
+/// Whether `ms` is a prediction horizon the digitizer daemon takes (0 = off).
+pub fn validate_prediction(ms: f64) -> Result<(), String> {
+    if ms.is_finite() && (0.0..=PREDICTION_MAX_MS).contains(&ms) {
+        Ok(())
+    } else {
+        Err(format!("pen prediction {ms} outside 0..{PREDICTION_MAX_MS} ms"))
+    }
+}
+
 /// The touch and pen settings as sp9-digitizerd takes them while it runs (`SetParams` of its
 /// Pen and its Touch interface): the same values the drop-in holds, with the built-in ones
 /// where the helper sets none.
-pub fn digitizer_params(iptsd: &Iptsd, zero_force: &ZeroForce) -> DigitizerParams {
+pub fn digitizer_params(iptsd: &Iptsd, zero_force: &ZeroForce, prediction_ms: f64) -> DigitizerParams {
     let preset = sp9_digitizer::Config::default();
     let pen = vec![
         (Param::ZeroForce, ParamValue::Bool(zero_force.enabled)),
@@ -404,6 +417,7 @@ pub fn digitizer_params(iptsd: &Iptsd, zero_force: &ZeroForce) -> DigitizerParam
         (Param::ZeroForceExit, ParamValue::Number(zero_force.exit_percent / 100.0)),
         (Param::PressureFloor, ParamValue::Number(zero_force.floor_percent / 100.0)),
         (Param::ZeroForceReference, ParamValue::Number(zero_force.reference)),
+        (Param::PredictionMs, ParamValue::Number(prediction_ms)),
     ];
     let touch = vec![
         (Param::ActivationThreshold, ParamValue::Number(iptsd.activation_threshold.unwrap_or(preset.touch.contacts.activation_threshold))),
@@ -584,22 +598,23 @@ mod tests {
         use sp9_digitizer::control::set_params;
         let zf = ZeroForce { enabled: true, enter_percent: 85.0, exit_percent: 75.0, floor_percent: 3.0, reference: 13_430_000.0 };
         let iptsd = Iptsd { activation_threshold: Some(22.0), deactivation_threshold: None, disable_on_stylus: Some(false) };
-        let DigitizerParams { pen, touch } = digitizer_params(&iptsd, &zf);
+        let DigitizerParams { pen, touch } = digitizer_params(&iptsd, &zf, 7.5);
 
         let mut pushed = sp9_digitizer::Config::default();
         set_params(&mut pushed, &pen).unwrap();
         set_params(&mut pushed, &touch).unwrap();
         let mut read = sp9_digitizer::Config::default();
-        read.apply_iptsd_conf(&iptsd.render(&zf)).unwrap();
+        read.apply_iptsd_conf(&iptsd.render(&zf, 7.5)).unwrap();
         assert_eq!(pushed, read);
+        assert_eq!(pushed.pen.prediction_ms, 7.5);
         assert_eq!(pushed.touch.contacts.deactivation_threshold, 20.0);
 
         // Back to the preset: the values the daemon was built with.
-        let DigitizerParams { pen, touch } = digitizer_params(&Iptsd::default(), &ZeroForce::default());
+        let DigitizerParams { pen, touch } = digitizer_params(&Iptsd::default(), &ZeroForce::default(), 0.0);
         set_params(&mut pushed, &pen).unwrap();
         set_params(&mut pushed, &touch).unwrap();
         let mut read = sp9_digitizer::Config::default();
-        read.apply_iptsd_conf(&Iptsd::default().render(&ZeroForce::default())).unwrap();
+        read.apply_iptsd_conf(&Iptsd::default().render(&ZeroForce::default(), 0.0)).unwrap();
         assert_eq!(pushed, read);
     }
 
@@ -608,17 +623,22 @@ mod tests {
         let t = FakeTree::new("iptsd");
         let zf = ZeroForce::default();
         // the defaults: the pen's zero-force contact, nothing over the preset's thresholds
-        assert!(Iptsd::default().apply(&zf, &t.root).unwrap());
+        assert!(Iptsd::default().apply(&zf, 0.0, &t.root).unwrap());
         assert_eq!(
             t.read(IPTSD_DROPIN),
-            "# Written by sp9-helperd (sp9-ctl iptsd, sp9-ctl pen zero-force). Loaded after the platform preset.\n\
+            "# Written by sp9-helperd (sp9-ctl iptsd, sp9-ctl pen zero-force, sp9-ctl pen predict). Loaded after the platform preset.\n\
              [Device]\nVendor = 0x045E\nProduct = 0x0C52\n\n\
+             [Stylus]\nPredictionMs = 0\n\n\
              [DFT]\nZeroForceContact = true\nZeroForceEnter = 0.85\nZeroForceExit = 0.75\nContactMinPressure = 0.03\nZeroForceReference = 0"
         );
-        assert!(!Iptsd::default().apply(&zf, &t.root).unwrap(), "nothing changed: no restart");
+        assert!(!Iptsd::default().apply(&zf, 0.0, &t.root).unwrap(), "nothing changed: no restart");
+        assert!(Iptsd::default().apply(&zf, 7.5, &t.root).unwrap());
+        assert!(t.read(IPTSD_DROPIN).contains("[Stylus]\nPredictionMs = 7.5\n\n[DFT]"));
+        assert!(validate_prediction(30.0).is_ok() && validate_prediction(30.5).is_err() && validate_prediction(-1.0).is_err());
+        assert!(validate_prediction(f64::NAN).is_err());
         let mut c = Iptsd { activation_threshold: Some(22.0), deactivation_threshold: Some(18.0), disable_on_stylus: Some(false) };
         c.validate().unwrap();
-        assert!(c.apply(&zf, &t.root).unwrap());
+        assert!(c.apply(&zf, 0.0, &t.root).unwrap());
         let text = t.read(IPTSD_DROPIN);
         assert!(
             text.contains("[Touchscreen]\nDisableOnStylus = false")
@@ -627,10 +647,10 @@ mod tests {
         assert!(text.contains("[DFT]\nZeroForceContact = true"));
         // switched off, other thresholds, a fixed reference: all keys stay in the file
         let off = ZeroForce { enabled: false, enter_percent: 85.0, exit_percent: 75.0, floor_percent: 0.0, reference: 1234.5 };
-        assert!(c.apply(&off, &t.root).unwrap());
+        assert!(c.apply(&off, 0.0, &t.root).unwrap());
         let text = t.read(IPTSD_DROPIN);
         assert!(text.ends_with("[DFT]\nZeroForceContact = false\nZeroForceEnter = 0.85\nZeroForceExit = 0.75\nContactMinPressure = 0\nZeroForceReference = 1234.5"), "{text}");
-        assert!(!c.apply(&off, &t.root).unwrap());
+        assert!(!c.apply(&off, 0.0, &t.root).unwrap());
         c.deactivation_threshold = Some(30.0);
         assert!(c.validate().is_err());
     }

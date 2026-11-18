@@ -39,6 +39,8 @@ pub enum Param {
     ZeroForceStrokeLevel,
     /// Pen: the lowest pressure reported in contact (fraction).
     PressureFloor,
+    /// Pen: prediction horizon in milliseconds, 0 = off.
+    PredictionMs,
     /// Touch: thresholds of the contact detection (heatmap counts).
     ActivationThreshold,
     DeactivationThreshold,
@@ -49,13 +51,14 @@ pub enum Param {
 }
 
 impl Param {
-    pub const PEN: [Param; 6] = [
+    pub const PEN: [Param; 7] = [
         Param::ZeroForce,
         Param::ZeroForceEnter,
         Param::ZeroForceExit,
         Param::ZeroForceReference,
         Param::ZeroForceStrokeLevel,
         Param::PressureFloor,
+        Param::PredictionMs,
     ];
     pub const TOUCH: [Param; 4] = [Param::ActivationThreshold, Param::DeactivationThreshold, Param::DisableOnStylus, Param::PenHoldoff];
 
@@ -67,6 +70,7 @@ impl Param {
             Param::ZeroForceReference => "ZeroForceReference",
             Param::ZeroForceStrokeLevel => "ZeroForceStrokeLevel",
             Param::PressureFloor => "PressureFloor",
+            Param::PredictionMs => "PredictionMs",
             Param::ActivationThreshold => "ActivationThreshold",
             Param::DeactivationThreshold => "DeactivationThreshold",
             Param::DisableOnStylus => "DisableOnStylus",
@@ -87,6 +91,7 @@ impl Param {
             Param::ZeroForceReference => Value::Number(zf.reference),
             Param::ZeroForceStrokeLevel => Value::Number(zf.stroke_level),
             Param::PressureFloor => Value::Number(config.pen.pressure.floor),
+            Param::PredictionMs => Value::Number(config.pen.prediction_ms),
             Param::ActivationThreshold => Value::Number(config.touch.contacts.activation_threshold),
             Param::DeactivationThreshold => Value::Number(config.touch.contacts.deactivation_threshold),
             Param::DisableOnStylus => Value::Bool(config.touch.disable_on_stylus),
@@ -114,6 +119,7 @@ impl Param {
             Param::ZeroForceReference => zf.reference = number(value)?,
             Param::ZeroForceStrokeLevel => zf.stroke_level = number(value)?,
             Param::PressureFloor => config.pen.pressure.floor = number(value)?,
+            Param::PredictionMs => config.pen.prediction_ms = number(value)?,
             Param::ActivationThreshold => config.touch.contacts.activation_threshold = number(value)?,
             Param::DeactivationThreshold => config.touch.contacts.deactivation_threshold = number(value)?,
             Param::DisableOnStylus => config.touch.disable_on_stylus = boolean(value)?,

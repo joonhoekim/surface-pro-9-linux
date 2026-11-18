@@ -226,6 +226,18 @@ fn input_and_pen() {
     }
     r.call(P_INPUT, "Input", "SetZeroForce", &(false, 60.0f64, 45.0f64, 6.0f64, 900.0f64)).unwrap();
     assert!(r.tree.read(input::IPTSD_DROPIN).contains("ZeroForceContact = false"));
+
+    // the pen's prediction horizon: in the same drop-in, kept in the configuration
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "PenPredictionMs")).unwrap(), 0.0);
+    assert!(r.tree.read(input::IPTSD_DROPIN).contains("[Stylus]\nPredictionMs = 0\n"));
+    r.call(P_INPUT, "Input", "SetPenPrediction", &(7.5f64,)).unwrap();
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "PenPredictionMs")).unwrap(), 7.5);
+    assert!(r.tree.read(input::IPTSD_DROPIN).contains("[Stylus]\nPredictionMs = 7.5\n"));
+    assert!(r.tree.read("/etc/sp9/helper.toml").contains("pen_prediction_ms = 7.5"));
+    for bad in [-1.0f64, 31.0, f64::NAN] {
+        assert!(err_name(r.call(P_INPUT, "Input", "SetPenPrediction", &(bad,))).ends_with("InvalidArgs"), "{bad}");
+    }
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "PenPredictionMs")).unwrap(), 7.5);
     assert!(err_name(r.call(P_INPUT, "Input", "SetIptsd", &(10.0f64, 16.0f64, 0i32))).ends_with("InvalidArgs"));
 }
 

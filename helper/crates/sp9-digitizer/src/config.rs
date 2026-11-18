@@ -13,6 +13,9 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// The longest prediction horizon: two frames of the pen.
+pub const MAX_PREDICTION_MS: f64 = 30.0;
+
 pub const VENDOR: u16 = 0x045E;
 pub const PRODUCT: u16 = 0x0C52;
 
@@ -124,6 +127,10 @@ pub struct PenConfig {
     pub disable: bool,
     /// Units per millimeter of the stylus axes.
     pub axis_resolution: u32,
+    /// Report the tip where it will be this many milliseconds from now (`pen::predict`).
+    /// 0 = off. It shortens the distance by which a line trails the pen and costs smoothness
+    /// and accuracy at turns and stroke ends, the more the longer.
+    pub prediction_ms: f64,
     pub position: PositionConfig,
     pub tilt: TiltConfig,
     pub contact: ContactConfig,
@@ -137,6 +144,7 @@ impl Default for PenConfig {
         PenConfig {
             disable: false,
             axis_resolution: 100,
+            prediction_ms: 0.0,
             position: PositionConfig::default(),
             tilt: TiltConfig::default(),
             contact: ContactConfig::default(),
@@ -385,6 +393,9 @@ impl Config {
                 return Err(format!("{name} must be positive"));
             }
         }
+        if !(0.0..=MAX_PREDICTION_MS).contains(&p.prediction_ms) {
+            return Err(format!("pen.prediction_ms must be 0 .. {MAX_PREDICTION_MS}"));
+        }
         if p.axis_resolution == 0 || p.axis_resolution > 1000 {
             return Err("pen.axis_resolution must be 1 .. 1000".into());
         }
@@ -561,6 +572,8 @@ impl Config {
                     return Err("the 9600 x 7200 axes are not implemented".into());
                 }
             }
+            // Not an iptsd key: the helper keeps this setting in the same drop-in.
+            ("stylus", "predictionms") => pen.prediction_ms = real()?,
             ("stylus" | "dft", "tipdistance") => return fixed_zero(),
 
             ("dft", "positionminamp") => pos.min_amplitude = uint()?,
