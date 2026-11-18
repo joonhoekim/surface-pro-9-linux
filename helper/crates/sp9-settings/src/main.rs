@@ -381,13 +381,27 @@ struct InputUi {
     iptsd: Cell<(f64, f64, i32)>,
 }
 
+/// The inking waveforms: (name on D-Bus, label).
+const PEN_WAVEFORMS: [(&str, &str); 6] = [
+    ("brush", n_("Brush")),
+    ("pencil", n_("Pencil")),
+    ("ink", n_("Ink")),
+    ("marker", n_("Marker")),
+    ("chisel-marker", n_("Chisel Marker")),
+    ("sparkle", n_("Sparkle")),
+];
+/// What the dead zone switch sets (mm/s): Windows' value.
+const PEN_DEAD_ZONE: f64 = 15.0;
+
 struct PenUi {
     avail: gtk::Label,
     ink: adw::SwitchRow,
     strength: adw::SpinRow,
+    waveform: adw::ComboRow,
     eraser: adw::SwitchRow,
     test: gtk::Button,
     speed: adw::SwitchRow,
+    dead_zone: adw::SwitchRow,
     auto_couple: adw::SwitchRow,
     couple_state: gtk::Label,
     couple_row: adw::ActionRow,
@@ -700,6 +714,7 @@ fn build_pen() -> (gtk::ScrolledWindow, PenUi) {
     let avail = info(&g, tr("Pen"));
     let ink = switch(&g, tr("Ink Feedback"), tr("Vibrates while the pen tip touches the screen"));
     let strength = spin(&g, tr("Strength"), tr("Percent; 100 is the Windows default"), 2.0, 200.0, 5.0);
+    let waveform = combo(&g, tr("Texture"), &PEN_WAVEFORMS.map(|w| w.1));
     let eraser = switch(&g, tr("Eraser Click"), tr("One click when the eraser end touches the screen; it has no continuous vibration"));
     let (_, test) = button(&g, tr("Try It"), tr("One click in the pen"), tr("Test"));
     let g = group(
@@ -709,6 +724,7 @@ fn build_pen() -> (gtk::ScrolledWindow, PenUi) {
     );
     group_help(&g, tr("The pen plays its continuous vibrations only while the touch controller has a pen speed from the computer. With this on, the helper computes the speed from the pen's movement and sends it, as Windows does. It works while Ink Feedback is on. Do not run the separate surface-pen-feedback service at the same time."));
     let speed = switch(&g, tr("Send Pen Speed"), tr("Needed for the continuous vibration while writing"));
+    let dead_zone = switch(&g, tr("Ignore Very Slow Movement"), tr("As on Windows: below about 15 mm/s the pen counts as standing still"));
     let g = group(
         &b,
         tr("Pairing Through the Cover"),
@@ -719,7 +735,7 @@ fn build_pen() -> (gtk::ScrolledWindow, PenUi) {
     let couple_state = info(&g, tr("Last Pairing"));
     let (couple_row, couple) =
         button(&g, tr("Pair Now"), tr("Pairs the pen that is in the cover; a pairing that works is kept"), tr("Pair"));
-    (sw, PenUi { avail, ink, strength, eraser, test, speed, auto_couple, couple_state, couple_row, couple })
+    (sw, PenUi { avail, ink, strength, waveform, eraser, test, speed, dead_zone, auto_couple, couple_state, couple_row, couple })
 }
 
 fn build_diag(toasts: &adw::ToastOverlay) -> (gtk::ScrolledWindow, DiagUi) {
@@ -1248,6 +1264,21 @@ impl Ui {
         let ui = self.clone();
         self.pen.test.connect_clicked(move |_| ui.call_simple("Pen", "TestPulse", ()));
         self.switch_sends(&self.pen.eraser, "Pen", "SetEraserClick");
+        let ui = self.clone();
+        self.pen.waveform.connect_selected_notify(move |r| {
+            if ui.updating.get() {
+                return;
+            }
+            if let Some((name, _)) = PEN_WAVEFORMS.get(r.selected() as usize) {
+                ui.call_simple("Pen", "SetInkWaveform", (*name,));
+            }
+        });
+        let ui = self.clone();
+        self.pen.dead_zone.connect_active_notify(move |r| {
+            if !ui.updating.get() {
+                ui.call_simple("Pen", "SetSpeedDeadZone", (if r.is_active() { PEN_DEAD_ZONE } else { 0.0 },));
+            }
+        });
         self.switch_sends(&self.pen.speed, "Pen", "SetSpeedFeedback");
         self.confirm_on(
             &self.pen.auto_couple,
@@ -1644,10 +1675,13 @@ impl Ui {
         set_switch(&p.ink, dbus::b(x, "InkFeedback"));
         set_spin(&p.strength, dbus::f(x, "Strength").map(f64::round));
         set_switch(&p.eraser, dbus::b(x, "EraserClick"));
+        set_selected(&p.waveform, dbus::s(x, "InkWaveform").and_then(|w| PEN_WAVEFORMS.iter().position(|p| p.0 == w)));
+        set_switch(&p.dead_zone, dbus::f(x, "SpeedDeadZone").map(|v| v > 0.0));
         p.test.set_sensitive(avail);
         set_switch(&p.speed, dbus::b(x, "SpeedFeedback"));
         let digitizer = dbus::b(x, "DigitizerAvailable").unwrap_or(false);
         p.speed.set_sensitive(digitizer);
+        p.dead_zone.set_sensitive(digitizer);
         set_switch(&p.auto_couple, dbus::b(x, "AutoCouple"));
         let state = dbus::s(x, "CoupleState").unwrap_or_default();
         let result = dbus::s(x, "CoupleResult").unwrap_or_default();

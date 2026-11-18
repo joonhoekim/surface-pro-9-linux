@@ -227,7 +227,7 @@ fn pen_feedback_and_coupling_settings() {
     let r = rig();
     assert!(!bool::try_from(r.get(P_PEN, "Pen", "InkFeedback")).unwrap());
     assert!(bool::try_from(r.get(P_PEN, "Pen", "SpeedFeedback")).unwrap());
-    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 353.0);
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 300.0);
     assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "Strength")).unwrap(), 100.0);
     assert!(bool::try_from(r.get(P_PEN, "Pen", "EraserClick")).unwrap());
     assert!(!bool::try_from(r.get(P_PEN, "Pen", "DigitizerAvailable")).unwrap());
@@ -261,7 +261,7 @@ fn pen_feedback_and_coupling_settings() {
     let toml = r.tree.read("/etc/sp9/helper.toml");
     assert!(toml.contains("speed_feedback = false") && toml.contains("full_scale_mm_s = 200.0"), "{toml}");
     r.call(P_PEN, "Pen", "SetSpeedFullScale", &(0.0f64,)).unwrap();
-    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 353.0);
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 300.0);
     assert!(!r.tree.read("/etc/sp9/helper.toml").contains("full_scale"));
 
     // strength is the intensity byte: 100 % = 127, inside 2..254
@@ -270,10 +270,29 @@ fn pen_feedback_and_coupling_settings() {
         assert_eq!(u32::try_from(r.get(P_PEN, "Pen", "Intensity")).unwrap(), want, "{pct} %");
     }
     assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "Strength")).unwrap(), 100.0);
-    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 353.0, "strength leaves the speed scale alone");
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedFullScale")).unwrap(), 300.0, "strength leaves the speed scale alone");
     for bad in [-5.0f64, f64::NAN] {
         assert!(err_name(r.call(P_PEN, "Pen", "SetStrength", &(bad,))).ends_with("InvalidArgs"));
     }
+    // the inking waveform: brush unless chosen
+    assert_eq!(String::try_from(r.get(P_PEN, "Pen", "InkWaveform")).unwrap(), "brush");
+    let choices: Vec<String> = r.get(P_PEN, "Pen", "InkWaveforms").try_into().unwrap();
+    assert_eq!(choices, ["ink", "pencil", "marker", "chisel-marker", "brush", "sparkle"]);
+    r.call(P_PEN, "Pen", "SetInkWaveform", &("pencil",)).unwrap();
+    assert_eq!(String::try_from(r.get(P_PEN, "Pen", "InkWaveform")).unwrap(), "pencil");
+    assert!(r.tree.read("/etc/sp9/helper.toml").contains("ink_waveform = \"pencil\""));
+    for bad in ["eraser", "", "Brush"] {
+        assert!(err_name(r.call(P_PEN, "Pen", "SetInkWaveform", &(bad,))).ends_with("InvalidArgs"), "{bad}");
+    }
+    // the dead zone: off unless set
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedDeadZone")).unwrap(), 0.0);
+    r.call(P_PEN, "Pen", "SetSpeedDeadZone", &(15.0f64,)).unwrap();
+    assert_eq!(f64::try_from(r.get(P_PEN, "Pen", "SpeedDeadZone")).unwrap(), 15.0);
+    assert!(r.tree.read("/etc/sp9/helper.toml").contains("speed_dead_zone_mm_s = 15.0"));
+    for bad in [-1.0f64, 150.0, f64::NAN] {
+        assert!(err_name(r.call(P_PEN, "Pen", "SetSpeedDeadZone", &(bad,))).ends_with("InvalidArgs"));
+    }
+    r.call(P_PEN, "Pen", "SetSpeedDeadZone", &(0.0f64,)).unwrap();
     r.call(P_PEN, "Pen", "SetEraserClick", &(false,)).unwrap();
     assert!(!bool::try_from(r.get(P_PEN, "Pen", "EraserClick")).unwrap());
     assert!(r.tree.read("/etc/sp9/helper.toml").contains("eraser_click = false"));
@@ -374,8 +393,8 @@ fn stylus_events_reach_the_digitizer_and_the_pen() {
     let pen_writes: Vec<Vec<u8>> = h.writes.iter().map(|(n, d)| (assert_eq!(n, "hidraw7"), d.clone()).1).collect();
     assert_eq!(
         pen_writes,
-        [vec![0x41, 0, 0x7F, 9, 0, 0, 0], vec![0x41, 0, 0xFE, 2, 0, 0, 0], vec![0x41, 0, 0x7F, 3, 0, 0, 0]],
-        "start, stop, eraser click"
+        [vec![0x41, 0, 0x7F, 13, 0, 0, 0], vec![0x41, 0, 0xFE, 2, 0, 0, 0], vec![0x41, 0, 0x7F, 3, 0, 0, 0]],
+        "brush start (fixed ordinal: the fake pen has no list), stop, eraser click"
     );
     assert_eq!(tree.read("/var/lib/sp9/pen-fast-host-id"), "0x0143");
 }

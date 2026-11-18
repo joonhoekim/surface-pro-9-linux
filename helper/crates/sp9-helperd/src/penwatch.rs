@@ -3,8 +3,9 @@
 //! Pen haptics from iptsd's virtual stylus ("IPTSD Virtual Stylus"), on its own thread while
 //! `pen.ink_feedback` is on:
 //!
-//! - inking haptics: one start report to the pen on tip down and one stop report on tip up,
-//!   as Windows applications do. The eraser end plays no continuous waveform (on Windows
+//! - inking haptics: one start report to the pen on tip down (the waveform of
+//!   `pen.ink_waveform`, its ordinal from the pen's waveform list) and one stop report on tip
+//!   up, as Windows applications do. The eraser end plays no continuous waveform (on Windows
 //!   neither): with `pen.eraser_click` its touch-down gets one click, nothing else;
 //! - with `pen.speed_feedback`, the pen state to the digitizer (`pen_feedback::Feeder`):
 //!   `8e a1` with the FastHostId when the digitizer node appears, after resume (and once
@@ -33,7 +34,7 @@ mod linux {
     use crate::clock;
     use sp9_helper_core::config;
     use sp9_helper_core::input::SYS_INPUT;
-    use sp9_helper_core::pen::{self, InkAction, InkFeedback, ORDINAL_CLICK, ORDINAL_INK};
+    use sp9_helper_core::pen::{self, InkAction, InkFeedback, ORDINAL_CLICK};
     use sp9_helper_core::pen_feedback::{self as fb, Feeder};
     use std::io::Read;
     use std::os::fd::AsRawFd;
@@ -197,11 +198,21 @@ mod linux {
         }
     }
 
-    fn ink_edge(shared: &Shared, cfg: &config::Pen, action: InkAction) {
+    /// The waveform list of the pen node it was read from (ordinal, waveform usage): read once
+    /// per node, not on every stroke.
+    type WaveformList = Option<(String, Vec<(i64, u16)>)>;
+
+    fn ink_edge(shared: &Shared, cfg: &config::Pen, action: InkAction, list: &mut WaveformList) {
         // the pen's BLE node comes and goes as it sleeps: look it up on each edge
         let Some(p) = pen::find(&*shared.b.hid) else { return };
         let r = match action {
-            InkAction::Start => p.trigger(&*shared.b.hid, ORDINAL_INK, cfg.intensity),
+            InkAction::Start => {
+                if list.as_ref().is_none_or(|(node, _)| *node != p.node) {
+                    *list = Some((p.node.clone(), p.waveform_list(&*shared.b.hid)));
+                }
+                let ordinal = cfg.ink_waveform.ordinal(list.as_ref().map(|(_, l)| l.as_slice()).unwrap_or(&[]));
+                p.trigger(&*shared.b.hid, ordinal, cfg.intensity)
+            }
             InkAction::Click => p.trigger(&*shared.b.hid, ORDINAL_CLICK, cfg.intensity),
             InkAction::Stop => p.stop(&*shared.b.hid),
         };
@@ -212,6 +223,7 @@ mod linux {
 
     pub fn run(shared: Arc<Shared>) {
         let mut dig = Digitizer::new();
+        let mut waveforms: WaveformList = None;
         loop {
             let mut cfg = shared.cfg().pen;
             if !cfg.ink_feedback {
@@ -248,7 +260,7 @@ mod linux {
                     cfg_at = now;
                     if !cfg.ink_feedback {
                         if let Some(action) = ink.update(false, rubber, false) {
-                            ink_edge(&shared, &cfg, action);
+                            ink_edge(&shared, &cfg, action, &mut waveforms);
                         }
                         break;
                     }
@@ -259,7 +271,7 @@ mod linux {
                         if dig.node(&shared, now).is_some() && dig.feeder(&shared).display_pending() {
                             dig.display(&shared, now);
                         }
-                        let m = dig.feeder(&shared).idle(now, cfg.full_scale());
+                        let m = dig.feeder(&shared).idle(now, cfg.speed_scale());
                         dig.send(&shared, now, m);
                     }
                     continue;
@@ -291,7 +303,7 @@ mod linux {
                                 dig.feeder(&shared).tip(value != 0);
                             }
                             if let Some(action) = ink.update(value != 0, rubber, cfg.eraser_click) {
-                                ink_edge(&shared, &cfg, action);
+                                ink_edge(&shared, &cfg, action, &mut waveforms);
                             }
                         }
                         (EV_SYN, _) if cfg.speed_feedback => {
@@ -300,7 +312,7 @@ mod linux {
                                 feeder.position(now, x as f64 / rx, y as f64 / ry);
                             }
                             moved = false;
-                            let m = feeder.frame(now, cfg.full_scale());
+                            let m = feeder.frame(now, cfg.speed_scale());
                             dig.send(&shared, now, m);
                         }
                         (EV_SYN, _) => moved = false,

@@ -858,8 +858,11 @@ impl Snapshot for Pen {
         "Intensity",
         "Strength",
         "EraserClick",
+        "InkWaveform",
+        "InkWaveforms",
         "SpeedFeedback",
         "SpeedFullScale",
+        "SpeedDeadZone",
         "DigitizerAvailable",
         "AutoCouple",
         "CoverAvailable",
@@ -906,6 +909,21 @@ impl Pen {
     #[zbus(property)]
     fn eraser_click(&self) -> bool {
         self.0.cfg().pen.eraser_click
+    }
+    /// the continuous waveform started on tip down: one of InkWaveforms
+    #[zbus(property)]
+    fn ink_waveform(&self) -> String {
+        self.0.cfg().pen.ink_waveform.name().into()
+    }
+    /// what SetInkWaveform takes
+    #[zbus(property)]
+    fn ink_waveforms(&self) -> Vec<String> {
+        pen::Waveform::ALL.iter().map(|w| w.name().to_string()).collect()
+    }
+    /// pen speed in mm/s below which the speed value is 0; 0 = no dead zone
+    #[zbus(property)]
+    fn speed_dead_zone(&self) -> f64 {
+        self.0.cfg().pen.speed_dead_zone_mm_s
     }
     /// feed the pen speed back to the digitizer while InkFeedback is on
     #[zbus(property)]
@@ -1020,8 +1038,42 @@ impl Pen {
         Ok(())
     }
 
+    /// The continuous waveform of the inking haptics: ink, pencil, marker, chisel-marker,
+    /// brush, sparkle.
+    async fn set_ink_waveform(
+        &self,
+        name: String,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
+        let w = pen::Waveform::from_name(&name).ok_or_else(|| invalid(format!("unknown waveform {name}")))?;
+        persist(self.0.update(|c| c.pen.ink_waveform = w))?;
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
+    }
+
+    /// Pen speed in mm/s below which the speed value sent is 0, 0..100; 0 = none. Windows
+    /// has about 15.
+    async fn set_speed_dead_zone(
+        &self,
+        mm_s: f64,
+        #[zbus(header)] hdr: Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
+        if !config::Pen::dead_zone_valid(mm_s) {
+            return Err(invalid("dead zone must be 0..100 mm/s"));
+        }
+        persist(self.0.update(|c| c.pen.speed_dead_zone_mm_s = mm_s))?;
+        invalidate(&em, Self::IFACE, Self::PROPS).await;
+        Ok(())
+    }
+
     /// Pen speed in mm/s that maps to the largest speed value, 50..2000; 0 = the default
-    /// (353, Windows' scale). Not a strength setting.
+    /// (300, Windows' scale). Not a strength setting.
     async fn set_speed_full_scale(
         &self,
         mm_s: f64,

@@ -40,10 +40,38 @@ pub const SPEED_MAX: u8 = 63;
 const V_BASE: u16 = 0x0352;
 const V_SPEED: u16 = 0x0400;
 
-/// Pen speed that maps to the largest value. Windows' step is 5.6 mm/s (measured against raw
-/// input), so 63 is reached at about 353 mm/s.
-pub const DEFAULT_FULL_SCALE: f64 = 353.0;
+/// Pen speed that maps to the largest value: Windows computes min(v, 30) * 63 / 30 with v in
+/// 0.01 mm per ms, i.e. 63 at 300 mm/s, one step per 4.76 mm/s (a fit of its frames against
+/// raw input gives 4.74, correlation 0.994; this estimator over the same raw input gives
+/// Windows' values with 300).
+pub const DEFAULT_FULL_SCALE: f64 = 300.0;
 pub const FULL_SCALE_RANGE: (f64, f64) = (50.0, 2000.0);
+/// Windows sends 0 below about this speed; the helper only when asked to (`dead_zone`).
+pub const WINDOWS_DEAD_ZONE: f64 = 15.0;
+pub const DEAD_ZONE_MAX: f64 = 100.0;
+
+/// How a pen speed becomes the speed value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpeedScale {
+    /// mm/s that maps to the largest value
+    pub full_scale: f64,
+    /// mm/s below which the value is 0 (still a valid speed); 0 = none
+    pub dead_zone: f64,
+}
+
+impl SpeedScale {
+    pub fn new(full_scale: f64) -> Self {
+        SpeedScale { full_scale, dead_zone: 0.0 }
+    }
+
+    pub fn quantize(&self, v_mm_s: f64) -> u8 {
+        if v_mm_s < self.dead_zone {
+            0
+        } else {
+            quantize(v_mm_s, self.full_scale)
+        }
+    }
+}
 
 /// File in the helper's state directory; the standalone surface-pen-feedback keeps its own in
 /// `LEGACY_FHID`.
@@ -284,7 +312,7 @@ impl Feeder {
     /// keepalive is due). The speed goes out only while the tip touches: the frame after the
     /// tip lifts and every eraser-end frame carry "no speed", so the digitizer does not keep
     /// a stale one. A pen that left the range gets one last hover frame.
-    pub fn frame(&mut self, now: f64, full_scale_mm_s: f64) -> Option<[u8; REPORT_LEN]> {
+    pub fn frame(&mut self, now: f64, scale: SpeedScale) -> Option<[u8; REPORT_LEN]> {
         if !self.in_range {
             return match self.sent {
                 Some(PenState::Hover) | None => None,
@@ -294,18 +322,18 @@ impl Feeder {
         let state = match (self.tip, self.rubber) {
             (false, _) => PenState::Hover,
             (true, true) => PenState::Eraser,
-            (true, false) => PenState::Tip(quantize(self.est.value(), full_scale_mm_s)),
+            (true, false) => PenState::Tip(scale.quantize(self.est.value())),
         };
         self.feedback(now, state)
     }
 
     /// No event for a while: a tip in contact without a new position stands still (speed 0);
     /// otherwise the keepalive of the state it is in.
-    pub fn idle(&mut self, now: f64, full_scale_mm_s: f64) -> Option<[u8; REPORT_LEN]> {
+    pub fn idle(&mut self, now: f64, scale: SpeedScale) -> Option<[u8; REPORT_LEN]> {
         if self.in_range && self.tip && !self.rubber && now - self.last_pos >= Self::STILL_S {
             self.est.reset();
         }
-        self.frame(now, full_scale_mm_s)
+        self.frame(now, scale)
     }
 }
 
@@ -364,8 +392,11 @@ mod tests {
         assert_eq!(quantize(0.0, 860.0), 0);
         assert_eq!(quantize(f64::NAN, 290.0), 0);
         assert_eq!(quantize(145.0, 290.0), 32); // 31.5 rounds to even
-        assert_eq!(quantize(353.0, DEFAULT_FULL_SCALE), 63);
-        assert_eq!(quantize(5.6, DEFAULT_FULL_SCALE), 1, "Windows' step");
+                                                // Windows: min(v, 30) * 63 / 30 with v in 0.01 mm per ms
+        assert_eq!(DEFAULT_FULL_SCALE, 300.0);
+        for (v, want) in [(300.0, 63), (1000.0, 63), (150.0, 32), (100.0, 21), (4.76, 1), (2.0, 0)] {
+            assert_eq!(quantize(v, DEFAULT_FULL_SCALE), want, "{v} mm/s");
+        }
         e.reset();
         assert_eq!(e.value(), 0.0);
         // one sample, or samples closer than 14 ms, give no estimate
@@ -375,7 +406,7 @@ mod tests {
 
     #[test]
     fn feeder_sends_on_change_only() {
-        let fs = 290.0;
+        let fs = SpeedScale::new(290.0);
         let mut f = Feeder::new(0x143);
         assert!(f.display_due(0.0));
         assert_eq!(&f.display(0.0)[..3], &[9, 0x8E, 0xA1]);
@@ -426,7 +457,35 @@ mod tests {
     }
 
     #[test]
+    fn dead_zone_sends_zero_below_the_threshold() {
+        let off = SpeedScale::new(300.0);
+        let on = SpeedScale { dead_zone: WINDOWS_DEAD_ZONE, ..off };
+        assert_eq!((off.quantize(10.0), on.quantize(10.0)), (2, 0));
+        assert_eq!((off.quantize(14.9), on.quantize(14.9)), (3, 0));
+        assert_eq!((off.quantize(15.0), on.quantize(15.0)), (3, 3), "at the threshold the value is the usual one");
+        assert_eq!((off.quantize(200.0), on.quantize(200.0)), (42, 42));
+        assert_eq!(on.quantize(0.0), 0);
+        // through the feeder: 10 mm/s in contact is speed 0, and still a valid speed
+        let frames = |scale: SpeedScale| {
+            let mut f = Feeder::new(0x143);
+            f.range(true, false);
+            f.tip(true);
+            let mut last = None;
+            for i in 0..60 {
+                let t = 1.0 + i as f64 * 0.0077;
+                f.position(t, i as f64 * 0.077, 0.0);
+                last = f.frame(t, scale).or(last);
+            }
+            last.unwrap()
+        };
+        let (a, b) = (frames(off), frames(on));
+        assert_eq!((a[45], &a[47..49]), (2, &[0x52, 0x07][..]));
+        assert_eq!((b[45], &b[47..49]), (0, &[0x52, 0x07][..]));
+    }
+
+    #[test]
     fn eraser_end_never_gets_a_speed() {
+        let fs = SpeedScale::new(DEFAULT_FULL_SCALE);
         let mut f = Feeder::new(0x143);
         f.range(true, true);
         f.tip(true);
@@ -434,9 +493,9 @@ mod tests {
         for i in 0..130 {
             let t = 1.0 + i as f64 * 0.0077;
             f.position(t, i as f64 * 0.77, 0.0);
-            sent.extend(f.frame(t, 353.0));
+            sent.extend(f.frame(t, fs));
         }
-        sent.extend(f.idle(2.5, 353.0));
+        sent.extend(f.idle(2.5, fs));
         assert_eq!(sent.len(), 2, "the contact frame and its keepalive");
         for m in &sent {
             assert_eq!((m[38], m[43], m[45], &m[47..49]), (0x4E, 3, 0xFF, &[0x52, 0x03][..]));
@@ -444,7 +503,7 @@ mod tests {
         // the tip end afterwards gets its speed again
         f.range(false, false);
         f.range(true, false);
-        assert!(matches!(f.frame(3.0, 353.0), Some(m) if m[45] == 0));
+        assert!(matches!(f.frame(3.0, fs), Some(m) if m[45] == 0));
     }
 
     #[test]

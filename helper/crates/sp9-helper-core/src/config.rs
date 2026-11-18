@@ -81,15 +81,19 @@ pub struct Pen {
     pub ink_feedback: bool,
     /// 1..255
     pub intensity: u8,
+    /// the continuous waveform started on tip down
+    pub ink_waveform: crate::pen::Waveform,
     /// feed the pen speed back to the digitizer (the continuous waveforms need it); only
     /// while `ink_feedback` is on
     pub speed_feedback: bool,
     /// one click when the eraser end touches down (it plays no continuous waveform); only
     /// while `ink_feedback` is on
     pub eraser_click: bool,
-    /// pen speed in mm/s that maps to the largest speed value; absent = 353 (Windows' scale)
+    /// pen speed in mm/s that maps to the largest speed value; absent = 300 (Windows' scale)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_scale_mm_s: Option<f64>,
+    /// pen speed in mm/s below which the speed value is 0; 0 = none (Windows: about 15)
+    pub speed_dead_zone_mm_s: f64,
     /// the key earlier versions kept the scale in; `sp9-ctl pen strength` wrote it too, so
     /// its value is not carried over
     #[serde(rename = "speed_full_scale", skip_serializing)]
@@ -106,9 +110,11 @@ impl Default for Pen {
         Pen {
             ink_feedback: false,
             intensity: crate::pen::INK_INTENSITY,
+            ink_waveform: crate::pen::Waveform::default(),
             speed_feedback: true,
             eraser_click: true,
             full_scale_mm_s: None,
+            speed_dead_zone_mm_s: 0.0,
             legacy_full_scale: None,
             auto_couple: false,
             couple_restart_bluetooth: false,
@@ -120,6 +126,15 @@ impl Pen {
     pub fn full_scale_valid(v: f64) -> bool {
         let (lo, hi) = crate::pen_feedback::FULL_SCALE_RANGE;
         v.is_finite() && (lo..=hi).contains(&v)
+    }
+
+    pub fn dead_zone_valid(v: f64) -> bool {
+        v.is_finite() && (0.0..=crate::pen_feedback::DEAD_ZONE_MAX).contains(&v)
+    }
+
+    /// How the pen speed becomes the speed value sent to the digitizer.
+    pub fn speed_scale(&self) -> crate::pen_feedback::SpeedScale {
+        crate::pen_feedback::SpeedScale { full_scale: self.full_scale(), dead_zone: self.speed_dead_zone_mm_s }
     }
 
     /// The speed that maps to the largest speed value.
@@ -182,6 +197,10 @@ impl Config {
             w.push(format!("pen.full_scale_mm_s: {v} outside 50..2000 mm/s, ignored"));
             self.pen.full_scale_mm_s = None;
         }
+        if !Pen::dead_zone_valid(self.pen.speed_dead_zone_mm_s) {
+            w.push(format!("pen.speed_dead_zone_mm_s: {} outside 0..100 mm/s, ignored", self.pen.speed_dead_zone_mm_s));
+            self.pen.speed_dead_zone_mm_s = 0.0;
+        }
         if let Some(v) = self.pen.legacy_full_scale.take() {
             w.push(format!(
                 "pen.speed_full_scale = {v} is no longer used (strength is the intensity now): the speed scale is {} mm/s",
@@ -212,7 +231,8 @@ mod tests {
         assert!(!c.pen.ink_feedback && !c.input.touch_off_when_display_off);
         assert!(c.pen.speed_feedback && !c.pen.auto_couple && !c.pen.couple_restart_bluetooth);
         assert!(c.pen.eraser_click && c.pen.full_scale_mm_s.is_none());
-        assert_eq!(c.pen.full_scale(), 353.0);
+        assert_eq!((c.pen.ink_waveform, c.pen.speed_dead_zone_mm_s), (crate::pen::Waveform::Brush, 0.0));
+        assert_eq!(c.pen.full_scale(), 300.0);
         let mut c2 = c.clone();
         c2.performance.limits.insert("performance.ac".into(), Limits::new(30.0, 50.0, 28.0, 64));
         c2.display.psr_ac = PsrMode::Off;
@@ -248,7 +268,7 @@ mod tests {
         t.file("/etc/sp9/helper.toml", "[pen]\nfull_scale_mm_s = 5.0\nauto_couple = true\n");
         let (c, w) = Config::load(&t.root.p("/etc/sp9/helper.toml"));
         assert_eq!(w.len(), 1, "{w:?}");
-        assert_eq!(c.pen.full_scale(), 353.0);
+        assert_eq!(c.pen.full_scale(), 300.0);
         assert!(c.pen.auto_couple);
         t.file("/etc/sp9/helper.toml", "[display]\npsr_dc = \"psr2\"\n");
         let (c, w) = Config::load(&t.root.p("/etc/sp9/helper.toml"));
@@ -265,10 +285,12 @@ mod tests {
         t.file("/etc/sp9/helper.toml", "[pen]\nink_feedback = true\nintensity = 127\nspeed_full_scale = 145.0\n");
         let (c, w) = Config::load(&p);
         assert_eq!(w.len(), 1, "{w:?}");
-        assert!(w[0].contains("speed_full_scale = 145") && w[0].contains("353"), "{w:?}");
-        assert_eq!((c.pen.full_scale(), c.pen.intensity, c.pen.ink_feedback), (353.0, 127, true));
+        assert!(w[0].contains("speed_full_scale = 145") && w[0].contains("300"), "{w:?}");
+        assert_eq!((c.pen.full_scale(), c.pen.intensity, c.pen.ink_feedback), (300.0, 127, true));
+        assert_eq!(c.pen.ink_waveform, crate::pen::Waveform::Brush, "a file without the key gets the new default");
         c.save(&p).unwrap();
         assert!(!t.read("/etc/sp9/helper.toml").contains("full_scale"));
+        assert!(t.read("/etc/sp9/helper.toml").contains("ink_waveform = \"brush\""));
         assert_eq!(Config::load(&p), (c.clone(), vec![]));
         // set through `pen full-scale`: kept
         let mut c2 = c;
@@ -276,6 +298,26 @@ mod tests {
         c2.save(&p).unwrap();
         assert!(t.read("/etc/sp9/helper.toml").contains("full_scale_mm_s = 200.0"));
         assert_eq!(Config::load(&p), (c2, vec![]));
+    }
+
+    #[test]
+    fn pen_waveform_and_dead_zone() {
+        let t = FakeTree::new("cfg5");
+        let p = t.root.p("/etc/sp9/helper.toml");
+        t.file("/etc/sp9/helper.toml", "[pen]\nink_waveform = \"chisel-marker\"\nspeed_dead_zone_mm_s = 15.0\n");
+        let (c, w) = Config::load(&p);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.pen.ink_waveform, crate::pen::Waveform::ChiselMarker);
+        assert_eq!(c.pen.speed_scale(), crate::pen_feedback::SpeedScale { full_scale: 300.0, dead_zone: 15.0 });
+        c.save(&p).unwrap();
+        assert_eq!(Config::load(&p), (c, vec![]));
+        t.file("/etc/sp9/helper.toml", "[pen]\nspeed_dead_zone_mm_s = 500.0\n");
+        let (c, w) = Config::load(&p);
+        assert_eq!((w.len(), c.pen.speed_dead_zone_mm_s), (1, 0.0), "{w:?}");
+        // a waveform the pen does not offer for inking: the file is rejected as a whole, like any bad value
+        t.file("/etc/sp9/helper.toml", "[pen]\nink_waveform = \"eraser\"\n");
+        let (c, w) = Config::load(&p);
+        assert_eq!((w.len(), c), (1, Config::default()));
     }
 
     /// A table this version has no field for (a file written by another version) is neither an

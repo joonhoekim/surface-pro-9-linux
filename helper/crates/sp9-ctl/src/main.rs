@@ -41,11 +41,15 @@ const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
   pen strength PERCENT                   how hard the pen vibrates: 100 = Windows' default (intensity
                                          127), about 2..200 (intensity 2..254)
   pen intensity N | pen test             the same setting as the raw intensity byte 1..255; one click
+  pen waveform [NAME]                    the vibration while writing: ink pencil marker chisel-marker
+                                         brush sparkle (default brush); without NAME: the current one
   pen eraser-click on|off                one click when the eraser end touches down (it plays no
                                          continuous vibration)
   pen speed on|off                       pen speed to the digitizer (continuous waveforms need it)
   pen full-scale MM_S|default            advanced: pen speed that gives the largest speed value,
-                                         50..2000 mm/s (default 353, Windows' scale)
+                                         50..2000 mm/s (default 300, Windows' scale)
+  pen dead-zone MM_S|off                 pen speeds below this count as standing still (0..100;
+                                         Windows has about 15; default off)
   pen auto-couple on|off                 couple a pen put into the cover slot (Bluetooth bond)
   pen couple [--force]                   look at the pen in the cover slot now: couple it when it has
                                          no bond; a bonded pen is left alone when connected, else
@@ -304,6 +308,14 @@ fn main() {
             Some("test") => c.act("Pen", "TestPulse", &()),
             Some("speed") => c.act("Pen", "SetSpeedFeedback", &(onoff(a(2)),)),
             Some("strength") => c.act("Pen", "SetStrength", &(num::<f64>(a(2), "strength"),)),
+            Some("waveform") => match a(2) {
+                Some(name) => c.act("Pen", "SetInkWaveform", &(name.as_str(),)),
+                None => c.show("Pen", &["InkWaveform", "InkWaveforms"]),
+            },
+            Some("dead-zone") => {
+                let v = if a(2).map(String::as_str) == Some("off") { 0.0 } else { num::<f64>(a(2), "dead zone") };
+                c.act("Pen", "SetSpeedDeadZone", &(v,))
+            }
             Some("eraser-click") => c.act("Pen", "SetEraserClick", &(onoff(a(2)),)),
             Some("full-scale") => {
                 let v = if a(2).map(String::as_str) == Some("default") { 0.0 } else { num::<f64>(a(2), "full scale") };
