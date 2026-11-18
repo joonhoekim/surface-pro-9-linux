@@ -12,12 +12,12 @@ Linux support for one device: the Microsoft Surface Pro 9 with an Intel CPU, SKU
   linux-surface, Microsoft, Intel or Realtek. Issues about other devices, or about linux-surface's own patches
   and packages, go to linux-surface.
 - **State.** NixOS runs on the device with this kernel, dual-booted with Windows 11. Of the 49 tests defined in
-  [docs/test-plan.md](docs/test-plan.md): **pass 4, partial 20, fail 1, unverified 24**
+  [docs/test-plan.md](docs/test-plan.md): **pass 7, partial 18, fail 1, unverified 23**
   ([docs/test-results.md](docs/test-results.md); the last row of each ID is its current state).
   "Partial" means the part that can be measured was measured and the rest is open. "Unverified" mostly means
   a test that needs a person to touch, look or listen (touch gestures, pen pressure and tilt, buttons, cover
   detach, speaker listening), or a second device (USB-C monitor, Bluetooth headset or mouse), and a few things
-  nobody has checked yet (one hour of standby on battery, shutdown, the fan floor left over from Windows).
+  nobody has checked yet (one hour of standby on battery, shutdown).
 
 "Works" is used only for something measured (logs, numbers) or observed by a person. A driver that probed is
 not "works".
@@ -43,7 +43,7 @@ the measurements, is [docs/hardware-status.md](docs/hardware-status.md). Test ID
 |---|---|---|---|
 | Display | Works, with a caveat | Runs PSR1 with no kernel parameter (measured). No flicker noticed in use (observed; not the 10-minute AC/battery test). 120 Hz switching and the lowest brightness steps are unverified | DSP-1 partial, DSP-2 unverified, DSP-3 partial |
 | Touch | Unverified | iptsd loads the preset, no ghost touches in 150 s without contact, no ithc errors after 17 suspend cycles (measured). Taps, swipes, palm rejection: nobody has tested them. Wake by touch is not expected to work (inferred) | TOUCH-1, 2, 4 unverified, TOUCH-3 partial, PEN-8 partial |
-| Pen (Slim Pen 2) | Partial | Strokes draw (observed); tail button sends three distinct keys (measured); manual pairing works (2/2). With the device helper: continuous haptics play while drawing (observed; the helper feeds the pen's speed back to the digitizer), and a pen put into the cover's pen slot is bonded (measured; kernel patch 0023) and reconnects after its idle disconnect (measured, 3.5 s). A pen bonded in pairing mode still does not reconnect. Unverified: pressure, tilt, side button, eraser | PEN-5 partial, PEN-6 pass, PEN-9 partial, PEN-1–4, 7 unverified; [userspace/pen](userspace/pen/README.md), [gaps/pen-vendor-exchange.md](docs/research/gaps/pen-vendor-exchange.md) |
+| Pen (Slim Pen 2) | Works; pressure, tilt, side button, eraser unverified | Strokes draw (observed); tail button sends three distinct keys (measured); manual pairing works (2/2). With the device helper: continuous haptics play while drawing (observed; the helper feeds the pen's speed back to the digitizer), and a pen put into the cover's pen slot is bonded (measured; kernel patch 0023) and reconnects after its idle disconnect (measured, 3.5 s); the battery level is read. The eraser end does not vibrate, as on Windows. A pen bonded in pairing mode still does not reconnect. Not checked: coupling again after Windows has coupled the pen. Unverified: pressure, tilt, side button, eraser | PEN-5, PEN-6, PEN-9 pass, PEN-1–4, 7 unverified; [userspace/pen](userspace/pen/README.md), [gaps/pen-vendor-exchange.md](docs/research/gaps/pen-vendor-exchange.md) |
 | Front camera | Works | Frames at 640x480, 720p and 1080p requests (measured: 1280x720 120/120 frames, 28.6 fps). The sensor's binned 1296x972 mode does not work and is not offered. Mirroring, privacy LED, image quality against Windows: unverified | CAM-2 pass, CAM-3 fail, CAM-5, 6 unverified |
 | Rear camera | Works, focus unverified | Frames at 1080p and 720p (measured). Focus values are written to the lens driver; whether the image focuses is unverified. No autofocus through libcamera | CAM-1 partial, CAM-4 partial |
 | IR camera | Does not work | No driver | [gaps/camera.md](docs/research/gaps/camera.md) section 4.1 |
@@ -55,12 +55,12 @@ the measurements, is [docs/hardware-status.md](docs/hardware-status.md). Test ID
 | Ambient light and orientation sensors | Partial | Seven iio devices; samples arrive in buffer mode (measured). Single sysfs reads take over 5 s and return 0. Rotation and covering the sensor are unverified | DSP-4 partial, SAM-7 partial |
 | Battery and charger | Partial | Charge, power, cycle count, health and the adapter rating are readable (measured). Plugging and unplugging, and the 80 % limit display, are unverified | SAM-6 partial |
 | USB-C | Partial | Two `typec` ports and the partner appear; port and charger PDOs read correctly (measured). Monitor, hotplug and monitor audio are unverified | [PROVENANCE](kernel/PROVENANCE.md) 0019; DSP-5, AUD-6 unverified |
-| Fan and temperatures | Works (reading) | 0 rpm idle, 4745–5960 rpm under load, 11 temperature channels (measured). Whether the fan floor left by Windows is cleared is unverified | SAM-5, PWR-9 partial; SAM-4 unverified |
+| Fan and temperatures | Works (reading) | 0 rpm idle, 4745–5960 rpm under load, 11 temperature channels (measured). After a load under Windows and a reboot the fan ran at about 3000 rpm while warm and stopped at 38.8 °C: no fan floor is left behind (measured; not compared with a kernel without patch 0013) | SAM-4 pass; SAM-5, PWR-9 partial |
 | Performance profiles | Works, with a caveat | With the kernel alone only `low-power` changes power (6 W against 33 W for the other three, measured). With the helper each profile gets its own PL1/PL2/EPP (values written: measured; load comparison: not done). Under a 10-minute load the skin sensor reaches 51 °C; Windows lowers PL1 at 47–48 °C | SAM-5 partial, PWR-9 partial |
 | Suspend (s2idle) | Works, standby power unverified | 10/10 suspend and resume by RTC, RTC wake 17/17, 3/3 after audio playback (measured). Residency accrues only in S0i2.0. Power button, one hour on battery and shutdown are unverified. Hibernation is not available: swap is zram only | PWR-1 partial, PWR-3 pass, PWR-6 pass, PWR-4, 5, 7, 8 unverified |
 | Wi-Fi | Works | 5 GHz, 80 MHz link, no beacon loss in 854 s, reconnects 3.3 s after resume (measured). Throughput against Windows is unverified | NET-1 partial |
 | Bluetooth | Partial | The pen pairs and connects. Mouse, earphones and audio are unverified | NET-2 unverified, AUD-5 unverified |
-| Device helper | Works, partly unverified | Start-up, per-profile power limits, fan request, battery, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics, pen haptics with speed feedback and cover coupling confirmed on the device. The settings app's individual controls, skin temperature guard and touch-off are unverified | [docs/helper-reference.md](docs/helper-reference.md) |
+| Device helper | Works, partly unverified | Start-up, per-profile power limits, fan request, battery, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics, pen haptics with speed feedback and cover coupling confirmed on the device. The pen changes made since (frames as Windows sends them, strength, eraser click, replacing a dead bond), the settings app's individual controls, skin temperature guard and touch-off are unverified | [docs/helper-reference.md](docs/helper-reference.md) |
 
 ## Repository layout
 

@@ -73,15 +73,16 @@ Verdict: unverified. Tests: TOUCH-1, TOUCH-2, TOUCH-4 unverified, TOUCH-3 partia
 
 ## Pen (Slim Pen 2)
 
-Verdict: partial. Tests: PEN-5 partial, PEN-6 pass, PEN-8 partial, PEN-9 partial, PEN-1–4 and PEN-7 unverified.
+Verdict: works with the device helper; pressure, tilt, side button and eraser are unverified. Tests: PEN-5 pass, PEN-6 pass, PEN-9 pass, PEN-8 partial, PEN-1–4 and PEN-7 unverified.
 
 - **Observed.** Strokes draw (the iptsd stylus device reports `BTN_TOUCH`). Haptics: a click (waveform
   ordinal 3) sent with output report 65 is felt. The continuous ink waveform (ordinal 9, intensity 127) is
   felt during strokes, almost as on Windows, once the host feeds the pen's speed back to the digitizer
   (Feature 9 of the touch controller). The device helper does this with `sp9-ctl pen ink on`: the pen vibrates
   while drawing and stops on lift (observed, with the helper alone); `surface-pen-feedback` is the standalone
-  alternative. Between helper strength 50 % and 200 % a difference seems to be there but is small (a person's
-  impression). Without that feedback it is not
+  alternative. Faster strokes feel stronger (observed). The helper's strength setting is now the
+  intensity byte written to the pen, as on Windows; that and the feedback frames changed to match Windows have
+  not been felt on the device yet. Without that feedback it is not
   felt, neither with the bytes Windows was captured sending (`41 00 7f 09 00 00 00`) nor at intensity 255, and
   written as the Auto Trigger of Feature 65 it gives only a weak, intermittent vibration.
 - **Measured.** Tail button: single click Meta+F20, double click Meta+F19, long press Meta+F18. Pairing by
@@ -104,6 +105,15 @@ Verdict: partial. Tests: PEN-5 partial, PEN-6 pass, PEN-8 partial, PEN-9 partial
   - Reconnection. A pen bonded that way, to which the host gave its identity key, disconnected by itself
     after 50 s and was connected again 3.5 s after it was picked up and drawn with; reconnection was confirmed
     again on the booted kernel with 0023.
+  - A bonded pen in the cover. It stays connected there after the bonding; after a resume from suspend it is
+    disconnected and does not come back by itself, and it accepts a connection only after a key was written to
+    the cover. The helper then probes instead of coupling again (key to the cover only, connect, the stored
+    key encrypts): by request and automatically the result was `connected` with the bond kept. A host-side
+    disconnect silences the pen for more than 30 s, so the helper never drops the link and removes a bond only
+    once it is proven dead.
+  - The battery level of a pen bonded this way reads 100 % (PEN-5).
+- **With the eraser end** there is no continuous vibration, on Windows as on Linux (observed); only a click is
+  felt, and the helper writes one at eraser touch-down (that click is unverified by feel).
 - **Does not work.**
   - Reconnection of a pen bonded in pairing mode. After its idle disconnect the pen does not advertise again
     when it is picked up, drawn with, or its tail button is pressed; a two-minute unfiltered scan (30 000
@@ -116,11 +126,12 @@ Verdict: partial. Tests: PEN-5 partial, PEN-6 pass, PEN-8 partial, PEN-9 partial
     that works is the cover (above).
 - **Unverified.** Reaching full pressure and the pressure at the start of a stroke (PEN-1), tilt against real
   angles (PEN-2), the side button (PEN-3), the eraser (PEN-4), whether reports 84 and 110 are received on the
-  digitizer (PEN-7). Whether the FastHostId is needed for the continuous waveforms. In the helper: `pen test`, the
-  eraser waveform, speed feedback after a suspend and after an iptsd restart, detection of a stale bond after
-  Windows couples the pen again, `unsupported-kernel` on a kernel without 0023. The standalone unit
-  `surface-pen-feedback.service` and the option `pen.feedbackService` as installed. The responder and Secure
-  Connections paths of patch 0023 (compile-tested only).
+  digitizer (PEN-7). Whether the FastHostId is needed for the continuous waveforms. In the helper: the pen feedback
+  frames changed since to match what Windows sends, the strength as intensity byte and the eraser click (none
+  felt on the device yet), `pen test`, speed feedback after an iptsd restart, the stale-bond path after Windows
+  couples the pen again, `pen couple --force`, `unsupported-kernel` on a kernel without 0023. The standalone
+  unit `surface-pen-feedback.service` and the option `pen.feedbackService` as installed. The responder and
+  Secure Connections paths of patch 0023 (compile-tested only).
 - **Responsible.** iptsd for drawing. Drawing does not need Bluetooth; the tail button, the battery level and
   haptics do. The device helper for haptics, speed feedback and cover coupling ([helper.md](helper.md), the
   section on the pen; pen haptics and automatic coupling are off by default). Kernel patch 0023 (LE legacy OOB
@@ -319,15 +330,18 @@ Verdict: partial (port information only). Tests: DSP-5 unverified, AUD-6 unverif
 
 ## Fan and temperatures
 
-Verdict: reading works. Tests: SAM-4 unverified; fan values under load from SAM-5 and PWR-9.
+Verdict: reading works, and no fan floor is left over from Windows. Tests: SAM-4 pass; fan values under load from SAM-5 and PWR-9.
 
 - **Measured.** `fan1_input` reads 0 rpm at idle (12 samples) and 4745–5960 rpm under load. Eleven SAM
   temperature channels are readable. The only thermal zones are `x86_pkg_temp` and `iwlwifi_1`, with no valid
   trip point; no ACPI thermal zone is created. SAM fan command 0x0b sets the speed of a fan that SAM has
   stopped (requests of 1500–7500 gave 1588–7407 rpm) and is ignored while SAM drives the fan itself; command
-  0x0c does nothing.
-- **Unverified.** Whether patch 0013 clears the minimum fan speed that Windows can leave behind across a
-  reboot: no Windows round trip was made. The request format rests on other users' observations.
+  0x0c does nothing. After a load under Windows and a reboot into Linux (kernel with patch 0013) the fan read
+  2996–3001 rpm for the first two minutes while the device was still warm (highest SAM sensor 42.4 → 39.1 °C)
+  and 0 rpm from 38.8 °C on, for the rest of the six minutes: the minimum fan speed Windows can leave behind
+  does not stay (SAM-4).
+- **Unverified.** The same round trip on a kernel without patch 0013, so that the patch is what clears the
+  floor is not shown by comparison. The request format rests on other users' observations.
 - **Responsible.** linux-surface's `surface_fan` and `surface_thermal`; patch 0013. The helper reads the fan
   and can send the experimental fan request when explicitly allowed (`sp9-ctl fan`).
 - **Research.** [research/control/power-thermal.md](research/control/power-thermal.md) section 1.4.
@@ -417,8 +431,8 @@ Optional (`helper.enable`): the system service `sp9-helperd`, the command `sp9-c
 | Keyboard backlight | Works through the LED; following the backlight key unverified |
 | iptsd thresholds | Works |
 | Touch off while the panel is off | The setting toggles; effect unverified |
-| Pen haptics and speed feedback | Works: vibration while drawing, stop on lift (observed). `pen test`, the eraser waveform, and the state after a suspend or an iptsd restart are unverified |
-| Pen cover coupling | Works, automatic and manual (measured). Stale-bond detection and `unsupported-kernel` are unverified |
+| Pen haptics and speed feedback | Works: vibration while drawing, stop on lift (observed); the digitizer state is restored after a suspend (measured). Unverified: the frames changed since to match Windows, strength as the intensity byte, the eraser click, `pen test`, the state after an iptsd restart |
+| Pen cover coupling | Works, automatic and manual; a bonded pen that is not connected is probed and reconnected with its bond kept (measured). Unverified: replacing a dead bond after Windows coupled the pen, `--force`, `unsupported-kernel` |
 | Skin temperature guard | Experimental, off by default, unverified |
 | Diagnostics report | Works |
 | Settings app | The window opens (observed); individual controls unverified |

@@ -60,7 +60,7 @@ Which field does it: for each row, the setting was sent in five frames only, the
 
 ### 1.3 The V06 `8e a5` message
 
-Feature 9, 64 B with the report ID; offsets count from the report ID.
+Feature 9, 64 B with the report ID; offsets count from the report ID. This is the message as it was first sent from Linux, built from static analysis, and the one the tests of 1.2 used. The frames Windows really sends were read later and differ in several fields (1.8); the helper now sends those.
 
 | Offset | Field | Value sent |
 |---|---|---|
@@ -95,15 +95,16 @@ That tool writes only Output 65 and does no initialisation, which already pointe
 [`userspace/pen/surface_pen/feedback.py`](../../../userspace/pen/surface_pen/feedback.py) builds the two messages, and `surface-pen-feedback` is a daemon around it ([userspace/pen](../../../userspace/pen/README.md)):
 it computes the speed from the positions of the iptsd stylus device and sends `8e a5` when the value changes. The continuous waveform itself is still started and stopped over Bluetooth with Output 65 (section 5).
 The device helper `sp9-helperd` does the same with `sp9-ctl pen ink on` ([helper.md](../../helper.md), the section on the pen), and with the helper alone the continuous waveform played during strokes (observed). Run only one of the two: both write Feature 9.
+Since then the helper sends the frames of 1.8 (contact in attribute bit 1, a speed only for tip contact, full scale 353 mm/s), takes its strength setting as the intensity byte of Output 65, and writes one click for the eraser end. Those changes have not been felt on the device yet; `surface-pen-feedback` still sends the message of 1.3.
 
 ### 1.6 Not separated yet
 
 - Whether the FastHostId (`8e a1`) is needed at all.
-- How much the speed value changes the strength of the vibration. Faster strokes feel stronger, and between the helper's strength 50 % and 200 % a difference seems to be there but is small (a person's impressions); the default full scale of 290 mm/s was chosen by feel as "about as strong as on Windows".
+- How much the speed value changes the strength of the vibration. Faster strokes feel stronger, and between full scales of 580 and 145 mm/s (the helper's former strength 50 % and 200 %) a difference seems to be there but is small (a person's impressions). The former default full scale of 290 mm/s was chosen by feel as "about as strong as on Windows"; measured on Windows the largest value is reached at about 350 mm/s, and the strength setting there is the intensity byte, not the speed scale (1.8).
 
 ### 1.7 The eraser end
 
-With the eraser end there is no vibration on Linux (observed by a person). The input is there: the iptsd stylus device reports `BTN_TOOL_RUBBER`, `BTN_TOUCH` and positions, and the helper writes the start of the eraser waveform (ordinal 14) to the pen (measured).
+With the eraser end there is no vibration on Linux (observed by a person). The input is there: the iptsd stylus device reports `BTN_TOOL_RUBBER`, `BTN_TOUCH` and positions, and the helper, at the time of these tests, wrote the start of the eraser waveform (ordinal 14) to the pen (measured).
 
 Tried while the eraser end was rubbed on the screen, none of them vibrated:
 
@@ -117,9 +118,67 @@ Tried while the eraser end was rubbed on the screen, none of them vibrated:
 | start eraser (14) | speed 40, attribute bits 0 and 1, ZFI 1 |
 | start eraser (14) | speed 40, attribute bit 1, ZFI 1 |
 
-The ink waveform, which plays with the tip, does not play with the eraser end either, so it is not a matter of which waveform is chosen. What attribute bit 1 means is not known; it was tried as a possible "eraser end" marker.
+The ink waveform, which plays with the tip, does not play with the eraser end either, so it is not a matter of which waveform is chosen. Attribute bit 1 was tried as a possible "eraser end" marker; it turned out to be the contact bit (1.8).
 
-Whether the eraser end vibrates on Windows has not been checked. If it does, what to take there: the content of the Feature 9 messages the touch processor writes while erasing, next to those written while inking with the tip (attribute bitmap, protocol type, ZFI, process type, speed, validity bitmap, pen id, LocalId, Ack); the Output 65 writes at the same time; and which applications vibrate.
+**On Windows there is no vibration while erasing with the eraser end either (observed by a person, OneNote).** Linux behaves like Windows here, so there is nothing to fix.
+
+A vibration with the eraser end is still wanted on Linux (it tells the user that the haptics are active). Imitating Windows cannot give it, so it has to be made separately.
+
+Tried while rubbing with the eraser end, with frames shaped like those of Windows (1.8: attributes `4e`, protocol type 1, process type alternating 2 and 4, about 130 a second) (observed by a person):
+
+| Digitizer feedback | Written to the pen | Vibration |
+|---|---|---|
+| Exactly what Windows sends for the eraser (ZFI 3, speed `ff`, valid `0x0352`) | start eraser (14) | none |
+| A valid speed of 40 for the contact (ZFI 1, valid `0x0752`) | start eraser (14) | none |
+| The same | start ink (9) | none |
+| Speed 63 | start eraser (14), intensity 254 | none |
+| None | a click (ordinal 3) every 0.3 s | yes |
+
+While the eraser end is in contact the pen plays no continuous waveform, whatever the digitizer is told. A click does play. The helper writes one click at eraser touch-down.
+
+### 1.8 The `8e a5` frames Windows really sends
+
+The Feature 9 buffer the touch processor writes to the digitizer was read on Windows while strokes were drawn (measured: two runs, 179 s with 8130 frames and 143 s with 8515 frames; 1 frame missing by the sequence numbers).
+While the pen is in range it is written 134 times a second. Each frame was matched with the pen's Raw Input at the same time (tip, side button, eraser, pressure, tilt, position) and with an HCI capture (Output 65) to tell the states apart.
+
+| Offset | Field | Hover (pen identified) | Tip contact | Eraser contact | What 1.3 sent |
+|---|---|---|---|---|---|
+| 4 | Section bitmap | `02` | `03` | `02` | `02` |
+| 5, 7–8 | unknown | `01`, `90 01` | same | same | 0 |
+| 9–12 | Pen ID | 4 B (the same as in the cover's report 110) | same | 0 | 0 or the 4 B |
+| 13–14 | A 16-bit value that fell slowly from 5761 to 5677 in 3 minutes (taken to be the pen energy) | | | | 0 |
+| 37 | LocalId | `02` | `02` | `ff` | `ff` |
+| 38 | Attribute bitmap | `4c` | `4e` | `4e` | bit 0 = tip |
+| 42 | Protocol type | `01` | `01` | `01` | 0 |
+| 43 | ZFI | 3 (sometimes 2) | 1 (sometimes 2); 0 at the edge of the screen | 3 | 1 |
+| 44 | Process type | 2 and 4 alternating per frame | same | same | 0 |
+| 45 | Speed | `ff` | 0–63 | `ff` | 0–63 |
+| 47–48 | Valid bitmap | `0x03db` | `0x07db` | `0x0352` | `0x0652`, `0x06d3` with a pen ID |
+
+- **Contact is attribute bit 1** (`4c` → `4e`). Bits 2, 3 and 6 are always set and bit 0 never was. The message of 1.3 put the tip into bit 0. Because the speed alone switches the continuous waveforms on this did no harm, but it differs from Windows.
+- `0x0400` of the valid bitmap is the "speed valid" bit (set only in contact). The Windows values also have `0x0008` and `0x0100`, which 1.3 did not set.
+- **While rubbing with the eraser end Windows sends the speed as `ff` (unknown).** The contact bit is set, but ZFI is 3 as in hover and there is no pen ID or LocalId. Journal meanwhile writes a start for ink (9) and for eraser (14) to the pen, and there is no vibration (observed by a person). This agrees with the speed switching the continuous waveforms on: Windows gives no speed for the eraser end.
+- Speed: 0–6 for slow strokes, 0–63 for fast strokes (median 35–46), 0 when pressed and held still. The correlation with the pen speed computed from the Raw Input positions is 0.96 and one step is 5.6 mm/s (least squares over 2226 unsaturated frames). 63 is reached at about 350 mm/s.
+- For about 1 s after the pen has left, hover frames without a pen ID (LocalId `ff`, valid `0x0352`) continue, then they stop.
+- **The side button does not appear in the feedback.** 1112 frames drawn with the side button pressed have the same values as plain strokes.
+- Also during tip contact there are frames without pen ID and LocalId (section `02`, valid `0x0752`, a valid speed): about half of the contact frames, independent of the side button and of the application. When the pen counts as identified was not separated. The pen vibrated in both cases.
+- **Pressure and tilt change no field** (pressure 95–62607, tilt 3–50°). Only ZFI follows the position: frames drawn within 5 mm of the screen edge have ZFI 0 (77 % of the 630 contact frames with ZFI 0 are at the edge).
+- **After the display is switched off and on, `8e a1` is sent again**: once right after it comes on, and once more 3.8 s later with a raised sequence number. Its content was the same before and after (it holds the pen ID and the FastHostId). `8e a5` frames follow.
+- No `8e a2` was seen in this buffer. With a debugger attached, an `8e a2` (section `04`) went out about once per five `8e a5` (it uses another buffer, or stays for less than the polling interval).
+
+The tactile signal strength setting (Settings → Pen and Windows Ink):
+
+| Setting | Intensity byte of the Output 65 start written to the pen | Digitizer feedback |
+|---|---|---|
+| Lowest | 2 | the same (speed 0–63) |
+| Default | 127 | the same |
+| Highest | 254 | the same |
+| Off | no start is written (only the stop) | the same |
+
+The strength on Windows is the one intensity byte of Output 65. It does not rescale the speed value.
+
+How it was read: the buffer was read, read-only and from outside, from the memory of the process that hosts the touch processor (`ISM.exe`, with `TouchPenProcessor0C52.dll` 18.124.139.0), with a polling script that is not in this repository. No debugger is involved and input is not affected.
+The input service does not write Feature 9 through `HidD_SetFeature` or `NtDeviceIoControlFile` but through `NtRIMDeviceIoControl` of `win32u` (device, an IOCTL, buffer, length 186). A debugger breakpoint there shows the same bytes, but it slows the touch processor to 25 frames a second, and detaching the debugger during a stroke kills the input service (0x80000004; Windows restarts it).
 
 ## 2. Cover-slot coupling
 
@@ -257,6 +316,15 @@ While the cover's Col02 and Col03 and the THC's Col07 were held open and read wi
 but it was cancelled after 7.7 s (status 0x02). The address Windows connected to was then the pairing address, not the coupling address (measured: capture). Whether the pen was advertising is unknown. As soon as the reading stopped, coupling worked.
 Which of the three collections blocks it was not separated. Tracing this on Windows therefore has to use ETW only, without opening the collections.
 
+### 2.7 A bonded pen lying in the cover (measured on Linux)
+
+- A pen that has just been bonded stays connected while it lies in the cover (for more than 100 s).
+- After a resume from suspend the pen in the cover is disconnected and does not reconnect by itself (60 s). The bond is intact. "Bonded, in the cover, not connected" is therefore a normal state.
+- In that state the pen does not accept a connection without a key: Feature 86 → Input 110 (flags `07`) → Create Connection to the coupling address alone does not connect within 4 s.
+- **With a key it does**: adding Output 111 (any 16 B, not given to the kernel) to the same sequence connects, and 0.1 s later the host starts encryption with the stored LTK (bluetoothd and the kernel do this by themselves) and succeeds. BlueZ shows Connected and the pen's HID attaches. The pen is back on its old bond, without a new pairing.
+- After the host drops the connection (`bluetoothctl disconnect`, `RemoveDevice` of BlueZ) the pen does not advertise for more than 30 s, also when it is moved. After the pen has disconnected by itself (idle) it is back 3.5 s after being picked up.
+- A bonded pen must therefore not be judged stale because it is not connected, have its bond removed and be coupled again. A version of the helper that did so removed a good bond, the pen did not answer, and it was left without a bond (measured). Whether Windows has replaced the bond is told by whether encryption is refused in the "key, then connect" sequence above (a refusal has not been seen yet). The helper is built on this: [helper-reference.md](../../helper-reference.md#cover-coupling).
+
 ## 3. Reconnection depends on the host's identity key
 
 - The pen disconnects by itself when unused (Disconnection Complete, reason 0x13): after 69 s lying on a desk, and 11 s after bonding in the cover's slot. Windows sends nothing in that time.
@@ -390,8 +458,9 @@ Start-Process C:\BTP\v1.14.0\x86\btvs.exe -ArgumentList '-Mode','Wireshark','-Re
 | Whether the FastHostId is needed for the continuous waveforms; how much the speed value sets the strength | 1.6 |
 | Continuous waveforms with a pen bonded through the cover on Linux | Not recorded: the haptic tests of section 1 used a pen bonded in pairing mode |
 | The responder path of patch 0023 and its path with Secure Connections OOB data | Compile-tested only. The initiator path was measured, first as a module and then on a booted kernel built with the patch |
-| In the helper: detection of a stale bond after Windows couples the pen again; `unsupported-kernel` on a kernel without 0023; speed feedback after a suspend and after an iptsd restart; `pen test`; the eraser waveform | [helper-reference.md](../../helper-reference.md), the list of what is still to verify |
-| Reconnection: how often and how fast | Recorded: one measurement with a time (50 s idle, 3.5 s) and a re-check on the booted kernel with 0023, without a time. Nothing across a suspend is recorded |
+| In the helper: the frames of 1.8, the strength as intensity byte and the eraser click, by feel; the stale-bond path after Windows couples the pen again (the probe's `stale-bond`, replacing the bond) and `pen couple --force`; `unsupported-kernel` on a kernel without 0023; speed feedback after an iptsd restart; `pen test` | [helper-reference.md](../../helper-reference.md), the list of what is still to verify. Measured since with the helper: the probe of a bonded pen (by request and automatic) ends in `connected` with the bond kept; `8e a1` is restored within 3 s of a resume |
+| When the pen counts as identified in the Windows frames (pen ID and LocalId present or not); the fields at offsets 5 and 7–8; where the sequence number of `8e a1` is | 1.8 |
+| Reconnection: how often and how fast | Recorded: one measurement with a time (50 s idle, 3.5 s) and a re-check on the booted kernel with 0023, without a time. A pen in the cover does not reconnect by itself after a suspend (2.7); the test record has one reconnection after a suspend ([test-results.md](../../test-results.md) PEN-5) |
 | Reconnection of a pairing-mode bond when the host offers its identity key; a pairing-mode bond on Windows | No data (section 3) |
 | The bytes Windows writes to Features 86, 112 and 115 of the cover | HIDCLASS ETW has no contents. That Feature 86 is the host address rests on static analysis and on what the cover does on Linux (2.3). Reading them with GET_FEATURE would need the collection open, which blocks the coupling (2.6), so do it with the pen out of the cover |
 | The `NOT H` form of the coupling address | Static analysis only; never seen over the air |

@@ -14,7 +14,7 @@ marked "works" in the status column.
 
 | Part | Status |
 |---|---|
-| `sp9-helperd` (system D-Bus service), `sp9-ctl` (CLI) | Works on the device: start-up, per-profile PL and EPP and overrides, fan reading and fan request, battery and smart-charging reading, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics, pen haptics and speed feedback (vibration while drawing, stop on lift: observed), cover coupling (automatic and manual, up to the pen's HID without restarting bluetoothd: measured). Unverified: the skin temperature guard, touch off while the screen is off (only switching the setting on and off was seen), smart-charging release |
+| `sp9-helperd` (system D-Bus service), `sp9-ctl` (CLI) | Works on the device: start-up, per-profile PL and EPP and overrides, fan reading and fan request, battery and smart-charging reading, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics, pen haptics and speed feedback (vibration while drawing, stop on lift: observed), cover coupling (automatic and manual, up to the pen's HID without restarting bluetoothd; a bonded pen that is not connected is probed and comes back with its bond kept: measured). Unverified: the pen parts changed afterwards (`8e a5` frames as Windows sends them and the speed scale of 353 mm/s, strength = the intensity byte of Output 65, the eraser click, replacing a dead bond after Windows coupled the pen: "Pen" below), the skin temperature guard, touch off while the screen is off (only switching the setting on and off was seen), smart-charging release |
 | `sp9-settings` (GTK4/libadwaita settings app) | The window opens on the device (observed). Operating the individual items is unverified |
 
 What it does not do:
@@ -76,11 +76,13 @@ sp9-ctl kbd 6                          # keyboard backlight (`sp9-ctl kbd` shows
 sp9-ctl touch-off on                   # block touchscreen input while the screen is off
 sp9-ctl iptsd 22 18 on                 # iptsd thresholds on top of the preset; iptsd preset reverts
 sp9-ctl pen ink on                     # pen haptics as a whole: inking haptics (start when the tip touches, stop when it lifts) and speed feedback
-sp9-ctl pen intensity 160 && sp9-ctl pen test
-sp9-ctl pen speed off                  # do not send the pen speed to the digitizer (no continuous vibration)
-sp9-ctl pen strength 150               # strength of the continuous vibration (25–400 %, 100 = about as on Windows); pen full-scale 290 is the same setting in mm/s
+sp9-ctl pen strength 150               # vibration strength in %. 100 = the Windows default (intensity byte 127), about 2–200 (intensity byte 2–254)
+sp9-ctl pen intensity 160 && sp9-ctl pen test   # the same setting as the intensity byte (1–255); one click
+sp9-ctl pen eraser-click off           # no click when the eraser end touches down
+sp9-ctl pen speed off                  # do not send the pen state to the digitizer (no continuous vibration)
+sp9-ctl pen full-scale 300             # advanced: the pen speed that gives the largest speed value (mm/s, default 353 = the Windows scale); default reverts
 sp9-ctl pen auto-couple on             # couple a pen when it is put into the cover's pen slot (administrator authentication)
-sp9-ctl pen couple                     # couple the pen that is in the cover now; replaces an existing bond (administrator authentication)
+sp9-ctl pen couple                     # look at the pen in the cover now: couple it if it has no bond, otherwise wake and connect it, and replace only a dead bond (administrator authentication). --force replaces without checking
 sp9-ctl diagnostics                    # path of the post-install check report tar.gz (owned by the caller)
 sp9-ctl --json status
 ```
@@ -100,8 +102,9 @@ sp9-ctl --json status
 | Keyboard backlight | When the kernel provides a `*::kbd_backlight` LED, the helper writes its `brightness` (UPower and the desktop keys use the same). Otherwise it writes the level to hidraw Output 213 (`000C:007B`), reads the supported levels from Feature 213 and the current level from Feature 214. When the backlight key is pressed (the firmware changes the level), the helper sees it through the LED's `brightness_hw_changed` or hidraw Input 213 and sends a change signal, so the settings app follows | — |
 | Touch off while the screen is off | Sets `inhibited` on iptsd's virtual touchscreen while the eDP connector is off | off |
 | iptsd thresholds | Writes `/etc/iptsd.d/zz-sp9-helper.conf` (read after the preset) and restarts iptsd | preset |
-| Pen haptics | Report 65 on the pen's BLE hidraw. Inking haptics send one start and one stop report on `BTN_TOUCH` of iptsd's virtual stylus (the eraser waveform for the eraser end). This is the switch for pen haptics as a whole | off |
-| Pen speed feedback | Sends the FastHostId (`8e a1`) and the pen's speed and tip state (`8e a5`) to Feature 9 of the digitizer (THC). The pen plays its continuous waveforms only while the digitizer has a speed. Only while pen haptics are on | on (nothing is sent while pen haptics are off) |
+| Pen haptics | Report 65 on the pen's BLE hidraw. Inking haptics send one start and one stop report on `BTN_TOUCH` of iptsd's virtual stylus. The strength (%) is the intensity byte of the start report (the same as the Windows "tactile signals" strength). This is the switch for pen haptics as a whole | off |
+| Eraser click | Writes one click (ordinal 3) when the eraser end touches the screen. The eraser end plays no continuous waveform (the same on Windows). Only while pen haptics are on | on |
+| Pen speed feedback | Sends the FastHostId (`8e a1`) and the pen state (`8e a5`: hover, tip contact with its speed, eraser contact) to Feature 9 of the digitizer (THC), with the bytes Windows sends. The pen plays its continuous waveforms only while the digitizer has a speed. Only while pen haptics are on | on (nothing is sent while pen haptics are off) |
 | Cover coupling | When the pen is put into the Type Cover's pen slot, hands a key over through the cover and bonds with LE legacy OOB pairing. Needs kernel patch 0023 | off |
 | Diagnostics | Runs `post-install-check.sh` (read only; masks MAC addresses, UUIDs and serials) and packs it as `/var/lib/sp9/diagnostics/check-<time>.tar.gz` | — |
 
@@ -139,23 +142,42 @@ while the pen is disconnected (it disconnects by itself when idle: after about 5
 ## Pen
 
 The basis and the measurements are in [research/gaps/pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md).
-Both functions below were first done on the device with Python tools (`userspace/pen/surface-pen-feedback` and
-test scripts for the cover coupling) and then moved into the helper. The helper's own implementation has been
-run on the device since: the status of each is in [helper-reference.md](helper-reference.md). Byte layouts and
-computations are unit-tested against the test vectors of the Python side.
+Inking haptics, speed feedback and cover coupling have worked on the device with the helper (the status column
+of [helper-reference.md](helper-reference.md)). What was changed afterwards to match the values measured on
+Windows (frame bytes, speed scale, strength, eraser click) **has not been felt on the device again**; of the
+changed coupling, the probe of a bonded pen has been measured and the replacement of a dead bond has not.
+
+**Strength.** The Windows "tactile signals" strength is one byte: the intensity of the start report written to
+the pen (Output 65; minimum 2, default 127, maximum 254). The helper does the same: `pen strength P` sets the
+intensity byte to `round(127 x P / 100)`, clamped to 2–254 (100 % = 127, about 2–200 %). `pen intensity N` sets
+the same value as the byte (1–255). The speed scale has nothing to do with the strength.
 
 **Speed feedback.** With `pen ink on` the helper computes the pen's speed from the positions of iptsd's virtual
 stylus (two samples 14–32 ms apart, the last three values averaged with 0.5/0.33/0.17), quantises it to 0–63 and
-sends it to the digitizer. It sends only when the value or the tip state changes (the digitizer keeps the last
-value), and 0 when the pen stands still in range.
-`8e a1` (the FastHostId) is sent when the digitizer node is seen (again), after a resume from suspend, and when
-the pen comes into range 30 seconds or more after the last one.
-The strength is set as "the speed that gives the largest value" (full scale): 290 mm/s by default (about as on
-Windows, by a person's observation); the lower it is, the stronger the vibration at the same speed.
-`pen strength P` is 290 x 100 / P mm/s.
+sends it to the digitizer in the `8e a5` frame the Windows touch processor sends without a pen ID. A speed is
+given **only while the tip is in contact**: while hovering and while the eraser end is used the frame says "no
+speed" (`ff`), and when the tip lifts a frame without a speed goes out at once, so that no old speed stays in
+the digitizer.
+It sends when the state changes (hover, contact and its speed value, eraser contact) and once a second. Windows
+sends on every frame (134 a second).
+`8e a1` (the FastHostId) is sent when the digitizer node is seen (again), right after a resume from suspend and
+once more 3.8 seconds later (as Windows does after the display comes back), and when the pen comes into range
+30 seconds or more after the last one.
+The speed scale (full scale: the speed that gives the largest value, 63) is 353 mm/s by default: one step on
+Windows is 5.6 mm/s (measured). `pen full-scale N` changes it, but it is not a strength setting.
 The FastHostId is kept in `/var/lib/sp9/pen-fast-host-id`. When that is missing the helper takes over
 `/var/lib/surface-pen/fast-host-id`, which `surface-pen-feedback` used, and when that is missing too it makes one
 up at random.
+
+**The eraser end.** No continuous waveform plays with the eraser end (the same on Windows; frames and waveforms
+were varied in several ways). Only the click waveform is felt, so the helper writes one click when the eraser
+end touches down (`pen eraser-click`, on by default). Nothing is written while rubbing or on lift.
+
+**Settings files from before.** The old `pen strength` changed the speed scale (`speed_full_scale`). That key is
+no longer used: whatever its value, the speed scale becomes 353 mm/s, the helper writes one journal line at
+start-up, and the key disappears the next time the settings are saved.
+A value set with the old `pen full-scale` used the same key and is dropped with it (the two cannot be told
+apart). Set it again with `pen full-scale N` if needed (new key `full_scale_mm_s`). `intensity` stays.
 
 **Do not run it together with `surface-pen-feedback`.** Both write the same Feature 9 and overwrite each other's
 speed value. The helper does not write to the digitizer with `pen ink off` or `pen speed off`.
@@ -165,25 +187,67 @@ warning.
 **Cover coupling.** With `pen auto-couple on` the helper keeps the cover's pen bonding node open (`045E:09B0`,
 FFF4:0001) and writes Features 112 and 86 (the host address) when the node appears, after a resume and on a manual
 request.
-When the cover announces a pen with Input 110, the helper computes the coupling address and couples when BlueZ
-has no bond for that address (or encryption with that bond has failed before):
-remove the old device from BlueZ → switch Pairable on → 16 random bytes (the TK) to the kernel (MGMT Add Remote
-OOB Data) → the same 16 B to Output 111 of the cover → LE Extended Create Connection on a raw HCI socket →
-MGMT Pair Device → remove the TK, set Trusted → wait up to 10 seconds for the pen's HID node.
-`pen couple` runs the same procedure once, also when there is a bond.
-The outcome is `CoupleResult`: `coupled`, `coupled-no-hid` (bonded, BlueZ has not attached the HID yet),
-`already-coupled`, `no-cover`, `no-pen`, `unsupported-kernel` (the kernel lacks patch 0023), `bluetooth-off`,
-`failed: reason`. Only the last byte of an address is shown, and the journal has neither whole addresses nor
-keys. The reasons for the design are in [helper-reference.md](helper-reference.md#cover-coupling).
+When the cover announces a pen with Input 110, the helper computes the coupling address. When BlueZ has no bond
+for that address (or encryption with that bond has failed before) it couples at once.
+A bonded pen that is connected is left alone. A bonded pen that is not connected is **checked, not removed**
+(the probe, below). The coupling procedure:
+switch Pairable on → 16 random bytes (the TK) to the kernel (MGMT Add Remote OOB Data) → the same 16 B to Output
+111 of the cover → LE Extended Create Connection on a raw HCI socket → MGMT Pair Device, wait for the pen's
+LTK → remove the TK, set Trusted → wait up to 10 seconds for the pen's HID node. When the pen does not connect
+the attempt ends in `no-answer` and the cover is asked again 60 seconds later.
 
-- Dual boot: when Windows couples the pen again with the same host address, the pen's key changes. When
-  encryption with that pen then fails on Linux (Device Disconnected on the management socket with reason
-  authentication failure), the helper remembers it and replaces the bond when the pen is put into the cover
-  again. When the helper did not see the failure (automatic coupling was off, or the helper restarted), replace
-  the bond with `sp9-ctl pen couple`. This detection is unverified on the device.
+**The probe: a bonded pen that is not connected.** This is a common state: a healthy pen sleeps in the cover,
+and after a resume from suspend it does not connect by itself (measured: 60 seconds).
+"Not connected" is therefore no reason to drop a bond. An earlier version did so and removed a good bond on the
+device (measured): it removed the bond of a pen that was not connected after 6 seconds and started a coupling,
+the pen did not answer the connection, and it was left without a bond.
+Now the helper waits 6 seconds (the pen may connect by itself), asks the cover again, and if the pen is still
+there writes a new key to the cover only (Output 111; the pen accepts a connection only after it received a
+key: measured) and connects. That key is not given to the kernel, and nothing is removed or paired.
+Once connected, bluetoothd encrypts with the stored key by itself (measured: LE Start Encryption 0.1 seconds
+after the connection, success, the pen's HID attaches; the pen accepts the old key while holding a new one it
+never used).
+
+| Probe outcome | Meaning | What happens |
+|---|---|---|
+| Connected, and still connected 2 seconds later | The bond is healthy | `connected`. Nothing changed except that a sleeping pen is connected again |
+| Connected, then dropped for an encryption failure (Device Disconnected, reason authentication failure) | The bond is dead (Windows coupled the pen since) | `stale-bond`. The cover is asked again, and at that announcement the dead bond is removed (MGMT Unpair Device) and the pen coupled |
+| No connection | Unknown | `no-answer`. The bond stays. No automatic probe again within 60 seconds |
+
+- The dead-bond case (encryption refused) has not been seen on the device yet. The healthy case was measured,
+  with the helper: by request and automatically the result was `connected`, with the bond kept.
+- The unused key a probe leaves in the pen is taken to be harmless (inferred: in earlier experiments coupling
+  still worked after keys had been written several times without pairing).
+- Right after a resume the helper does nothing by itself. `sp9-ctl pen couple` probes then as well and
+  reconnects the pen. Once, right after a resume, it ended in `no-pen` (the cover had not announced the pen);
+  running it again works.
+- `sp9-ctl pen couple`: `already-coupled` for a connected pen (nothing is touched), coupling for a pen without a
+  bond, a probe for a bonded pen that is not connected. `--force` removes the bond of a pen that is not connected
+  without a probe and couples: when the pen does not answer it is left without a bond (the cover is asked again
+  60 seconds later and coupling is tried). It is for a stale bond whose probe only gives `no-answer`.
+
+The outcome is `CoupleResult`: `coupled`, `coupled-no-hid` (bonded, BlueZ has not attached the HID yet),
+`already-coupled`, `connected`, `no-answer`, `stale-bond` (a coupling follows), `no-cover`, `no-pen`,
+`unsupported-kernel` (the kernel lacks patch 0023), `bluetooth-off`, `failed: reason`. Only the last byte of an
+address is shown, and the journal has neither whole addresses nor keys. The reasons for the design are in
+[helper-reference.md](helper-reference.md#cover-coupling).
+
+- Dual boot: when Windows couples the pen again with the same host address, the pen's keys for this host change,
+  the IRK included. Linux then does not recognise the pen's advertising and does not connect, so an encryption
+  failure does not happen by itself and the old bond stays in BlueZ (measured). The probe provokes that failure
+  on purpose to tell. A bond whose encryption failure was seen outside a probe is also replaced the next time
+  the pen is put in.
+- A pen that has just been coupled is not touched automatically for 60 seconds, and `pen couple` is refused
+  within 15 seconds of a coupling (`failed: coupled a moment ago…`): a freshly coupled pen does not answer a new
+  connection (measured).
+- **The helper never drops the pen's connection and does not use `RemoveDevice`.** After the host drops the link
+  (`bluetoothctl disconnect`) the pen does not advertise for more than 30 seconds, also when it is moved. After
+  the pen has disconnected by itself for idling it is back within 3.5 seconds (measured).
+  Only a bond that is proven dead (and `--force`) is removed, and only while the pen is not connected.
+- When Bluetooth is not on yet at boot, `CoupleResult` is `bluetooth-off` for a moment and is cleared once the
+  adapter is on and the host address has been written to the cover. A pen that was already in the slot is
+  announced by the cover at that point.
 - A pen whose coupling failed is not tried again by itself within 60 seconds.
-- A `pen couple` issued right after a coupling fails, because the pen does not answer the connection, and leaves
-  the pen without a bond; run it again a few seconds later (measured).
 - When the result stays `coupled-no-hid`, see whether the HID attaches the next time the pen reconnects. If not:
   `sudo systemctl restart bluetooth`, or `[pen] couple_restart_bluetooth = true` in `helper.toml` (the helper
   then restarts it in that case only). On the device the HID attached without a restart.
@@ -193,8 +257,8 @@ keys. The reasons for the design are in [helper-reference.md](helper-reference.m
 The daemon runs as root and asks polkit on every call. Everyday settings (profile, power limits, skin temperature
 guard, smart-charging release, ICC, keyboard backlight, touch and iptsd, pen haptics, diagnostics) are allowed
 without a password in an active local session. The experimental fan request, the PSR policy (it writes to
-debugfs), pen coupling (switching automatic coupling on, and `pen couple`: they create and replace a Bluetooth
-bond) and reloading the settings ask for administrator authentication (kept for the session).
+debugfs), pen coupling (switching automatic coupling on, and `pen couple`: they create a Bluetooth bond and replace a
+dead one) and reloading the settings ask for administrator authentication (kept for the session).
 The actions are listed in `helper/data/io.github.joonhoekim.opendevicehelper.sp9.policy` and can be changed in
 `/etc/polkit-1/rules.d/`.
 
@@ -237,7 +301,7 @@ otherwise every 10 seconds. Failures are shown as toasts.
 | Battery | Status, charge, power, health, cycles, adapter rating, smart charging state and the one-time release, UEFI battery limit (read only, with how to change it in the UEFI menu) |
 | Display | PSR policy per power source, the boot value, the driver state, creating the ICC profile and how to assign it in GNOME, KDE and colord |
 | Keyboard and touch | Keyboard backlight level (follows changes made with the key), ignoring touch while the screen is off, iptsd sensitivity presets (device preset 24/20, 20/16, 32/28, iptsd default 40/36) and ignoring touch near the pen |
-| Pen | Inking haptics, intensity, test, sending the pen speed and its strength (%), automatic pairing through the cover (confirmation when switching on), the last pairing result, pair now |
+| Pen | Inking haptics, strength (%), eraser click, test, sending the pen speed, automatic pairing through the cover (confirmation when switching on), the last pairing result, pair now |
 | Diagnostics | Exporting a report, the path of the last report and opening its folder |
 | About | Device, model, helper and app versions, feature list, reloading the settings file |
 
