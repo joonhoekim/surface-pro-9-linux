@@ -99,7 +99,27 @@ The device helper `sp9-helperd` does the same with `sp9-ctl pen ink on` ([helper
 ### 1.6 Not separated yet
 
 - Whether the FastHostId (`8e a1`) is needed at all.
-- Whether the speed value changes the strength of the vibration (speed 0 against 63). The daemon's default assumes it does: its full scale of 290 mm/s was chosen by feel as "about as strong as on Windows", and there is no controlled comparison behind it. With the helper, between strength 50 % and 200 % (full scale 580 and 145 mm/s) a difference seems to be there but is small (a person's impression).
+- How much the speed value changes the strength of the vibration. Faster strokes feel stronger, and between the helper's strength 50 % and 200 % a difference seems to be there but is small (a person's impressions); the default full scale of 290 mm/s was chosen by feel as "about as strong as on Windows".
+
+### 1.7 The eraser end
+
+With the eraser end there is no vibration on Linux (observed by a person). The input is there: the iptsd stylus device reports `BTN_TOOL_RUBBER`, `BTN_TOUCH` and positions, and the helper writes the start of the eraser waveform (ordinal 14) to the pen (measured).
+
+Tried while the eraser end was rubbed on the screen, none of them vibrated:
+
+| Written to the pen (Output 65) | Digitizer feedback (`8e a5`) |
+|---|---|
+| start eraser (14) | as the helper sends it (tip bit, speed) |
+| start ink (9), then eraser (14), as Windows Journal does | the same |
+| start ink (9) | the same |
+| start eraser (14) | speed 40, attributes 0, ZFI 0 |
+| start eraser (14) | speed 40, attribute bit 1, ZFI 0 |
+| start eraser (14) | speed 40, attribute bits 0 and 1, ZFI 1 |
+| start eraser (14) | speed 40, attribute bit 1, ZFI 1 |
+
+The ink waveform, which plays with the tip, does not play with the eraser end either, so it is not a matter of which waveform is chosen. What attribute bit 1 means is not known; it was tried as a possible "eraser end" marker.
+
+Whether the eraser end vibrates on Windows has not been checked. If it does, what to take there: the content of the Feature 9 messages the touch processor writes while erasing, next to those written while inking with the tip (attribute bitmap, protocol type, ZFI, process type, speed, validity bitmap, pen id, LocalId, Ack); the Output 65 writes at the same time; and which applications vibrate.
 
 ## 2. Cover-slot coupling
 
