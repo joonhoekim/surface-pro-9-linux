@@ -1,0 +1,194 @@
+Correct the position of a tilted DFT pen (TiltOffsetLinear, TiltOffsetQuadratic)
+
+The position that is measured is where the field of the tip electrode is strongest on the
+sensor. With a tilted pen that is not the point of the tip but a place shifted towards the body
+of the pen. The shift grows with the distance d between the tip and the ring centroid (in
+antennas): the correction is TiltOffsetQuadratic * d^2 + TiltOffsetLinear * d antennas in the
+direction from the ring to the tip, smoothed with TiltOffsetGain per sample (0.1) and dropped
+when it exceeds half an antenna. Off by default (both 0); needs ExtraPositionWindows.
+
+With 0.0089 and 0.0402 on the Surface Pro 9 with the Slim Pen 2 the correction is 0.05 mm in
+upright handwriting and 0.19 .. 0.29 mm with the pen at 26 .. 37 degrees. Measured against what
+Windows computes from the same frames (before its position filter): median distance of the
+contact samples 0.03 .. 0.27 mm before, 0.04 .. 0.10 mm after; the remaining difference has a
+constant part of about 0.02 mm per axis, which is rounding on the other side.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 63d55d4..bd1d355 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -83,6 +83,9 @@ public:
+ 	f64 dft_mpp2_tilt_distance = 0;
+ 	bool dft_tilt_smoothing = false;
+ 	bool dft_tilt_while_hovering = true;
++	f64 dft_tilt_offset_linear = 0;
++	f64 dft_tilt_offset_quadratic = 0;
++	f64 dft_tilt_offset_gain = 0.1;
+ 	f64 dft_centroid_exp = 0.6;
+ 
+ public:
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index 6e834ee..0e7d479 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -151,6 +151,12 @@ private:
+ 	DftAngleSmoother m_tilt_altitude_smoother {};
+ 	DftAngleSmoother m_tilt_azimuth_smoother {};
+ 
++	// The offset of the tip from the measured position that is caused by the tilt,
++	// in antennas. Only used with TiltOffsetLinear / TiltOffsetQuadratic.
++	bool m_tilt_offset_valid = false;
++	f64 m_tilt_offset_x = 0;
++	f64 m_tilt_offset_y = 0;
++
+ public:
+ 	DftStylus(Config config, const DeviceInfo &info)
+ 		: m_config {std::move(config)},
+@@ -379,6 +385,11 @@ private:
+ 			m_stylus.azimuth = report ? m_tilt_azimuth : 0;
+ 		}
+ 
++		if (m_tilt_offset_valid) {
++			x += m_tilt_offset_x;
++			y += m_tilt_offset_y;
++		}
++
+ 		x = this->antenna_to_screen_x(x, width);
+ 		y = this->antenna_to_screen_y(y, height);
+ 
+@@ -390,7 +401,8 @@ private:
+ 	}
+ 
+ 	/*!
+-	 * Calculates the tilt of the stylus from one of the MPP v2 position windows.
++	 * Calculates the tilt of the stylus from one of the MPP v2 position windows, and
++	 * the offset of the tip position that comes with it.
+ 	 *
+ 	 * These windows carry the tone of the tip in their first row and the tone of the
+ 	 * ring electrode, which sits further up the pen, in the second one, both about 15
+@@ -415,7 +427,10 @@ private:
+ 	{
+ 		const f64 distance = m_config.dft_mpp2_tilt_distance;
+ 
+-		if (distance <= 0)
++		const bool want_offset = m_config.dft_tilt_offset_linear != 0 ||
++		                         m_config.dft_tilt_offset_quadratic != 0;
++
++		if (distance <= 0 && !want_offset)
+ 			return;
+ 
+ 		if (dft.x.size() < 2 || dft.y.size() < 2 || std::isnan(tx) || std::isnan(ty))
+@@ -432,7 +447,11 @@ private:
+ 		if (std::isnan(rx) || std::isnan(ry))
+ 			return;
+ 
+-		// Tip to ring, in centimeters on the screen (and in the orientation of the screen).
++		// Tip to ring, in antennas.
++		const f64 ax = rx - tx;
++		const f64 ay = ry - ty;
++
++		// The same in centimeters on the screen (and in the orientation of the screen).
+ 		const f64 sx =
+ 			this->antenna_to_screen_x(rx, width) - this->antenna_to_screen_x(tx, width);
+ 		const f64 sy = this->antenna_to_screen_y(ry, height) -
+@@ -441,26 +460,65 @@ private:
+ 		const f64 xt = sx * m_config.width;
+ 		const f64 yt = sy * m_config.height;
+ 
+-		const f64 sin = std::hypot(xt, yt) / distance;
++		if (distance > 0) {
++			const f64 sin = std::hypot(xt, yt) / distance;
++
++			// The ring can not be further from the tip than it is on the pen.
++			if (sin > 1.2)
++				return;
+ 
+-		// The ring can not be further from the tip than it is on the pen.
+-		if (sin > 1.2)
++			f64 alt = std::asin(std::min(1.0, sin));
++			f64 azm = std::fmod(std::atan2(-yt, xt) + (2 * M_PI), 2 * M_PI);
++
++			if (m_config.dft_tilt_smoothing) {
++				constexpr f64 band = 5.0 * M_PI / 180;
++				constexpr f64 gain = 0.19;
++
++				alt = m_tilt_altitude_smoother.update(alt, 0, band, gain);
++				azm = m_tilt_azimuth_smoother.update(azm, 2 * M_PI, band, gain);
++			}
++
++			m_tilt_altitude = alt;
++			m_tilt_azimuth = azm;
++			m_tilt_valid = true;
++		}
++
++		if (!want_offset)
++			return;
++
++		/*
++		 * The measured position is where the field of the tip electrode is strongest
++		 * on the sensor. With a tilted pen that is not below the point of the tip, but
++		 * shifted towards the body of the pen, by an amount that grows a little faster
++		 * than the tip-ring distance. The correction points from the ring to the tip.
++		 */
++		const f64 d = std::hypot(ax, ay);
++
++		if (d <= 0)
+ 			return;
+ 
+-		f64 alt = std::asin(std::min(1.0, sin));
+-		f64 azm = std::fmod(std::atan2(-yt, xt) + (2 * M_PI), 2 * M_PI);
++		const f64 mag = (m_config.dft_tilt_offset_quadratic * d * d) +
++		                (m_config.dft_tilt_offset_linear * d);
+ 
+-		if (m_config.dft_tilt_smoothing) {
+-			constexpr f64 band = 5.0 * M_PI / 180;
+-			constexpr f64 gain = 0.19;
++		const f64 ox = -ax / d * mag;
++		const f64 oy = -ay / d * mag;
+ 
+-			alt = m_tilt_altitude_smoother.update(alt, 0, band, gain);
+-			azm = m_tilt_azimuth_smoother.update(azm, 2 * M_PI, band, gain);
++		// More than half an antenna is not a tilt.
++		if (std::abs(ox) > 0.5 || std::abs(oy) > 0.5) {
++			m_tilt_offset_valid = false;
++			return;
+ 		}
+ 
+-		m_tilt_altitude = alt;
+-		m_tilt_azimuth = azm;
+-		m_tilt_valid = true;
++		if (m_tilt_offset_valid) {
++			const f64 gain = std::clamp(m_config.dft_tilt_offset_gain, 0.0, 1.0);
++
++			m_tilt_offset_x += gain * (ox - m_tilt_offset_x);
++			m_tilt_offset_y += gain * (oy - m_tilt_offset_y);
++		} else {
++			m_tilt_offset_x = ox;
++			m_tilt_offset_y = oy;
++			m_tilt_offset_valid = true;
++		}
+ 	}
+ 
+ 	/*!
+@@ -1010,6 +1068,7 @@ private:
+ 			m_stylus.altitude = 0;
+ 			m_stylus.azimuth = 0;
+ 		}
++		m_tilt_offset_valid = false;
+ 	}
+ };
+ 
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 302d937..5c49d81 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -206,6 +206,9 @@ private:
+ 		this->get(ini, "DFT", "Mpp2TiltDistance", m_config.dft_mpp2_tilt_distance);
+ 		this->get(ini, "DFT", "TiltSmoothing", m_config.dft_tilt_smoothing);
+ 		this->get(ini, "DFT", "TiltWhileHovering", m_config.dft_tilt_while_hovering);
++		this->get(ini, "DFT", "TiltOffsetLinear", m_config.dft_tilt_offset_linear);
++		this->get(ini, "DFT", "TiltOffsetQuadratic", m_config.dft_tilt_offset_quadratic);
++		this->get(ini, "DFT", "TiltOffsetGain", m_config.dft_tilt_offset_gain);
+ 		this->get(ini, "DFT", "CentroidExp", m_config.dft_centroid_exp);
+ 
+ 		// Legacy options that are kept for compatibility

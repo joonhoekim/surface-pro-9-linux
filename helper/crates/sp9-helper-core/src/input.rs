@@ -384,10 +384,11 @@ pub struct ZeroForce {
 }
 
 impl Default for ZeroForce {
-    /// The owner's values, chosen by feel on this device with the Slim Pen 2: at 20 / 10 no
-    /// strokes were lost.
+    /// Measured on this device with the Slim Pen 2: the tip signal is at 92 % of the reference and
+    /// above with the pen on the glass and at 65 % and below when it is lifted between letters, so
+    /// lower thresholds join strokes. The floor is the smallest pressure Windows reports (37/1024).
     fn default() -> Self {
-        ZeroForce { enabled: true, enter_percent: 20.0, exit_percent: 10.0, floor_percent: 4.0, reference: 0.0 }
+        ZeroForce { enabled: true, enter_percent: 85.0, exit_percent: 75.0, floor_percent: 3.0, reference: 0.0 }
     }
 }
 
@@ -556,7 +557,7 @@ mod tests {
             t.read(IPTSD_DROPIN),
             "# Written by sp9-helperd (sp9-ctl iptsd, sp9-ctl pen zero-force). Loaded after the platform preset.\n\
              [Device]\nVendor = 0x045E\nProduct = 0x0C52\n\n\
-             [DFT]\nZeroForceContact = true\nZeroForceEnter = 0.2\nZeroForceExit = 0.1\nContactMinPressure = 0.04\nZeroForceReference = 0"
+             [DFT]\nZeroForceContact = true\nZeroForceEnter = 0.85\nZeroForceExit = 0.75\nContactMinPressure = 0.03\nZeroForceReference = 0"
         );
         assert!(!Iptsd::default().apply(&zf, &t.root).unwrap(), "nothing changed: no restart");
         let mut c = Iptsd { activation_threshold: Some(22.0), deactivation_threshold: Some(18.0), disable_on_stylus: Some(false) };

@@ -1,0 +1,383 @@
+Pressure of a DFT pen without steps (PressureRamp, ZeroForcePressure)
+
+The pressure is measured once per frame while, with ExtraPositionWindows, two samples are
+reported, and a contact can begin a frame before the first pressure (ForceToneContact) or go on
+without any force (ZeroForceContact). Until now every such sample carries ContactMinPressure:
+measured on the Surface Pro 9, all strokes begin with two samples at that floor and then jump
+(the largest step among the first 8 samples is 0.47 of the pressure of the 8th, median, 0.74 .. 0.77
+for one stroke in ten), and line width follows.
+
+PressureRamp: the first of the two samples after a pressure window is half way between the last
+two measurements, and where the pressure changes between measured and zero force pressure the
+step is spread over 2 samples upwards and 25 downwards.
+
+ZeroForcePressure: a contact without force reports a pressure that is made up instead of the
+floor (ContactMinPressure stays the lower bound). It is a default that falls with the tilt (0.098
+upright to 0.019 flat), scaled towards 0.85 of the pressure with which the last strokes began (5
+strokes of the last 330 frames; the scale moves by at most a quarter per stroke), so the first
+samples of a stroke are close to what the pen will report a frame later. Where a stroke loses
+its force it continues at 0.8 of the last pressure. Limited to 37/1024 .. 450/1024. Nothing is
+held back: the contact is reported as early as before.
+
+Replayed captures, both on: the largest step among the first 8 samples of a stroke is 0.14 ..
+0.16 of the 8th (median; Windows 0.06), 0.22 .. 0.25 for one stroke in ten (Windows 0.19 ..
+0.23); the first sample is 0.54 .. 0.67 of the 8th (0.21 .. 0.25 before; Windows, which reports
+late and knows the pressure by then, 0.82 .. 0.89). The largest step anywhere in contact (99 %)
+falls from 674 .. 866 to 286 .. 407 of 4096. Both off by default.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index d121921..9fbfb53 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -103,6 +103,8 @@ public:
+ 	usize dft_zero_force_lockout_samples = 50;
+ 	bool dft_mpp2_pressure_decode = false;
+ 	usize dft_pressure_bit_min_mag = 3000;
++	bool dft_pressure_ramp = false;
++	bool dft_zero_force_pressure = false;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index 2706aaf..dcc80cd 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -334,6 +334,19 @@ private:
+ 	// Over how many samples the lag of the ink filter is faded out after a stroke.
+ 	constexpr static usize FILTER_FADE = 5;
+ 
++	// How many stroke starts are remembered for the zero force pressure.
++	constexpr static usize STROKE_STARTS = 5;
++
++	// Where the pressure of a reported sample comes from.
++	enum class PressureMode : u8 {
++		// No contact.
++		None,
++		// The pen reports force.
++		Force,
++		// Contact without force.
++		ZeroForce,
++	};
++
+ private:
+ 	Config m_config;
+ 	DeviceInfo m_info;
+@@ -399,6 +412,40 @@ private:
+ 	// The pressure measured in the last pressure window, 0 without force.
+ 	f64 m_measured_pressure = 0;
+ 
++	// The pressure measured in the window before, and whether a sample was reported
++	// since the last pressure window (see shape_pressure).
++	f64 m_previous_pressure = 0;
++	bool m_pressure_reported = true;
++
++	// How the pressure of the last sample was made (see PressureMode), that pressure,
++	// and what the pressure with force last was during this contact.
++	PressureMode m_pressure_mode = PressureMode::None;
++	f64 m_pressure_output = 0;
++	f64 m_pressure_last_force = 0;
++
++	// The pressure that is reported for a contact without force, and whether it was
++	// taken from the force that preceded it.
++	f64 m_zero_force_pressure = 0;
++	bool m_zero_force_pressure_fixed = false;
++
++	// The ramp from one kind of pressure to the other: the difference at the moment
++	// of the change, the samples that are left and the length of the ramp.
++	f64 m_pressure_gap = 0;
++	usize m_pressure_ramp = 0;
++	usize m_pressure_ramp_length = 0;
++
++	// With what pressure the last strokes began (and in which frame), and the zero
++	// force pressure relative to its default that was derived from it.
++	std::array<f64, STROKE_STARTS> m_stroke_start_pressure {};
++	std::array<u64, STROKE_STARTS> m_stroke_start_frame {};
++	usize m_stroke_starts = 0;
++	f64 m_zero_force_pressure_factor = 1;
++
++	// A counter of pressure windows, and the pressure of the two windows before the
++	// last one (negative if unknown).
++	u64 m_pressure_frame = 0;
++	std::array<f64, 2> m_pressure_history {-1, -1};
++
+ 	// How many samples the MPP v2 position windows produced since the last position
+ 	// window. Only counted with ExtraPositionWindows.
+ 	usize m_extra_samples = 0;
+@@ -484,6 +531,9 @@ public:
+ 				                      this->phase_coherence(dft.x[0], dft.y[0]));
+ 			}
+ 
++			if (m_stylus.proximity)
++				this->shape_pressure(false);
++
+ 			/* This event type is the most important one. It is the first and
+ 			 * the last one to arrive. It sets both proximity and lift. It is
+ 			 * also guaranteed to come regularly whenever we have (or just lost)
+@@ -706,6 +756,9 @@ private:
+ 		m_stylus.x = std::clamp(x, 0.0, 1.0);
+ 		m_stylus.y = std::clamp(y, 0.0, 1.0);
+ 
++		// Of the two samples of a frame, the one that follows the pressure window.
++		this->shape_pressure(dft.type == ipts::protocol::dft::Type::PositionMPP_2_Second);
++
+ 		m_extra_samples++;
+ 		return true;
+ 	}
+@@ -1103,7 +1156,7 @@ private:
+ 
+ 		const f64 p = this->measure_pressure(dft);
+ 
+-		m_measured_pressure = p > 0 ? std::clamp(p, 0.0, 1.0) : 0;
++		this->remember_pressure(p > 0 ? std::clamp(p, 0.0, 1.0) : 0);
+ 
+ 		if (m_config.dft_force_tone_contact) {
+ 			// The contact is decided in the position windows (see update_contact),
+@@ -1264,6 +1317,210 @@ private:
+ 		return casts::to<f64>(value) / 1024;
+ 	}
+ 
++	/*!
++	 * Keeps what the pressure windows measured for the pressure that is reported
++	 * with the position samples (see shape_pressure).
++	 *
++	 * @param[in] pressure The pressure of the current pressure window, 0 without force.
++	 */
++	void remember_pressure(const f64 pressure)
++	{
++		// Two windows with force after one without: with this pressure a stroke
++		// of this user begins.
++		if (m_pressure_history[0] == 0 && m_pressure_history[1] > 0 && pressure > 0) {
++			if (m_stroke_starts == STROKE_STARTS) {
++				for (usize i = 1; i < STROKE_STARTS; i++) {
++					m_stroke_start_pressure.at(i - 1) =
++						m_stroke_start_pressure.at(i);
++					m_stroke_start_frame.at(i - 1) = m_stroke_start_frame.at(i);
++				}
++
++				m_stroke_starts--;
++			}
++
++			m_stroke_start_pressure.at(m_stroke_starts) =
++				(m_pressure_history[1] + pressure) / 2;
++			m_stroke_start_frame.at(m_stroke_starts) = m_pressure_frame;
++			m_stroke_starts++;
++		}
++
++		m_pressure_history[0] = m_pressure_history[1];
++		m_pressure_history[1] = pressure;
++
++		m_previous_pressure = m_measured_pressure;
++		m_measured_pressure = pressure;
++		m_pressure_reported = false;
++		m_pressure_frame++;
++	}
++
++	/*!
++	 * Sets the pressure of a sample that is about to be reported.
++	 *
++	 * The pressure is measured once per frame, while (with ExtraPositionWindows) two
++	 * samples are reported, and a contact can begin and continue without any force.
++	 *
++	 * With PressureRamp the first of the two samples after a pressure window is half
++	 * way between the last two measurements, and where the pressure changes between
++	 * measured and zero force pressure the step is spread over 2 samples upwards and
++	 * 25 downwards.
++	 *
++	 * With ZeroForcePressure a contact without force does not report the constant
++	 * ContactMinPressure (which stays the lower bound). Such a contact is either the
++	 * beginning of a stroke, before the first pressure window with force (the force
++	 * tone of the position windows is up to a frame earlier), or light writing below
++	 * the activation force of the pen. The pressure is then a default that falls with
++	 * the tilt, scaled so that it is 0.85 of the pressure with which the last strokes
++	 * began (5 strokes of the last 330 frames), with the scale changing by at most
++	 * a quarter per stroke. Where a stroke loses its force, it continues at 0.8 of the
++	 * last pressure. Both are limited to 37/1024 .. 450/1024.
++	 *
++	 * @param[in] half Whether this is the first of two samples between pressure windows.
++	 */
++	void shape_pressure(const bool half)
++	{
++		if (!m_config.dft_pressure_ramp && !m_config.dft_zero_force_pressure)
++			return;
++
++		const bool fresh = !m_pressure_reported;
++		m_pressure_reported = true;
++
++		if (!m_stylus.contact) {
++			m_pressure_mode = PressureMode::None;
++			m_pressure_output = 0;
++			m_pressure_last_force = 0;
++			m_pressure_ramp = 0;
++
++			m_zero_force_pressure = 0;
++			m_zero_force_pressure_fixed = false;
++
++			m_stylus.pressure = 0;
++			return;
++		}
++
++		const f64 floor = m_config.dft_contact_min_pressure;
++		const PressureMode previous = m_pressure_mode;
++
++		f64 p = 0;
++
++		if (m_measured_pressure > 0) {
++			m_pressure_mode = PressureMode::Force;
++
++			p = m_measured_pressure;
++
++			if (m_config.dft_pressure_ramp && fresh && half) {
++				if (previous == PressureMode::Force && m_previous_pressure > 0)
++					p = (m_previous_pressure + m_measured_pressure) / 2;
++				else if (previous == PressureMode::None)
++					p = 0.9 * m_measured_pressure;
++			}
++
++			m_pressure_last_force = m_measured_pressure;
++		} else {
++			m_pressure_mode = PressureMode::ZeroForce;
++
++			p = floor;
++
++			if (m_config.dft_zero_force_pressure) {
++				if (previous == PressureMode::Force) {
++					m_zero_force_pressure_fixed = true;
++					m_zero_force_pressure = 0.8 * m_pressure_last_force;
++				} else if (!m_zero_force_pressure_fixed) {
++					const f64 base = this->default_zero_force_pressure();
++
++					if (m_zero_force_pressure <= 0)
++						this->adapt_zero_force_pressure(base);
++
++					m_zero_force_pressure = base * m_zero_force_pressure_factor;
++				}
++
++				m_zero_force_pressure = std::clamp(m_zero_force_pressure,
++				                                   37.0 / 1024,
++				                                   450.0 / 1024);
++
++				p = m_zero_force_pressure;
++			}
++		}
++
++		if (previous == PressureMode::None) {
++			m_pressure_ramp = 0;
++		} else if (previous != m_pressure_mode && m_config.dft_pressure_ramp) {
++			m_pressure_gap = p - m_pressure_output;
++			m_pressure_ramp_length = m_pressure_gap >= 0 ? 2 : 25;
++			m_pressure_ramp = m_pressure_ramp_length;
++		}
++
++		if (m_pressure_ramp > 0) {
++			m_pressure_ramp--;
++
++			p -= m_pressure_gap * casts::to<f64>(m_pressure_ramp) /
++			     casts::to<f64>(m_pressure_ramp_length);
++			p = std::max(p, 1.0 / 4096);
++		}
++
++		m_pressure_output = p;
++		m_stylus.pressure = std::clamp(std::max(p, floor), 0.0, 1.0);
++	}
++
++	/*!
++	 * The pressure of a contact without force before it is adapted to the user: about
++	 * a tenth of the range for an upright pen, falling linearly to a fifth of that for
++	 * a pen that lies flat.
++	 *
++	 * @return The pressure in the range 0 to 1.
++	 */
++	[[nodiscard]] f64 default_zero_force_pressure() const
++	{
++		// Half way if the tilt is not known.
++		f64 tilt = M_PI_4;
++
++		if (m_tilt_valid)
++			tilt = m_tilt_altitude;
++		else if (m_stylus.altitude > 0)
++			tilt = m_stylus.altitude;
++
++		tilt = std::clamp(tilt, 0.0, M_PI_2);
++
++		return (400.0 - (324.0 * tilt / M_PI_2)) / 4096;
++	}
++
++	/*!
++	 * Moves the scale of the zero force pressure towards 0.85 of the pressure with
++	 * which the recent strokes began. Called once per contact.
++	 *
++	 * @param[in] base The default zero force pressure at the current tilt.
++	 */
++	void adapt_zero_force_pressure(const f64 base)
++	{
++		constexpr u64 max_age = 330;
++		constexpr f64 step = 1.25;
++
++		f64 sum = 0;
++		usize count = 0;
++
++		for (usize i = 0; i < m_stroke_starts; i++) {
++			if (m_stroke_start_frame.at(i) + max_age <= m_pressure_frame)
++				continue;
++
++			sum += m_stroke_start_pressure.at(i);
++			count++;
++		}
++
++		const f64 target = count >= 2 ? 0.85 * sum / casts::to<f64>(count) : base;
++		const f64 current = base * m_zero_force_pressure_factor;
++
++		if (target > step * current)
++			m_zero_force_pressure_factor *= step;
++		else if (target < current / step)
++			m_zero_force_pressure_factor /= step;
++		else
++			m_zero_force_pressure_factor = target / base;
++
++		const f64 limit = std::pow(step, 5);
++
++		m_zero_force_pressure_factor =
++			std::clamp(m_zero_force_pressure_factor, 1 / limit, limit);
++	}
++
+ 	/*!
+ 	 * Reads the force tone of a position window.
+ 	 *
+@@ -1413,6 +1670,9 @@ private:
+ 		if (m_stylus.rubber && m_measured_pressure > 0)
+ 			m_stylus.contact = true;
+ 
++		if (!m_stylus.contact)
++			this->shape_pressure(false);
++
+ 		// Applications and libinput derive the tip state from the pressure,
+ 		// a contact without pressure would not draw.
+ 		if (m_stylus.contact) {
+@@ -1822,6 +2082,14 @@ private:
+ 		m_zero_force_lockout = 0;
+ 		m_recent_pressure = {};
+ 		m_measured_pressure = 0;
++		m_previous_pressure = 0;
++
++		m_pressure_mode = PressureMode::None;
++		m_pressure_output = 0;
++		m_pressure_last_force = 0;
++		m_pressure_ramp = 0;
++		m_zero_force_pressure = 0;
++		m_zero_force_pressure_fixed = false;
+ 
+ 		m_tilt_valid = false;
+ 		m_tilt_altitude_smoother.reset();
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 9be3b52..32d00e8 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -226,6 +226,8 @@ private:
+ 		this->get(ini, "DFT", "ZeroForceLockoutSamples", m_config.dft_zero_force_lockout_samples);
+ 		this->get(ini, "DFT", "Mpp2PressureDecode", m_config.dft_mpp2_pressure_decode);
+ 		this->get(ini, "DFT", "PressureBitMinMag", m_config.dft_pressure_bit_min_mag);
++		this->get(ini, "DFT", "PressureRamp", m_config.dft_pressure_ramp);
++		this->get(ini, "DFT", "ZeroForcePressure", m_config.dft_zero_force_pressure);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);

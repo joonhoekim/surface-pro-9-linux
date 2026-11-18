@@ -749,7 +749,7 @@ fn build_pen() -> (gtk::ScrolledWindow, PenUi) {
     let couple_state = info(&g, tr("Last Pairing"));
     let (couple_row, couple) =
         button(&g, tr("Pair Now"), tr("Pairs the pen that is in the cover; a pairing that works is kept"), tr("Pair"));
-    let zf = Cell::new((true, 20.0, 10.0, 4.0, 0.0));
+    let zf = Cell::new((true, 85.0, 75.0, 3.0, 0.0));
     let ui = PenUi {
         avail,
         ink,

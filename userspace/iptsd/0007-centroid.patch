@@ -1,0 +1,64 @@
+Optionally take the position of a DFT pen from the centroid (PositionCentroidX, PositionCentroidY)
+
+The parabola through the three strongest antennas has an error that repeats with the antenna
+pitch. Measured on the Surface Pro 9 with the Slim Pen 2 it is small on the X axis (antennas
+4.07 mm apart, standard deviation 0.011 .. 0.018 mm against what Windows computes from the same
+frames) and larger on the Y axis (0.030 .. 0.052 mm), where the centroid of the same three
+antennas does better (0.021 .. 0.025 mm); on X the centroid is worse (0.064 mm).
+
+PositionCentroidX and PositionCentroidY select the centroid per axis for the MPP v2 position
+windows (ExtraPositionWindows); CentroidExp is the power of the amplitude. At the screen edge,
+where an antenna is missing, the parabola stays. Off by default.
+
+With the centroid on Y only: median distance to Windows' position before its filter 0.035 ..
+0.049 mm (0.040 .. 0.064 mm with the parabola on both axes), 90 % within 0.056 .. 0.072 mm
+(0.069 .. 0.114 mm).
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index bd1d355..72e09aa 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -86,6 +86,8 @@ public:
+ 	f64 dft_tilt_offset_linear = 0;
+ 	f64 dft_tilt_offset_quadratic = 0;
+ 	f64 dft_tilt_offset_gain = 0.1;
++	bool dft_position_centroid_x = false;
++	bool dft_position_centroid_y = false;
+ 	f64 dft_centroid_exp = 0.6;
+ 
+ public:
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index 0e7d479..d765936 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -370,9 +370,17 @@ private:
+ 		if (std::isnan(x) || std::isnan(y))
+ 			return false;
+ 
++		// The centroid is only defined between antennas that all carry a signal,
++		// at the screen edge the parabola stays.
+ 		const f64 cx = this->interpolate_centroid(dft.x[0]);
+ 		const f64 cy = this->interpolate_centroid(dft.y[0]);
+ 
++		if (m_config.dft_position_centroid_x && !std::isnan(cx))
++			x = cx;
++
++		if (m_config.dft_position_centroid_y && !std::isnan(cy))
++			y = cy;
++
+ 		this->update_tilt(dft, cx, cy, width, height);
+ 
+ 		if (m_config.dft_mpp2_tilt_distance > 0) {
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 5c49d81..ebc2ba8 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -209,6 +209,8 @@ private:
+ 		this->get(ini, "DFT", "TiltOffsetLinear", m_config.dft_tilt_offset_linear);
+ 		this->get(ini, "DFT", "TiltOffsetQuadratic", m_config.dft_tilt_offset_quadratic);
+ 		this->get(ini, "DFT", "TiltOffsetGain", m_config.dft_tilt_offset_gain);
++		this->get(ini, "DFT", "PositionCentroidX", m_config.dft_position_centroid_x);
++		this->get(ini, "DFT", "PositionCentroidY", m_config.dft_position_centroid_y);
+ 		this->get(ini, "DFT", "CentroidExp", m_config.dft_centroid_exp);
+ 
+ 		// Legacy options that are kept for compatibility

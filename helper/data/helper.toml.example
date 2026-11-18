@@ -51,9 +51,9 @@ touch_off_when_display_off = false
 # reference: 0 = iptsd learns the level from strokes written with force after each start.
 [input.zero_force]
 enabled = true
-enter_percent = 20.0
-exit_percent = 10.0
-floor_percent = 4.0
+enter_percent = 85.0
+exit_percent = 75.0
+floor_percent = 3.0
 reference = 0.0
 
 [pen]

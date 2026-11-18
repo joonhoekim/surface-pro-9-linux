@@ -387,7 +387,7 @@ mod tests {
         let (c, _) = Config::load(&p);
         assert_eq!(
             c.input.zero_force,
-            ZeroForce { enabled: true, enter_percent: 20.0, exit_percent: 10.0, floor_percent: 4.0, reference: 0.0 }
+            ZeroForce { enabled: true, enter_percent: 85.0, exit_percent: 75.0, floor_percent: 3.0, reference: 0.0 }
         );
         t.file(
             "/etc/sp9/helper.toml",
@@ -397,7 +397,7 @@ mod tests {
         assert!(w.is_empty(), "{w:?}");
         assert_eq!(
             c.input.zero_force,
-            ZeroForce { enabled: false, enter_percent: 60.0, exit_percent: 45.0, floor_percent: 4.0, reference: 900.0 }
+            ZeroForce { enabled: false, enter_percent: 60.0, exit_percent: 45.0, floor_percent: 3.0, reference: 900.0 }
         );
         c.save(&p).unwrap();
         assert_eq!(Config::load(&p), (c, vec![]));

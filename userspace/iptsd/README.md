@@ -13,3 +13,8 @@ frame in range used to press the barrel button).
 `0003-extra-position-windows.patch`: `[DFT] ExtraPositionWindows` takes the pen position from the two MPP v2 position windows of
 a frame and reports each: 133 samples per second instead of 67, and no offset with a tilted pen. Off by default; the
 Surface Pro 9 preset turns it on.
+
+Patches 0004 to 0014 (antenna mapping, tilt from the MPP v2 position windows, tilt offset of the position, centroid
+interpolation, 0.01 mm stylus axes, jitter lock, ink filter, button tone condition, contact from the force tone, pressure
+decode, pressure ramp and zero-force pressure) each add `[DFT]` keys that default to the stock behaviour; the Surface Pro 9
+preset in `userspace/platform/iptsd/` enables the recommended ones. Their headers give the measurements.

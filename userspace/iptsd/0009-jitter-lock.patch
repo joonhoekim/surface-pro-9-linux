@@ -1,0 +1,239 @@
+Hold the position of a DFT pen that does not move (JitterRadius, JitterCount)
+
+A pen that rests on the screen still reports a different position with every sample: measured
+on the Surface Pro 9, 0.029 mm (median) and 0.10 mm (90 %) from one sample to the next, which
+shows as a growing blot when the pen is held still in a drawing program.
+
+With [DFT] JitterRadius (mm) the position is frozen once it has stayed within that radius for
+JitterCount samples (6: 45 ms at 133 samples per second), and released by the first sample
+outside of it. It applies while the pen is in contact; HoverJitterRadius does the same for a
+hovering pen. Off by default (0).
+
+With 0.158 mm and 6 samples, replaying captures: a pen resting on the glass repeats the previous
+position in 75 % of the samples (0 % before; Windows 95 % for the same frames), in handwriting
+0 .. 2 % of the contact samples are held (Windows 0 .. 5 %), and the step when the lock releases
+is about one ordinary sample step (0.18 .. 0.25 mm).
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index bbb6d2e..1dc9d84 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -90,6 +90,9 @@ public:
+ 	bool dft_position_centroid_x = false;
+ 	bool dft_position_centroid_y = false;
+ 	f64 dft_centroid_exp = 0.6;
++	f64 dft_jitter_radius = 0;
++	f64 dft_hover_jitter_radius = 0;
++	usize dft_jitter_count = 6;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index d765936..aea0c2e 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -94,6 +94,79 @@ public:
+ 	}
+ };
+ 
++/*!
++ * Holds the position of a stylus that does not move.
++ *
++ * The position of a pen that rests on the screen still changes by some hundredths of a
++ * millimeter from sample to sample. Once the position has stayed within a small radius for
++ * a number of samples it is frozen, until a sample falls outside of that radius.
++ */
++class DftJitterLock {
++private:
++	bool m_valid = false;
++	bool m_active = false;
++	usize m_count = 0;
++
++	// The position the radius is measured from, and the last position that was passed on.
++	f64 m_anchor_x = 0;
++	f64 m_anchor_y = 0;
++	f64 m_last_x = 0;
++	f64 m_last_y = 0;
++
++public:
++	/*!
++	 * Passes a position through the lock.
++	 *
++	 * @param[in,out] x The X coordinate in millimeters, replaced by the held one.
++	 * @param[in,out] y The Y coordinate in millimeters, replaced by the held one.
++	 * @param[in] radius How far the position may move and still count as resting.
++	 * @param[in] count After how many resting samples in a row the position is held.
++	 */
++	void update(f64 &x, f64 &y, const f64 radius, const usize count)
++	{
++		const f64 dx = x - m_anchor_x;
++		const f64 dy = y - m_anchor_y;
++
++		if (!m_valid || (dx * dx) + (dy * dy) >= radius * radius) {
++			m_valid = true;
++			m_active = false;
++			m_count = 0;
++
++			m_anchor_x = x;
++			m_anchor_y = y;
++			m_last_x = x;
++			m_last_y = y;
++			return;
++		}
++
++		if (m_count + 1 < count) {
++			m_count++;
++		} else if (!m_active) {
++			// Hold the position that was reported last, so that nothing jumps.
++			m_anchor_x = m_last_x;
++			m_anchor_y = m_last_y;
++			m_active = true;
++		}
++
++		if (m_active) {
++			x = m_anchor_x;
++			y = m_anchor_y;
++			return;
++		}
++
++		m_last_x = x;
++		m_last_y = y;
++	}
++
++	/*!
++	 * Releases the lock.
++	 */
++	void reset()
++	{
++		m_valid = false;
++	}
++};
++
+ class DftStylus {
+ private:
+ 	Config m_config;
+@@ -157,6 +230,10 @@ private:
+ 	f64 m_tilt_offset_x = 0;
+ 	f64 m_tilt_offset_y = 0;
+ 
++	// Holds the reported position of a pen that does not move: see filter_position().
++	DftJitterLock m_jitter_lock {};
++	bool m_filter_contact = false;
++
+ public:
+ 	DftStylus(Config config, const DeviceInfo &info)
+ 		: m_config {std::move(config)},
+@@ -200,6 +277,9 @@ public:
+ 				return false;
+ 			}
+ 
++			if (m_stylus.proximity)
++				this->filter_position(m_stylus.x, m_stylus.y, 0, 0);
++
+ 			/* This event type is the most important one. It is the first and
+ 			 * the last one to arrive. It sets both proximity and lift. It is
+ 			 * also guaranteed to come regularly whenever we have (or just lost)
+@@ -393,14 +473,22 @@ private:
+ 			m_stylus.azimuth = report ? m_tilt_azimuth : 0;
+ 		}
+ 
++		// The offset of the tip is applied after the filter, in screen coordinates.
++		f64 ox = 0;
++		f64 oy = 0;
++
+ 		if (m_tilt_offset_valid) {
+-			x += m_tilt_offset_x;
+-			y += m_tilt_offset_y;
++			ox = this->antenna_to_screen_x(x + m_tilt_offset_x, width) -
++			     this->antenna_to_screen_x(x, width);
++			oy = this->antenna_to_screen_y(y + m_tilt_offset_y, height) -
++			     this->antenna_to_screen_y(y, height);
+ 		}
+ 
+ 		x = this->antenna_to_screen_x(x, width);
+ 		y = this->antenna_to_screen_y(y, height);
+ 
++		this->filter_position(x, y, ox, oy);
++
+ 		m_stylus.x = std::clamp(x, 0.0, 1.0);
+ 		m_stylus.y = std::clamp(y, 0.0, 1.0);
+ 
+@@ -408,6 +496,55 @@ private:
+ 		return true;
+ 	}
+ 
++	/*!
++	 * Finishes a position that is about to be reported.
++	 *
++	 * The tilt offset is added, and a pen that does not move is held in place
++	 * (JitterRadius while in contact, HoverJitterRadius while hovering).
++	 *
++	 * @param[in,out] x The X coordinate, in the range 0 to 1.
++	 * @param[in,out] y The Y coordinate, in the range 0 to 1.
++	 * @param[in] ox An offset to add to the filtered X coordinate.
++	 * @param[in] oy An offset to add to the filtered Y coordinate.
++	 */
++	void filter_position(f64 &x, f64 &y, const f64 ox, const f64 oy)
++	{
++		// The size of the screen is configured in centimeters.
++		const f64 w = m_config.width * 10;
++		const f64 h = m_config.height * 10;
++
++		const bool enabled =
++			m_config.dft_jitter_radius > 0 || m_config.dft_hover_jitter_radius > 0;
++
++		if (!enabled || w <= 0 || h <= 0) {
++			x += ox;
++			y += oy;
++			return;
++		}
++
++		const bool contact = m_stylus.contact;
++
++		f64 fx = x * w;
++		f64 fy = y * h;
++
++		fx += ox * w;
++		fy += oy * h;
++
++		const f64 radius =
++			contact ? m_config.dft_jitter_radius : m_config.dft_hover_jitter_radius;
++
++		if (contact != m_filter_contact || radius <= 0)
++			m_jitter_lock.reset();
++
++		m_filter_contact = contact;
++
++		if (radius > 0)
++			m_jitter_lock.update(fx, fy, radius, m_config.dft_jitter_count);
++
++		x = fx / w;
++		y = fy / h;
++	}
++
+ 	/*!
+ 	 * Calculates the tilt of the stylus from one of the MPP v2 position windows, and
+ 	 * the offset of the tip position that comes with it.
+@@ -1077,6 +1214,8 @@ private:
+ 			m_stylus.azimuth = 0;
+ 		}
+ 		m_tilt_offset_valid = false;
++
++		m_jitter_lock.reset();
+ 	}
+ };
+ 
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index c89044e..2f77795 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -213,6 +213,9 @@ private:
+ 		this->get(ini, "DFT", "PositionCentroidX", m_config.dft_position_centroid_x);
+ 		this->get(ini, "DFT", "PositionCentroidY", m_config.dft_position_centroid_y);
+ 		this->get(ini, "DFT", "CentroidExp", m_config.dft_centroid_exp);
++		this->get(ini, "DFT", "JitterRadius", m_config.dft_jitter_radius);
++		this->get(ini, "DFT", "HoverJitterRadius", m_config.dft_hover_jitter_radius);
++		this->get(ini, "DFT", "JitterCount", m_config.dft_jitter_count);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);

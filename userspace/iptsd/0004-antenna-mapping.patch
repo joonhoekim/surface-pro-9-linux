@@ -1,0 +1,157 @@
+Map the position of a DFT pen to the screen with the pitch and origin of the antenna grid
+
+iptsd takes the first antenna for one edge of the screen and the last one for the other. The
+antenna grid of a panel is a little smaller than the screen and need not be centered on it: on
+the Surface Pro 9 (273.89 x 182.59 mm, 68 x 46 antennas) the antennas are 4.0748 mm apart in X and
+4.0158 mm in Y, and the first one is 0.44 mm (X) and 0.94 mm (Y) from the edge. The pen position
+is therefore off by up to 0.44 mm in X and 0.94 mm in Y at the edges, and correct in the middle.
+
+With [DFT] AntennaPitchX / AntennaPitchY (mm per antenna) and AntennaOriginX / AntennaOriginY
+(position of antenna 0 in mm from the screen edge) the position is antenna * pitch + origin.
+Without them nothing changes. Touch contacts come from the heatmap and are not affected.
+
+Measured by replaying captures of handwriting and comparing with what Windows computes from the
+same frames (contact samples of handwriting, before any filtering): median distance 0.27 .. 0.81
+mm without the keys, 0.03 .. 0.20 mm with them (the rest is the tilt offset).
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 9e80508..5af4c81 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -76,6 +76,10 @@ public:
+ 	usize dft_zero_force_min_samples = 20;
+ 	f64 dft_zero_force_reference = 0;
+ 	bool dft_extra_position_windows = false;
++	f64 dft_antenna_pitch_x = 0;
++	f64 dft_antenna_pitch_y = 0;
++	f64 dft_antenna_origin_x = 0;
++	f64 dft_antenna_origin_y = 0;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index c5b3bb0..0934dd5 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -195,14 +195,8 @@ private:
+ 
+ 		m_stylus.proximity = true;
+ 
+-		x /= width - 1;
+-		y /= height - 1;
+-
+-		if (m_config.invert_x)
+-			x = 1 - x;
+-
+-		if (m_config.invert_y)
+-			y = 1 - y;
++		x = this->antenna_to_screen_x(x, width);
++		y = this->antenna_to_screen_y(y, height);
+ 
+ 		if (dft.x[1].magnitude > m_config.dft_tilt_min_mag &&
+ 		    dft.y[1].magnitude > m_config.dft_tilt_min_mag) {
+@@ -211,14 +205,8 @@ private:
+ 			f64 yt = this->interpolate_position(dft.y[1]);
+ 
+ 			if (!std::isnan(xt) && !std::isnan(yt)) {
+-				xt /= width - 1;
+-				yt /= height - 1;
+-
+-				if (m_config.invert_x)
+-					xt = 1 - xt;
+-
+-				if (m_config.invert_y)
+-					yt = 1 - yt;
++				xt = this->antenna_to_screen_x(xt, width);
++				yt = this->antenna_to_screen_y(yt, height);
+ 
+ 				xt -= x;
+ 				yt -= y;
+@@ -289,14 +277,8 @@ private:
+ 		if (std::isnan(x) || std::isnan(y))
+ 			return false;
+ 
+-		x /= width - 1;
+-		y /= height - 1;
+-
+-		if (m_config.invert_x)
+-			x = 1 - x;
+-
+-		if (m_config.invert_y)
+-			y = 1 - y;
++		x = this->antenna_to_screen_x(x, width);
++		y = this->antenna_to_screen_y(y, height);
+ 
+ 		m_stylus.x = std::clamp(x, 0.0, 1.0);
+ 		m_stylus.y = std::clamp(y, 0.0, 1.0);
+@@ -305,6 +287,55 @@ private:
+ 		return true;
+ 	}
+ 
++	/*!
++	 * Converts a position on the X axis from antenna units to screen coordinates.
++	 *
++	 * Without a configured antenna pitch the first antenna is the left edge of the screen
++	 * and the last one the right edge. The antenna grid of a real panel is a little smaller
++	 * than the screen and need not be centered on it, so the pitch of the antennas and the
++	 * distance of the first one from the screen edge can be configured (in millimeters).
++	 *
++	 * @param[in] pos The position on the X axis, in antennas.
++	 * @param[in] columns The number of antennas on the X axis.
++	 * @return The position on the X axis, in the range 0 to 1 over the width of the screen.
++	 */
++	[[nodiscard]] f64 antenna_to_screen_x(const f64 pos, const u8 columns) const
++	{
++		f64 x = pos / (columns - 1);
++
++		if (m_config.dft_antenna_pitch_x > 0 && m_config.width > 0) {
++			const f64 mm = (pos * m_config.dft_antenna_pitch_x) +
++			               m_config.dft_antenna_origin_x;
++
++			// The size of the screen is configured in centimeters.
++			x = mm / (m_config.width * 10);
++		}
++
++		return m_config.invert_x ? 1 - x : x;
++	}
++
++	/*!
++	 * Converts a position on the Y axis from antenna units to screen coordinates.
++	 *
++	 * @param[in] pos The position on the Y axis, in antennas.
++	 * @param[in] rows The number of antennas on the Y axis.
++	 * @return The position on the Y axis, in the range 0 to 1 over the height of the screen.
++	 */
++	[[nodiscard]] f64 antenna_to_screen_y(const f64 pos, const u8 rows) const
++	{
++		f64 y = pos / (rows - 1);
++
++		if (m_config.dft_antenna_pitch_y > 0 && m_config.height > 0) {
++			const f64 mm = (pos * m_config.dft_antenna_pitch_y) +
++			               m_config.dft_antenna_origin_y;
++
++			// The size of the screen is configured in centimeters.
++			y = mm / (m_config.height * 10);
++		}
++
++		return m_config.invert_y ? 1 - y : y;
++	}
++
+ 	/*!
+ 	 * Calculates the button states of the stylus from a DFT window.
+ 	 *
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index af61a93..29b79b1 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -199,6 +199,10 @@ private:
+ 		this->get(ini, "DFT", "ZeroForceMinSamples", m_config.dft_zero_force_min_samples);
+ 		this->get(ini, "DFT", "ZeroForceReference", m_config.dft_zero_force_reference);
+ 		this->get(ini, "DFT", "ExtraPositionWindows", m_config.dft_extra_position_windows);
++		this->get(ini, "DFT", "AntennaPitchX", m_config.dft_antenna_pitch_x);
++		this->get(ini, "DFT", "AntennaPitchY", m_config.dft_antenna_pitch_y);
++		this->get(ini, "DFT", "AntennaOriginX", m_config.dft_antenna_origin_x);
++		this->get(ini, "DFT", "AntennaOriginY", m_config.dft_antenna_origin_y);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);

@@ -1,0 +1,94 @@
+Stylus axes in units per millimeter ([Stylus] AxisResolution)
+
+The stylus device reports 9600 x 7200 units whatever the size of the screen: 28.5 x 25.4 um per
+unit on the Surface Pro 9, coarser than the pen position is known, and the resolution that is
+announced with the axes is rounded to whole units per mm (35 and 39 for 35.05 and 39.43), so
+lengths computed from it are off by up to 1.1 %.
+
+With [Stylus] AxisResolution = N the axes have N units per mm, their range is the size of the
+screen (27389 x 18259 for N = 100) and the announced resolution is exact. 0 (the default) keeps
+9600 x 7200. The touch device is not changed.
+
+diff --git a/src/apps/daemon/stylus.hpp b/src/apps/daemon/stylus.hpp
+index 70ae415..6892591 100644
+--- a/src/apps/daemon/stylus.hpp
++++ b/src/apps/daemon/stylus.hpp
+@@ -30,6 +30,10 @@ private:
+ private:
+ 	std::shared_ptr<UinputDevice> m_uinput = std::make_shared<UinputDevice>();
+ 
++	// The range of the X and Y axis.
++	i32 m_max_x = MAX_X;
++	i32 m_max_y = MAX_Y;
++
+ 	// Whether the device is enabled.
+ 	bool m_enabled = true;
+ 
+@@ -58,14 +62,28 @@ public:
+ 		m_uinput->set_keybit(BTN_TOOL_RUBBER);
+ 
+ 		// Resolution for X / Y is expected to be units/mm.
+-		const i32 res_x = casts::to<i32>(std::round(MAX_X / (config.width * 10)));
+-		const i32 res_y = casts::to<i32>(std::round(MAX_Y / (config.height * 10)));
++		i32 res_x = casts::to<i32>(std::round(MAX_X / (config.width * 10)));
++		i32 res_y = casts::to<i32>(std::round(MAX_Y / (config.height * 10)));
++
++		/*
++		 * 9600 x 7200 units are 28.5 x 25.4 um each on a 27.4 x 18.3 cm screen, which
++		 * is coarser than the position of a DFT stylus is known, and the rounded
++		 * resolution is off by up to 1 %. With AxisResolution the axes use that many
++		 * units per millimeter, and their range is the size of the screen.
++		 */
++		if (config.stylus_axis_resolution > 0) {
++			res_x = casts::to<i32>(config.stylus_axis_resolution);
++			res_y = casts::to<i32>(config.stylus_axis_resolution);
++
++			m_max_x = casts::to<i32>(std::round(config.width * 10 * res_x));
++			m_max_y = casts::to<i32>(std::round(config.height * 10 * res_y));
++		}
+ 
+ 		// Resolution for tilt is expected to be units/radian.
+ 		const i32 res_tilt = casts::to<i32>(std::round(18000.0 / M_PI));
+ 
+-		m_uinput->set_absinfo(ABS_X, 0, MAX_X, res_x);
+-		m_uinput->set_absinfo(ABS_Y, 0, MAX_Y, res_y);
++		m_uinput->set_absinfo(ABS_X, 0, m_max_x, res_x);
++		m_uinput->set_absinfo(ABS_Y, 0, m_max_y, res_y);
+ 		m_uinput->set_absinfo(ABS_PRESSURE, 0, MAX_P, 0);
+ 		m_uinput->set_absinfo(ABS_TILT_X, -9000, 9000, res_tilt);
+ 		m_uinput->set_absinfo(ABS_TILT_Y, -9000, 9000, res_tilt);
+@@ -90,8 +108,8 @@ public:
+ 		if (m_active) {
+ 			const Vector2<i32> tilt = calculate_tilt(data.altitude, data.azimuth);
+ 
+-			const i32 x = casts::to<i32>(std::round(data.x * MAX_X));
+-			const i32 y = casts::to<i32>(std::round(data.y * MAX_Y));
++			const i32 x = casts::to<i32>(std::round(data.x * m_max_x));
++			const i32 y = casts::to<i32>(std::round(data.y * m_max_y));
+ 			const i32 pressure = casts::to<i32>(std::round(data.pressure * MAX_P));
+ 
+ 			m_uinput->emit(EV_KEY, BTN_TOUCH, data.contact ? 1 : 0);
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 72e09aa..bbb6d2e 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -56,6 +56,7 @@ public:
+ 	// [Stylus]
+ 	bool stylus_disable = false;
+ 	f64 stylus_tip_distance = 0;
++	usize stylus_axis_resolution = 0;
+ 
+ 	// [DFT]
+ 	usize dft_position_min_amp = 50;
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index ebc2ba8..c89044e 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -180,6 +180,7 @@ private:
+ 
+ 		this->get(ini, "Stylus", "Disable", m_config.stylus_disable);
+ 		this->get(ini, "Stylus", "TipDistance", m_config.stylus_tip_distance);
++		this->get(ini, "Stylus", "AxisResolution", m_config.stylus_axis_resolution);
+ 
+ 		this->get(ini, "DFT", "PositionMinAmp", m_config.dft_position_min_amp);
+ 		this->get(ini, "DFT", "PositionMinMag", m_config.dft_position_min_mag);

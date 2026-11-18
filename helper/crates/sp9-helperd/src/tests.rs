@@ -202,14 +202,14 @@ fn input_and_pen() {
     assert!(r.tree.read(input::IPTSD_DROPIN).contains("ActivationThreshold = 20"));
     // the pen's zero-force contact goes into the same file
     assert!(bool::try_from(r.get(P_INPUT, "Input", "ZeroForceContact")).unwrap());
-    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ZeroForceEnter")).unwrap(), 20.0);
-    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ZeroForceExit")).unwrap(), 10.0);
-    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ContactMinPressure")).unwrap(), 4.0);
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ZeroForceEnter")).unwrap(), 85.0);
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ZeroForceExit")).unwrap(), 75.0);
+    assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ContactMinPressure")).unwrap(), 3.0);
     assert_eq!(f64::try_from(r.get(P_INPUT, "Input", "ZeroForceReference")).unwrap(), 0.0);
     assert!(r
         .tree
         .read(input::IPTSD_DROPIN)
-        .contains("[DFT]\nZeroForceContact = true\nZeroForceEnter = 0.2\nZeroForceExit = 0.1\nContactMinPressure = 0.04"));
+        .contains("[DFT]\nZeroForceContact = true\nZeroForceEnter = 0.85\nZeroForceExit = 0.75\nContactMinPressure = 0.03"));
     r.call(P_INPUT, "Input", "SetZeroForce", &(true, 60.0f64, 45.0f64, 6.0f64, 900.0f64)).unwrap();
     let text = r.tree.read(input::IPTSD_DROPIN);
     assert!(text.contains("ZeroForceEnter = 0.6\nZeroForceExit = 0.45\nContactMinPressure = 0.06\nZeroForceReference = 900"), "{text}");

@@ -1,0 +1,405 @@
+Tilt of a DFT pen from the MPP v2 position windows (Mpp2TiltDistance, TiltSmoothing)
+
+The tilt is the horizontal distance between the tip and the ring electrode of the pen. iptsd
+takes both from the position window (0x06), where the ring tone is weak: measured on the Surface
+Pro 9 with the Slim Pen 2, that tilt is two to three times too large (TiltDistance does not fit
+this pen), changes by 2 to 8 degrees from one sample to the next, and is missing altogether for
+a pen held at 37 degrees.
+
+The MPP v2 position windows (0x07, 0x08) carry the tip tone in their first row and the ring tone
+in the second, both about 15 times stronger. With [DFT] Mpp2TiltDistance (the distance of the
+ring from the tip along the pen, in cm; 0.9098 for the Slim Pen 2) and ExtraPositionWindows the
+tilt is asin(distance of the two centroids / Mpp2TiltDistance) from these windows, with the
+azimuth as before, and the position window no longer sets it. The tip centroid is that of the
+three antennas around the peak (amplitude ^ CentroidExp, smallest removed), the ring centroid
+that of the signal power of five antennas.
+
+TiltSmoothing follows the median of the last 40 values, and only once it is 5 degrees away: a
+steady pen reports a constant tilt and a changing one is followed in small steps (this is how
+Windows reports the tilt; it costs up to 5 degrees and about 0.2 s). TiltWhileHovering = false
+reports no tilt without contact, as Windows does; the default keeps reporting it.
+
+Measured against what Windows computes from the same frames before its smoothing: difference
+-0.9 .. +4.3 degrees (5 % .. 95 %), median 0.0 .. 2.3 degrees, direction within 5 degrees,
+tilt present in all contact samples including a pen held at 37 degrees. Sample to sample the
+unsmoothed tilt changes by 0.4 .. 1.8 degrees rms.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 5af4c81..63d55d4 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -80,6 +80,10 @@ public:
+ 	f64 dft_antenna_pitch_y = 0;
+ 	f64 dft_antenna_origin_x = 0;
+ 	f64 dft_antenna_origin_y = 0;
++	f64 dft_mpp2_tilt_distance = 0;
++	bool dft_tilt_smoothing = false;
++	bool dft_tilt_while_hovering = true;
++	f64 dft_centroid_exp = 0.6;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index 0934dd5..6e834ee 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -13,12 +13,87 @@
+ #include <ipts/samples/stylus.hpp>
+ 
+ #include <algorithm>
++#include <array>
+ #include <cmath>
+ #include <optional>
+ #include <utility>
+ 
+ namespace iptsd::core {
+ 
++/*!
++ * Smoothing for an angle that is measured with a few degrees of noise but changes slowly.
++ *
++ * The output follows the median of the most recent values, and only once the two are apart
++ * by more than a dead band: a pen held at a steady angle reports a constant value, and a
++ * changing angle is followed in small steps.
++ */
++class DftAngleSmoother {
++private:
++	constexpr static usize WINDOW = 40;
++
++	std::array<f64, WINDOW> m_values {};
++	usize m_count = 0;
++	usize m_next = 0;
++
++	// The last input, unwrapped.
++	f64 m_last = 0;
++
++	f64 m_output = 0;
++
++public:
++	/*!
++	 * Adds a measurement.
++	 *
++	 * @param[in] value The measured angle, in radians.
++	 * @param[in] period The period after which the angle wraps around, or 0.
++	 * @param[in] band How far the median has to be from the output before the output moves.
++	 * @param[in] gain How much of that distance the output moves per measurement.
++	 * @return The smoothed angle.
++	 */
++	f64 update(f64 value, const f64 period, const f64 band, const f64 gain)
++	{
++		// Continue the angle across the wrap, so that the median is meaningful.
++		if (m_count > 0 && period > 0)
++			value -= period * std::round((value - m_last) / period);
++
++		m_last = value;
++
++		m_values.at(m_next) = value;
++		m_next = (m_next + 1) % WINDOW;
++		m_count = std::min(m_count + 1, WINDOW);
++
++		std::array<f64, WINDOW> sorted = m_values;
++		const auto begin = sorted.begin();
++		const auto end = begin + casts::to<isize>(m_count);
++		const auto mid = begin + casts::to<isize>(m_count / 2);
++
++		std::nth_element(begin, mid, end);
++		f64 median = *mid;
++
++		if (m_count % 2 == 0)
++			median = (median + *std::max_element(begin, mid)) / 2;
++
++		if (m_count == 1)
++			m_output = median;
++		else if (std::abs(median - m_output) >= band)
++			m_output += gain * (median - m_output);
++
++		if (period <= 0)
++			return m_output;
++
++		return m_output - (period * std::floor(m_output / period));
++	}
++
++	/*!
++	 * Forgets all measurements.
++	 */
++	void reset()
++	{
++		m_count = 0;
++		m_next = 0;
++	}
++};
++
+ class DftStylus {
+ private:
+ 	Config m_config;
+@@ -68,6 +143,14 @@ private:
+ 	// window. Only counted with ExtraPositionWindows.
+ 	usize m_extra_samples = 0;
+ 
++	// Tilt from the MPP v2 position windows: the last measurement (as altitude and
++	// azimuth), and the smoothing of both. Only used with Mpp2TiltDistance.
++	bool m_tilt_valid = false;
++	f64 m_tilt_altitude = 0;
++	f64 m_tilt_azimuth = 0;
++	DftAngleSmoother m_tilt_altitude_smoother {};
++	DftAngleSmoother m_tilt_azimuth_smoother {};
++
+ public:
+ 	DftStylus(Config config, const DeviceInfo &info)
+ 		: m_config {std::move(config)},
+@@ -198,7 +281,11 @@ private:
+ 		x = this->antenna_to_screen_x(x, width);
+ 		y = this->antenna_to_screen_y(y, height);
+ 
+-		if (dft.x[1].magnitude > m_config.dft_tilt_min_mag &&
++		// With Mpp2TiltDistance the tilt comes from the MPP v2 position windows.
++		const bool mpp2_tilt =
++			m_config.dft_extra_position_windows && m_config.dft_mpp2_tilt_distance > 0;
++
++		if (!mpp2_tilt && dft.x[1].magnitude > m_config.dft_tilt_min_mag &&
+ 		    dft.y[1].magnitude > m_config.dft_tilt_min_mag) {
+ 			// calculate tilt angle from relative position of secondary transmitter
+ 			f64 xt = this->interpolate_position(dft.x[1]);
+@@ -277,6 +364,21 @@ private:
+ 		if (std::isnan(x) || std::isnan(y))
+ 			return false;
+ 
++		const f64 cx = this->interpolate_centroid(dft.x[0]);
++		const f64 cy = this->interpolate_centroid(dft.y[0]);
++
++		this->update_tilt(dft, cx, cy, width, height);
++
++		if (m_config.dft_mpp2_tilt_distance > 0) {
++			// Windows reports no tilt for a hovering pen, which can be had with
++			// TiltWhileHovering = false.
++			const bool report = m_tilt_valid &&
++			                    (m_stylus.contact || m_config.dft_tilt_while_hovering);
++
++			m_stylus.altitude = report ? m_tilt_altitude : 0;
++			m_stylus.azimuth = report ? m_tilt_azimuth : 0;
++		}
++
+ 		x = this->antenna_to_screen_x(x, width);
+ 		y = this->antenna_to_screen_y(y, height);
+ 
+@@ -287,6 +389,80 @@ private:
+ 		return true;
+ 	}
+ 
++	/*!
++	 * Calculates the tilt of the stylus from one of the MPP v2 position windows.
++	 *
++	 * These windows carry the tone of the tip in their first row and the tone of the
++	 * ring electrode, which sits further up the pen, in the second one, both about 15
++	 * times stronger than in the position window. The horizontal distance between the
++	 * two electrodes is the sine of the tilt times their distance along the pen.
++	 *
++	 * Measured on the Surface Pro 9 with the Slim Pen 2: the tilt of the position window
++	 * is two to three times too large, changes by 3 to 10 degrees from frame to frame
++	 * and is missing when the pen is tilted strongly.
++	 *
++	 * @param[in] dft The DFT window (with type == Type::PositionMPP_2 or PositionMPP_2_Second)
++	 * @param[in] tx The centroid of the tip signal on the X axis, in antennas (or NaN).
++	 * @param[in] ty The centroid of the tip signal on the Y axis, in antennas (or NaN).
++	 * @param[in] width The number of antennas on the X axis.
++	 * @param[in] height The number of antennas on the Y axis.
++	 */
++	void update_tilt(const ipts::samples::DftWindow &dft,
++	                 const f64 tx,
++	                 const f64 ty,
++	                 const u8 width,
++	                 const u8 height)
++	{
++		const f64 distance = m_config.dft_mpp2_tilt_distance;
++
++		if (distance <= 0)
++			return;
++
++		if (dft.x.size() < 2 || dft.y.size() < 2 || std::isnan(tx) || std::isnan(ty))
++			return;
++
++		if (dft.x[1].magnitude <= m_config.dft_tilt_min_mag ||
++		    dft.y[1].magnitude <= m_config.dft_tilt_min_mag)
++			return;
++
++		const f64 rx = this->interpolate_ring(dft.x[1]);
++		const f64 ry = this->interpolate_ring(dft.y[1]);
++
++		// Without the ring signal (not every window has it) the last tilt stays.
++		if (std::isnan(rx) || std::isnan(ry))
++			return;
++
++		// Tip to ring, in centimeters on the screen (and in the orientation of the screen).
++		const f64 sx =
++			this->antenna_to_screen_x(rx, width) - this->antenna_to_screen_x(tx, width);
++		const f64 sy = this->antenna_to_screen_y(ry, height) -
++		               this->antenna_to_screen_y(ty, height);
++
++		const f64 xt = sx * m_config.width;
++		const f64 yt = sy * m_config.height;
++
++		const f64 sin = std::hypot(xt, yt) / distance;
++
++		// The ring can not be further from the tip than it is on the pen.
++		if (sin > 1.2)
++			return;
++
++		f64 alt = std::asin(std::min(1.0, sin));
++		f64 azm = std::fmod(std::atan2(-yt, xt) + (2 * M_PI), 2 * M_PI);
++
++		if (m_config.dft_tilt_smoothing) {
++			constexpr f64 band = 5.0 * M_PI / 180;
++			constexpr f64 gain = 0.19;
++
++			alt = m_tilt_altitude_smoother.update(alt, 0, band, gain);
++			azm = m_tilt_azimuth_smoother.update(azm, 2 * M_PI, band, gain);
++		}
++
++		m_tilt_altitude = alt;
++		m_tilt_azimuth = azm;
++		m_tilt_valid = true;
++	}
++
+ 	/*!
+ 	 * Converts a position on the X axis from antenna units to screen coordinates.
+ 	 *
+@@ -599,6 +775,107 @@ private:
+ 		return row.first + maxi + std::clamp(d, mind, maxd);
+ 	}
+ 
++	/*!
++	 * Calculates the position of the tip signal as the centroid of the three antennas
++	 * around the strongest one.
++	 *
++	 * The weights are the amplitudes raised to a power (CentroidExp) with the smallest of
++	 * the three subtracted, so the result is determined by the strongest antenna and the
++	 * stronger one of its neighbours.
++	 *
++	 * @param[in] row A list of measurements on one axis.
++	 * @return The position on that axis in antennas, or NaN at the edge of the screen.
++	 */
++	[[nodiscard]] f64 interpolate_centroid(const ipts::protocol::dft::Row &row) const
++	{
++		const u8 maxi = ipts::protocol::dft::NUM_COMPONENTS / 2;
++
++		std::array<f64, 3> w {};
++
++		for (u8 i = 0; i < 3; i++) {
++			const u8 j = casts::to<u8>(maxi + i - 1);
++			const f64 amp = std::hypot(row.real.at(j), row.imag.at(j));
++
++			// off-screen components are always zero
++			if (amp < 1)
++				return casts::to<f64>(NAN);
++
++			w.at(i) = std::pow(amp, m_config.dft_centroid_exp);
++		}
++
++		const f64 min = std::min({w[0], w[1], w[2]});
++		const f64 sum = w[0] + w[1] + w[2] - (3 * min);
++
++		if (sum <= 0)
++			return casts::to<f64>(NAN);
++
++		return row.first + maxi + ((w[2] - w[0]) / sum);
++	}
++
++	/*!
++	 * Calculates the position of the ring signal.
++	 *
++	 * The ring electrode is further from the screen than the tip and its signal is
++	 * spread over more antennas, and with a tilted pen it is not centered in the window
++	 * (which is centered on the tip). The position is the centroid of the signal power
++	 * over the five antennas around the strongest group of three.
++	 *
++	 * @param[in] row A list of measurements on one axis.
++	 * @return The position on that axis in antennas, or NaN if it can not be determined.
++	 */
++	[[nodiscard]] f64 interpolate_ring(const ipts::protocol::dft::Row &row) const
++	{
++		constexpr u8 n = ipts::protocol::dft::NUM_COMPONENTS;
++
++		std::array<f64, n> power {};
++		std::array<f64, n> amp {};
++
++		for (u8 i = 0; i < n; i++) {
++			const f64 re = row.real.at(i);
++			const f64 im = row.imag.at(i);
++
++			power.at(i) = (re * re) + (im * im);
++			amp.at(i) = std::sqrt(power.at(i));
++		}
++
++		u8 k = 1;
++		f64 best = -1;
++
++		for (u8 i = 1; i < n - 1; i++) {
++			const f64 sum = amp.at(i - 1) + amp.at(i) + amp.at(i + 1);
++
++			if (sum > best) {
++				best = sum;
++				k = i;
++			}
++		}
++
++		// The five antennas have to be inside of the window.
++		if (k < 2 || k > n - 3)
++			return casts::to<f64>(NAN);
++
++		const f64 floor = std::min(power.at(k - 2), power.at(k + 2));
++
++		f64 sum = 0;
++		f64 moment = 0;
++
++		for (i8 i = -2; i <= 2; i++) {
++			const f64 p = power.at(casts::to<usize>(k + i));
++
++			// off-screen components are always zero
++			if (p < 1)
++				return casts::to<f64>(NAN);
++
++			sum += p - floor;
++			moment += i * (p - floor);
++		}
++
++		if (sum <= 0)
++			return casts::to<f64>(NAN);
++
++		return row.first + k + (moment / sum);
++	}
++
+ 	/*!
+ 	 * Interpolates the amplitude that an antenna directly below the stylus would measure.
+ 	 *
+@@ -722,6 +999,17 @@ private:
+ 
+ 		m_tip_energy = std::nullopt;
+ 		m_zero_force_contact = false;
++
++		m_tilt_valid = false;
++		m_tilt_altitude_smoother.reset();
++		m_tilt_azimuth_smoother.reset();
++
++		// The tilt of the MPP v2 position windows is measured anew when the pen
++		// comes back.
++		if (m_config.dft_extra_position_windows && m_config.dft_mpp2_tilt_distance > 0) {
++			m_stylus.altitude = 0;
++			m_stylus.azimuth = 0;
++		}
+ 	}
+ };
+ 
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 29b79b1..302d937 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -203,6 +203,10 @@ private:
+ 		this->get(ini, "DFT", "AntennaPitchY", m_config.dft_antenna_pitch_y);
+ 		this->get(ini, "DFT", "AntennaOriginX", m_config.dft_antenna_origin_x);
+ 		this->get(ini, "DFT", "AntennaOriginY", m_config.dft_antenna_origin_y);
++		this->get(ini, "DFT", "Mpp2TiltDistance", m_config.dft_mpp2_tilt_distance);
++		this->get(ini, "DFT", "TiltSmoothing", m_config.dft_tilt_smoothing);
++		this->get(ini, "DFT", "TiltWhileHovering", m_config.dft_tilt_while_hovering);
++		this->get(ini, "DFT", "CentroidExp", m_config.dft_centroid_exp);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);
