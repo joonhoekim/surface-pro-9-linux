@@ -291,6 +291,71 @@ pub trait HidBackend: Send + Sync {
     /// SET_FEATURE; `data` starts with the report ID.
     fn set_feature(&self, node: &str, data: &[u8]) -> io::Result<()>;
     fn write_output(&self, node: &str, data: &[u8]) -> io::Result<()>;
+    /// (bus, vendor, product) of a node as it is now; None when it is gone. hidraw numbers are
+    /// reused, so a remembered name is checked with this before it is written to.
+    fn ids(&self, node: &str) -> Option<(u16, u16, u16)> {
+        self.nodes().into_iter().find(|n| n.name == node).map(|n| (n.bus, n.vendor, n.product))
+    }
+    /// Keep a node open for feature reports: the handle stays with the device it was opened
+    /// on (it fails once that is gone, whatever gets the name afterwards).
+    fn open(&self, node: &str) -> io::Result<Box<dyn HidHandle>>;
+    /// Forget cached state (`Cached`); the next `nodes()` reads the system again.
+    fn refresh(&self) {}
+}
+
+/// An open hidraw node.
+pub trait HidHandle: Send {
+    /// SET_FEATURE; `data` starts with the report ID.
+    fn set_feature(&mut self, data: &[u8]) -> io::Result<()>;
+    fn get_feature(&mut self, id: u8, len: usize) -> io::Result<Vec<u8>>;
+}
+
+/// The node list of another backend, kept for `Cached::TTL`: listing reads the uevent and
+/// the report descriptor of every hidraw node, and several callers ask every few seconds.
+pub struct Cached<B> {
+    inner: B,
+    nodes: Mutex<Option<(std::time::Instant, Vec<HidNode>)>>,
+}
+
+impl<B: HidBackend> Cached<B> {
+    pub const TTL: std::time::Duration = std::time::Duration::from_millis(1500);
+
+    pub fn new(inner: B) -> Self {
+        Cached { inner, nodes: Mutex::new(None) }
+    }
+}
+
+impl<B: HidBackend> HidBackend for Cached<B> {
+    fn nodes(&self) -> Vec<HidNode> {
+        let mut c = self.nodes.lock().unwrap();
+        match &*c {
+            Some((at, nodes)) if at.elapsed() < Self::TTL => nodes.clone(),
+            _ => {
+                let nodes = self.inner.nodes();
+                *c = Some((std::time::Instant::now(), nodes.clone()));
+                nodes
+            }
+        }
+    }
+    fn get_feature(&self, node: &str, id: u8, len: usize) -> io::Result<Vec<u8>> {
+        self.inner.get_feature(node, id, len)
+    }
+    fn set_feature(&self, node: &str, data: &[u8]) -> io::Result<()> {
+        self.inner.set_feature(node, data)
+    }
+    fn write_output(&self, node: &str, data: &[u8]) -> io::Result<()> {
+        self.inner.write_output(node, data)
+    }
+    fn ids(&self, node: &str) -> Option<(u16, u16, u16)> {
+        self.inner.ids(node)
+    }
+    fn open(&self, node: &str) -> io::Result<Box<dyn HidHandle>> {
+        self.inner.open(node)
+    }
+    fn refresh(&self) {
+        *self.nodes.lock().unwrap() = None;
+        self.inner.refresh();
+    }
 }
 
 /// HID_ID=bbbb:vvvvvvvv:pppppppp
@@ -336,34 +401,28 @@ impl HidBackend for Hidraw {
 
     #[cfg(target_os = "linux")]
     fn get_feature(&self, node: &str, id: u8, len: usize) -> io::Result<Vec<u8>> {
-        use std::os::fd::AsRawFd;
-        let f = self.open(node, false)?;
-        let mut buf = vec![0u8; len.max(1)];
-        buf[0] = id;
-        // HIDIOCGFEATURE(len) = _IOC(_IOC_READ|_IOC_WRITE, 'H', 0x07, len)
-        let req = (3u32 << 30) | ((buf.len() as u32) << 16) | ((b'H' as u32) << 8) | 0x07;
-        // SAFETY: buf is valid for buf.len() bytes, which is the size encoded in req.
-        let n = unsafe { libc::ioctl(f.as_raw_fd(), req as _, buf.as_mut_ptr()) };
-        if n < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        buf.truncate(n as usize);
-        Ok(buf)
+        linux::get_feature(&self.open(node, false)?, id, len)
     }
 
     #[cfg(target_os = "linux")]
     fn set_feature(&self, node: &str, data: &[u8]) -> io::Result<()> {
-        use std::os::fd::AsRawFd;
-        let f = self.open(node, true)?;
-        let mut buf = data.to_vec();
-        // HIDIOCSFEATURE(len) = _IOC(_IOC_READ|_IOC_WRITE, 'H', 0x06, len)
-        let req = (3u32 << 30) | ((buf.len() as u32) << 16) | ((b'H' as u32) << 8) | 0x06;
-        // SAFETY: buf is valid for buf.len() bytes, which is the size encoded in req.
-        let n = unsafe { libc::ioctl(f.as_raw_fd(), req as _, buf.as_mut_ptr()) };
-        if n < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+        linux::set_feature(&self.open(node, true)?, data)
+    }
+
+    /// One uevent line: no descriptor is read.
+    fn ids(&self, node: &str) -> Option<(u16, u16, u16)> {
+        let uevent = self.root.read_opt(&format!("{SYS_HIDRAW}/{node}/device/uevent"))?;
+        parse_hid_id(uevent.lines().find_map(|l| l.strip_prefix("HID_ID="))?)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open(&self, node: &str) -> io::Result<Box<dyn HidHandle>> {
+        Ok(Box::new(linux::Handle(Hidraw::open(self, node, true)?)))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn open(&self, _node: &str) -> io::Result<Box<dyn HidHandle>> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "hidraw needs Linux"))
     }
 
     #[cfg(target_os = "linux")]
@@ -385,6 +444,54 @@ impl HidBackend for Hidraw {
     #[cfg(not(target_os = "linux"))]
     fn write_output(&self, _node: &str, _data: &[u8]) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "hidraw needs Linux"))
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::HidHandle;
+    use std::fs::File;
+    use std::io;
+    use std::os::fd::AsRawFd;
+
+    pub fn get_feature(f: &File, id: u8, len: usize) -> io::Result<Vec<u8>> {
+        let mut buf = vec![0u8; len.max(1)];
+        buf[0] = id;
+        // HIDIOCGFEATURE(len) = _IOC(_IOC_READ|_IOC_WRITE, 'H', 0x07, len)
+        let req = (3u32 << 30) | ((buf.len() as u32) << 16) | ((b'H' as u32) << 8) | 0x07;
+        // SAFETY: buf is valid for buf.len() bytes, which is the size encoded in req.
+        let n = unsafe { libc::ioctl(f.as_raw_fd(), req as _, buf.as_mut_ptr()) };
+        if n < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        buf.truncate(n as usize);
+        Ok(buf)
+    }
+
+    pub fn set_feature(f: &File, data: &[u8]) -> io::Result<()> {
+        // the kernel only reads the buffer, but the ioctl takes a mutable pointer
+        let mut buf = [0u8; 256];
+        let buf = buf.get_mut(..data.len()).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "report too long"))?;
+        buf.copy_from_slice(data);
+        // HIDIOCSFEATURE(len) = _IOC(_IOC_READ|_IOC_WRITE, 'H', 0x06, len)
+        let req = (3u32 << 30) | ((buf.len() as u32) << 16) | ((b'H' as u32) << 8) | 0x06;
+        // SAFETY: buf is valid for buf.len() bytes, which is the size encoded in req.
+        let n = unsafe { libc::ioctl(f.as_raw_fd(), req as _, buf.as_mut_ptr()) };
+        if n < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub struct Handle(pub File);
+
+    impl HidHandle for Handle {
+        fn set_feature(&mut self, data: &[u8]) -> io::Result<()> {
+            set_feature(&self.0, data)
+        }
+        fn get_feature(&mut self, id: u8, len: usize) -> io::Result<Vec<u8>> {
+            get_feature(&self.0, id, len)
+        }
     }
 }
 
@@ -426,6 +533,39 @@ impl HidBackend for FakeHid {
         }
         s.writes.push((node.to_string(), data.to_vec()));
         Ok(())
+    }
+    fn open(&self, node: &str) -> io::Result<Box<dyn HidHandle>> {
+        let ids = self.ids(node).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no such node"))?;
+        Ok(Box::new(FakeHandle { hid: self.clone(), node: node.to_string(), ids }))
+    }
+}
+
+/// A handle of the fake: it belongs to the device that had the name when it was opened, and
+/// fails like a removed device once the name is gone or means another device.
+struct FakeHandle {
+    hid: FakeHid,
+    node: String,
+    ids: (u16, u16, u16),
+}
+
+impl FakeHandle {
+    fn alive(&self) -> io::Result<()> {
+        if self.hid.ids(&self.node) == Some(self.ids) {
+            Ok(())
+        } else {
+            Err(io::Error::new(io::ErrorKind::NotFound, "device gone"))
+        }
+    }
+}
+
+impl HidHandle for FakeHandle {
+    fn set_feature(&mut self, data: &[u8]) -> io::Result<()> {
+        self.alive()?;
+        self.hid.set_feature(&self.node, data)
+    }
+    fn get_feature(&mut self, id: u8, len: usize) -> io::Result<Vec<u8>> {
+        self.alive()?;
+        self.hid.get_feature(&self.node, id, len)
     }
 }
 
@@ -485,7 +625,7 @@ pub mod build {
 #[cfg(test)]
 mod tests {
     use super::build::*;
-    use super::{parse, HidBackend, Hidraw, Kind, SYS_HIDRAW};
+    use super::{parse, Cached, FakeHid, HidBackend, HidNode, Hidraw, Kind, SYS_HIDRAW};
     use crate::sys::FakeTree;
 
     #[test]
@@ -527,6 +667,49 @@ mod tests {
         super::usage(p, u)
     }
 
+    fn node(name: &str, product: u16) -> HidNode {
+        HidNode { name: name.into(), bus: 1, vendor: 0x045E, product, hid_name: String::new(), descriptor: vec![] }
+    }
+
+    /// Review R2: hidraw numbers are reused. A handle stays with its device; a name is
+    /// checked before use.
+    #[test]
+    fn a_handle_does_not_follow_the_name_to_another_device() {
+        let h = FakeHid::default();
+        h.0.lock().unwrap().nodes.push(node("hidraw7", 0x0C52));
+        let mut d = h.open("hidraw7").unwrap();
+        d.set_feature(&[9, 1]).unwrap();
+        assert_eq!(h.ids("hidraw7"), Some((1, 0x045E, 0x0C52)));
+        // resume: the digitizer comes back as hidraw0 and the pen takes hidraw7
+        {
+            let mut s = h.0.lock().unwrap();
+            s.nodes.clear();
+            s.nodes.push(node("hidraw0", 0x0C52));
+            s.nodes.push(node("hidraw7", 0x0C0F));
+        }
+        assert!(d.set_feature(&[9, 2]).is_err(), "the old handle is dead");
+        assert!(d.get_feature(115, 3).is_err());
+        assert_eq!(h.ids("hidraw7"), Some((1, 0x045E, 0x0C0F)));
+        assert_eq!(h.0.lock().unwrap().feature_writes.len(), 1, "nothing went to the pen");
+        assert!(h.open("hidraw9").is_err());
+    }
+
+    /// Review I1: the node list is read once per `Cached::TTL`, whoever asks.
+    #[test]
+    fn node_list_is_cached() {
+        let h = FakeHid::default();
+        let c = Cached::new(h.clone());
+        assert!(c.nodes().is_empty());
+        h.0.lock().unwrap().nodes.push(node("hidraw3", 0x09B0));
+        assert!(c.nodes().is_empty(), "inside the TTL");
+        assert_eq!(c.ids("hidraw3"), Some((1, 0x045E, 0x09B0)), "identity checks are not cached");
+        c.refresh();
+        assert_eq!(c.nodes().len(), 1);
+        std::thread::sleep(Cached::<FakeHid>::TTL + std::time::Duration::from_millis(50));
+        h.0.lock().unwrap().nodes.clear();
+        assert!(c.nodes().is_empty(), "after the TTL");
+    }
+
     #[test]
     fn sysfs_nodes() {
         let t = FakeTree::new("hidraw");
@@ -536,5 +719,8 @@ mod tests {
         assert_eq!(n.len(), 1);
         assert_eq!((n[0].bus, n[0].vendor, n[0].product), (5, 0x045E, 0x0C0F));
         assert_eq!(n[0].hid_name, "Surface Pen");
+        let h = Hidraw::new(t.root.clone());
+        assert_eq!(h.ids("hidraw2"), Some((5, 0x045E, 0x0C0F)));
+        assert_eq!(h.ids("hidraw9"), None);
     }
 }

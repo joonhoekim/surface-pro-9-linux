@@ -79,10 +79,11 @@ pub struct Pen {
     /// pen haptics as a whole: Windows-style inking haptics (start on tip down, stop on tip
     /// up) and, with `speed_feedback`, the pen speed to the digitizer
     pub ink_feedback: bool,
-    /// 1..255
+    /// 2..254, what Windows sends
     pub intensity: u8,
-    /// the continuous waveform started on tip down
-    pub ink_waveform: crate::pen::Waveform,
+    /// the continuous waveform started on tip down, by name (`pen::Waveform`); a name this
+    /// version does not know is replaced by the default with a warning
+    pub ink_waveform: String,
     /// feed the pen speed back to the digitizer (the continuous waveforms need it); only
     /// while `ink_feedback` is on
     pub speed_feedback: bool,
@@ -110,7 +111,7 @@ impl Default for Pen {
         Pen {
             ink_feedback: false,
             intensity: crate::pen::INK_INTENSITY,
-            ink_waveform: crate::pen::Waveform::default(),
+            ink_waveform: crate::pen::Waveform::default().name().into(),
             speed_feedback: true,
             eraser_click: true,
             full_scale_mm_s: None,
@@ -126,6 +127,11 @@ impl Pen {
     pub fn full_scale_valid(v: f64) -> bool {
         let (lo, hi) = crate::pen_feedback::FULL_SCALE_RANGE;
         v.is_finite() && (lo..=hi).contains(&v)
+    }
+
+    /// The inking waveform.
+    pub fn waveform(&self) -> crate::pen::Waveform {
+        crate::pen::Waveform::from_name(&self.ink_waveform).unwrap_or_default()
     }
 
     pub fn dead_zone_valid(v: f64) -> bool {
@@ -156,17 +162,34 @@ pub struct Config {
 impl Config {
     /// Load and validate; returns the config and the problems found (already corrected).
     pub fn load(path: &Path) -> (Config, Vec<String>) {
+        let (c, w, _) = Self::load_checked(path);
+        (c, w)
+    }
+
+    /// As `load`; the flag is false when the file is there but could not be read as a whole
+    /// (a syntax error, a value of the wrong type), so the defaults stand in for all of it.
+    /// Such a file is not to be overwritten without keeping it (`keep_unreadable`).
+    pub fn load_checked(path: &Path) -> (Config, Vec<String>, bool) {
         let text = match std::fs::read_to_string(path) {
             Ok(t) => t,
-            Err(_) => return (Config::default(), vec![]),
+            Err(_) => return (Config::default(), vec![], true),
         };
         match toml::from_str::<Config>(&text) {
             Ok(mut c) => {
                 let w = c.sanitize();
-                (c, w)
+                (c, w, true)
             }
-            Err(e) => (Config::default(), vec![format!("{}: {e}; using defaults", path.display())]),
+            Err(e) => (Config::default(), vec![format!("{}: {e}; using defaults", path.display())], false),
         }
+    }
+
+    /// Copy a settings file that could not be read to `<name>.bad` before it is overwritten.
+    pub fn keep_unreadable(path: &Path) -> std::io::Result<PathBuf> {
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        name.push(".bad");
+        let bad = path.with_file_name(name);
+        std::fs::copy(path, &bad)?;
+        Ok(bad)
     }
 
     /// Drop values outside their bounds.
@@ -190,8 +213,12 @@ impl Config {
             w.push(format!("input.iptsd: {e}, ignored"));
             self.input.iptsd = Iptsd::default();
         }
-        if self.pen.intensity == 0 {
-            self.pen.intensity = 1;
+        let (lo, hi) = crate::pen::INTENSITY_RANGE;
+        self.pen.intensity = self.pen.intensity.clamp(lo, hi);
+        if crate::pen::Waveform::from_name(&self.pen.ink_waveform).is_none() {
+            let default = crate::pen::Waveform::default().name();
+            w.push(format!("pen.ink_waveform: unknown waveform {:?}, using {default}", self.pen.ink_waveform));
+            self.pen.ink_waveform = default.into();
         }
         if let Some(v) = self.pen.full_scale_mm_s.filter(|v| !Pen::full_scale_valid(*v)) {
             w.push(format!("pen.full_scale_mm_s: {v} outside 50..2000 mm/s, ignored"));
@@ -231,7 +258,7 @@ mod tests {
         assert!(!c.pen.ink_feedback && !c.input.touch_off_when_display_off);
         assert!(c.pen.speed_feedback && !c.pen.auto_couple && !c.pen.couple_restart_bluetooth);
         assert!(c.pen.eraser_click && c.pen.full_scale_mm_s.is_none());
-        assert_eq!((c.pen.ink_waveform, c.pen.speed_dead_zone_mm_s), (crate::pen::Waveform::Brush, 0.0));
+        assert_eq!((c.pen.waveform(), c.pen.speed_dead_zone_mm_s), (crate::pen::Waveform::Brush, 0.0));
         assert_eq!(c.pen.full_scale(), 300.0);
         let mut c2 = c.clone();
         c2.performance.limits.insert("performance.ac".into(), Limits::new(30.0, 50.0, 28.0, 64));
@@ -287,7 +314,7 @@ mod tests {
         assert_eq!(w.len(), 1, "{w:?}");
         assert!(w[0].contains("speed_full_scale = 145") && w[0].contains("300"), "{w:?}");
         assert_eq!((c.pen.full_scale(), c.pen.intensity, c.pen.ink_feedback), (300.0, 127, true));
-        assert_eq!(c.pen.ink_waveform, crate::pen::Waveform::Brush, "a file without the key gets the new default");
+        assert_eq!(c.pen.waveform(), crate::pen::Waveform::Brush, "a file without the key gets the new default");
         c.save(&p).unwrap();
         assert!(!t.read("/etc/sp9/helper.toml").contains("full_scale"));
         assert!(t.read("/etc/sp9/helper.toml").contains("ink_waveform = \"brush\""));
@@ -307,17 +334,44 @@ mod tests {
         t.file("/etc/sp9/helper.toml", "[pen]\nink_waveform = \"chisel-marker\"\nspeed_dead_zone_mm_s = 15.0\n");
         let (c, w) = Config::load(&p);
         assert!(w.is_empty(), "{w:?}");
-        assert_eq!(c.pen.ink_waveform, crate::pen::Waveform::ChiselMarker);
+        assert_eq!(c.pen.waveform(), crate::pen::Waveform::ChiselMarker);
         assert_eq!(c.pen.speed_scale(), crate::pen_feedback::SpeedScale { full_scale: 300.0, dead_zone: 15.0 });
         c.save(&p).unwrap();
         assert_eq!(Config::load(&p), (c, vec![]));
         t.file("/etc/sp9/helper.toml", "[pen]\nspeed_dead_zone_mm_s = 500.0\n");
         let (c, w) = Config::load(&p);
         assert_eq!((w.len(), c.pen.speed_dead_zone_mm_s), (1, 0.0), "{w:?}");
-        // a waveform the pen does not offer for inking: the file is rejected as a whole, like any bad value
-        t.file("/etc/sp9/helper.toml", "[pen]\nink_waveform = \"eraser\"\n");
-        let (c, w) = Config::load(&p);
-        assert_eq!((w.len(), c), (1, Config::default()));
+        // Review R6: a waveform this version does not know (a typo, a file from a newer version)
+        // costs that one setting, not the file
+        t.file(
+            "/etc/sp9/helper.toml",
+            "[performance]\nfollow_profile = false\n[display]\npsr_dc = \"psr1\"\n[pen]\nink_waveform = \"eraser\"\nauto_couple = true\nintensity = 255\n",
+        );
+        let (c, w, parsed) = Config::load_checked(&p);
+        assert!(parsed);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].contains("eraser"));
+        assert_eq!(c.pen.waveform(), crate::pen::Waveform::Brush);
+        assert!(c.pen.auto_couple && !c.performance.follow_profile && c.display.psr_dc == PsrMode::Psr1);
+        assert_eq!(c.pen.intensity, 254, "inside what Windows sends");
+    }
+
+    /// Review R6: a file that cannot be read as a whole is kept before a setter overwrites it
+    /// with the defaults.
+    #[test]
+    fn an_unreadable_file_is_kept() {
+        let t = FakeTree::new("cfg6");
+        let p = t.root.p("/etc/sp9/helper.toml");
+        assert!(Config::load_checked(&p).2, "no file is not a broken file");
+        let text = "[display]\npsr_dc = \"psr2\"\n[pen]\nauto_couple = true\n";
+        t.file("/etc/sp9/helper.toml", text);
+        let (c, w, parsed) = Config::load_checked(&p);
+        assert!(!parsed);
+        assert_eq!((c, w.len()), (Config::default(), 1));
+        let bad = Config::keep_unreadable(&p).unwrap();
+        assert_eq!(bad, t.root.p("/etc/sp9/helper.toml.bad"));
+        Config::default().save(&p).unwrap();
+        assert_eq!(t.read("/etc/sp9/helper.toml.bad"), text.trim());
     }
 
     /// A table this version has no field for (a file written by another version) is neither an

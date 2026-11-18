@@ -22,13 +22,17 @@ pub const HCI_DEV_NONE: u16 = 0xFFFF;
 pub const HCI_CHANNEL_RAW: u16 = 0;
 pub const HCI_CHANNEL_CONTROL: u16 = 3;
 
+pub const OP_READ_INDEX_LIST: u16 = 0x0003;
 pub const OP_READ_INFO: u16 = 0x0004;
 pub const OP_PAIR_DEVICE: u16 = 0x0019;
+pub const OP_CANCEL_PAIR_DEVICE: u16 = 0x001A;
 pub const OP_USER_CONFIRM_NEG_REPLY: u16 = 0x001D;
 pub const OP_UNPAIR_DEVICE: u16 = 0x001B;
 pub const OP_ADD_REMOTE_OOB_DATA: u16 = 0x0021;
 pub const EV_CMD_COMPLETE: u16 = 0x0001;
 pub const EV_CMD_STATUS: u16 = 0x0002;
+pub const EV_INDEX_REMOVED: u16 = 0x0005;
+pub const EV_NEW_SETTINGS: u16 = 0x0006;
 pub const EV_DEVICE_DISCONNECTED: u16 = 0x000C;
 pub const EV_NEW_LONG_TERM_KEY: u16 = 0x000A;
 pub const EV_USER_CONFIRM_REQUEST: u16 = 0x000F;
@@ -38,9 +42,12 @@ pub const EV_AUTH_FAILED: u16 = 0x0011;
 pub const DISCONN_AUTH_FAILURE: u8 = 0x04;
 
 pub const STATUS_SUCCESS: u8 = 0x00;
+pub const STATUS_NOT_CONNECTED: u8 = 0x02;
 pub const STATUS_AUTH_FAILED: u8 = 0x05;
 pub const STATUS_NOT_PAIRED: u8 = 0x06;
+pub const STATUS_BUSY: u8 = 0x0A;
 pub const STATUS_INVALID_PARAMS: u8 = 0x0D;
+pub const STATUS_DISCONNECTED: u8 = 0x0E;
 pub const STATUS_ALREADY_PAIRED: u8 = 0x13;
 
 pub const ADDR_LE_PUBLIC: u8 = 1;
@@ -51,6 +58,9 @@ pub const IO_NO_INPUT_NO_OUTPUT: u8 = 3;
 pub const SETTING_POWERED: u32 = 1 << 0;
 pub const SETTING_BONDABLE: u32 = 1 << 4;
 pub const SETTING_LE: u32 = 1 << 9;
+/// The adapter uses resolvable private addresses of its own: the pen is told the public
+/// address through the cover, so the pairing's confirm value would not match.
+pub const SETTING_PRIVACY: u32 = 1 << 13;
 
 fn lsb(a: &Addr) -> [u8; 6] {
     let mut b = *a;
@@ -72,6 +82,24 @@ pub fn command(opcode: u16, index: u16, params: &[u8]) -> Vec<u8> {
     p.extend((params.len() as u16).to_le_bytes());
     p.extend(params);
     p
+}
+
+/// Read Controller Index List (no controller index).
+pub fn read_index_list() -> Vec<u8> {
+    command(OP_READ_INDEX_LIST, HCI_DEV_NONE, &[])
+}
+
+/// Its reply parameters: count, then that many indices.
+pub fn parse_index_list(params: &[u8]) -> Vec<u16> {
+    let n = params.get(..2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize).unwrap_or(0);
+    params.get(2..).unwrap_or(&[]).chunks_exact(2).take(n).map(|b| u16::from_le_bytes([b[0], b[1]])).collect()
+}
+
+/// Give up a Pair Device that got no reply.
+pub fn cancel_pair_device(index: u16, addr: &Addr, addr_type: u8) -> Vec<u8> {
+    let mut p = lsb(addr).to_vec();
+    p.push(addr_type);
+    command(OP_CANCEL_PAIR_DEVICE, index, &p)
 }
 
 pub fn read_info(index: u16) -> Vec<u8> {
@@ -137,6 +165,10 @@ pub enum Event {
         addr: Addr,
         addr_type: u8,
     },
+    /// The adapter's settings changed (powered, bondable, ...): the current settings.
+    NewSettings(u32),
+    /// The adapter went away.
+    IndexRemoved,
     Other(u16),
 }
 
@@ -158,6 +190,8 @@ pub fn parse_event(pkt: &[u8]) -> Option<(u16, Event)> {
         EV_AUTH_FAILED if body.len() >= 8 => Event::AuthFailed { addr: msb(body), addr_type: body[6], status: body[7] },
         EV_DEVICE_DISCONNECTED if body.len() >= 8 => Event::Disconnected { addr: msb(body), addr_type: body[6], reason: body[7] },
         EV_USER_CONFIRM_REQUEST if body.len() >= 7 => Event::UserConfirmRequest { addr: msb(body), addr_type: body[6] },
+        EV_NEW_SETTINGS if body.len() >= 4 => Event::NewSettings(u32::from_le_bytes(body[..4].try_into().unwrap())),
+        EV_INDEX_REMOVED => Event::IndexRemoved,
         _ => Event::Other(code),
     };
     Some((index, ev))
@@ -342,10 +376,25 @@ mod tests {
         let pkt = [0x0F, 0, 0, 0, 12, 0, 0xE7, 0xE1, 0x17, 0xD9, 0x08, 0xED, 2, 1, 0, 0, 0, 0];
         assert_eq!(parse_event(&pkt).unwrap().1, Event::UserConfirmRequest { addr: addr(), addr_type: ADDR_LE_RANDOM });
         assert_eq!(user_confirm_neg_reply(0, &addr(), ADDR_LE_RANDOM), vec![0x1D, 0, 0, 0, 7, 0, 0xE7, 0xE1, 0x17, 0xD9, 0x08, 0xED, 2]);
+        // New Long Term Key: store hint, address, address type, ...
+        let mut pkt = vec![0x0A, 0, 0, 0, 37, 0, 1, 0xE7, 0xE1, 0x17, 0xD9, 0x08, 0xED, 2];
+        pkt.extend([0u8; 29]);
+        assert_eq!(parse_event(&pkt).unwrap().1, Event::NewLongTermKey { addr: addr() });
+        assert_eq!(parse_event(&[0x06, 0, 0, 0, 4, 0, 0x10, 0x02, 0, 0]).unwrap().1, Event::NewSettings(0x0210));
+        assert_eq!(parse_event(&[0x05, 0, 1, 0, 0, 0]).unwrap(), (1, Event::IndexRemoved));
         assert_eq!(parse_event(&[0x0B, 0, 0, 0, 0, 0]).unwrap().1, Event::Other(0x0B));
         assert!(parse_event(&[0x01, 0, 0, 0, 10, 0, 0x21]).is_none(), "truncated");
         assert_eq!(status_name(0x0D), "invalid parameters");
         assert_eq!(status_name(0x77), "status 0x77");
+    }
+
+    #[test]
+    fn index_list_and_cancel() {
+        assert_eq!(read_index_list(), vec![0x03, 0, 0xFF, 0xFF, 0, 0]);
+        assert_eq!(parse_index_list(&[2, 0, 1, 0, 0, 0]), vec![1, 0]);
+        assert_eq!(parse_index_list(&[0, 0]), Vec::<u16>::new());
+        assert_eq!(parse_index_list(&[3, 0, 1, 0]), vec![1], "a short reply");
+        assert_eq!(cancel_pair_device(1, &addr(), ADDR_LE_RANDOM), vec![0x1A, 0, 1, 0, 7, 0, 0xE7, 0xE1, 0x17, 0xD9, 0x08, 0xED, 2]);
     }
 
     #[test]

@@ -1004,6 +1004,7 @@ version = "0.1.0"
 dependencies = [
  "async-io",
  "blocking",
+ "futures-lite",
  "libc",
  "sp9-helper-core",
  "zbus",

@@ -5,7 +5,7 @@
 //! check polkit, act, persist the setting and emit PropertiesChanged (properties
 //! invalidated, clients read again).
 
-use crate::{couple, jobs, polkit, Shared, DEVICE, VERSION};
+use crate::{jobs, polkit, Shared, DEVICE, VERSION};
 use sp9_helper_core::display::PsrMode;
 use sp9_helper_core::input::{self, Iptsd};
 use sp9_helper_core::perf::{self, Limits, PROFILES};
@@ -895,7 +895,7 @@ impl Pen {
     fn ink_feedback(&self) -> bool {
         self.0.cfg().pen.ink_feedback
     }
-    /// intensity byte of the inking start, 1..255
+    /// intensity byte of the inking start, 2..254 (what Windows sends)
     #[zbus(property)]
     fn intensity(&self) -> u32 {
         self.0.cfg().pen.intensity as u32
@@ -913,7 +913,7 @@ impl Pen {
     /// the continuous waveform started on tip down: one of InkWaveforms
     #[zbus(property)]
     fn ink_waveform(&self) -> String {
-        self.0.cfg().pen.ink_waveform.name().into()
+        self.0.cfg().pen.waveform().name().into()
     }
     /// what SetInkWaveform takes
     #[zbus(property)]
@@ -987,8 +987,9 @@ impl Pen {
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
     ) -> fdo::Result<()> {
         polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
-        if !(1..=255).contains(&intensity) {
-            return Err(invalid("intensity must be 1..255"));
+        let (lo, hi) = pen::INTENSITY_RANGE;
+        if !(lo as u32..=hi as u32).contains(&intensity) {
+            return Err(invalid("intensity must be 2..254"));
         }
         persist(self.0.update(|c| c.pen.intensity = intensity as u8))?;
         invalidate(&em, Self::IFACE, Self::PROPS).await;
@@ -1049,7 +1050,7 @@ impl Pen {
     ) -> fdo::Result<()> {
         polkit::check(conn, &hdr, "pen", self.0.no_polkit).await?;
         let w = pen::Waveform::from_name(&name).ok_or_else(|| invalid(format!("unknown waveform {name}")))?;
-        persist(self.0.update(|c| c.pen.ink_waveform = w))?;
+        persist(self.0.update(|c| c.pen.ink_waveform = w.name().into()))?;
         invalidate(&em, Self::IFACE, Self::PROPS).await;
         Ok(())
     }
@@ -1120,10 +1121,10 @@ impl Pen {
         if !self.0.hardware {
             return Err(fdo::Error::NotSupported("coupling needs the system bus and the real device".into()));
         }
-        if self.0.couple.status().state == couple::STATE_COUPLING {
+        // refused while a coupling runs: nothing is queued behind it
+        if !self.0.couple.request(force) {
             return Err(failed("a coupling is in progress"));
         }
-        self.0.couple.request(force);
         Ok(())
     }
 

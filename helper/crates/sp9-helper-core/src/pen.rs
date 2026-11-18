@@ -2,8 +2,10 @@
 // Copyright (C) 2026 Joonhoe Kim
 //! Slim Pen 2 haptics over its BLE HID hidraw node: the Simple Haptic Controller (page 0x0E)
 //! output report (65 on this pen), the same reports userspace/pen/surface_pen/haptic.py writes.
-//! Windows-style inking feedback: one start report on tip down (ink-continuous, ordinal 9),
-//! one stop report on tip up, nothing in between (docs/research/gaps/pen-ble-trace.md 3.3).
+//! Windows-style inking feedback: one start report on tip down (the continuous waveform that
+//! is set, brush unless chosen; its ordinal comes from the pen's waveform list), one stop
+//! report on tip up, nothing in between (docs/research/gaps/pen-ble-trace.md 3.3). The eraser end
+//! gets one click on touch-down instead.
 
 use crate::hid::{self, HidBackend, Kind};
 use std::io;
@@ -134,8 +136,20 @@ impl PenHaptic {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))
     }
 
+    /// The remembered node still is the pen (hidraw numbers are reused once it is gone).
+    pub fn alive(&self, h: &dyn HidBackend) -> bool {
+        h.ids(&self.node).is_some_and(|(_, vendor, product)| vendor == PEN_VENDOR && product == PEN_PRODUCT)
+    }
+
+    fn write(&self, h: &dyn HidBackend, report: &[u8]) -> io::Result<()> {
+        if !self.alive(h) {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "the pen's node is gone"));
+        }
+        h.write_output(&self.node, report)
+    }
+
     pub fn trigger(&self, h: &dyn HidBackend, ordinal: i64, intensity: u8) -> io::Result<()> {
-        h.write_output(&self.node, &self.report(ordinal, intensity.max(1) as i64)?)
+        self.write(h, &self.report(ordinal, intensity.max(1) as i64)?)
     }
 
     /// The pen's waveform list (ordinal, waveform usage), read from its feature report; empty
@@ -150,7 +164,7 @@ impl PenHaptic {
     }
 
     pub fn stop(&self, h: &dyn HidBackend) -> io::Result<()> {
-        h.write_output(&self.node, &self.report(ORDINAL_STOP, STOP_INTENSITY)?)
+        self.write(h, &self.report(ORDINAL_STOP, STOP_INTENSITY)?)
     }
 }
 
@@ -188,6 +202,12 @@ impl InkFeedback {
         };
         self.active = contact;
         r
+    }
+
+    /// The stylus is gone or the feedback is switched off: the stop a running waveform needs.
+    pub fn end(&mut self) -> Option<InkAction> {
+        self.active = false;
+        std::mem::take(&mut self.started).then_some(InkAction::Stop)
     }
 }
 
@@ -342,6 +362,31 @@ mod tests {
         // the tip end afterwards is as before
         assert_eq!(i.update(true, false, true), Some(InkAction::Start));
         assert_eq!(i.update(false, false, true), Some(InkAction::Stop));
+    }
+
+    /// Review I2/R2: a remembered pen node is not written to once the name means another device.
+    #[test]
+    fn a_remembered_pen_is_checked_before_writing() {
+        let h = pen();
+        let p = find(&h).unwrap();
+        p.trigger(&h, ORDINAL_CLICK, 100).unwrap();
+        h.0.lock().unwrap().nodes[0].product = 0x09B0; // the cover took hidraw7
+        assert!(!p.alive(&h));
+        assert_eq!(p.trigger(&h, ORDINAL_CLICK, 100).unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert_eq!(p.stop(&h).unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert_eq!(h.0.lock().unwrap().writes.len(), 1);
+    }
+
+    #[test]
+    fn ending_stops_a_running_waveform_only() {
+        let mut i = InkFeedback::default();
+        assert_eq!(i.end(), None);
+        i.update(true, false, true);
+        assert_eq!(i.end(), Some(InkAction::Stop));
+        assert_eq!(i.end(), None);
+        assert_eq!(i.update(false, false, true), None, "the lift after it has nothing to stop");
+        i.update(true, true, true);
+        assert_eq!(i.end(), None, "the eraser end started nothing");
     }
 
     #[test]

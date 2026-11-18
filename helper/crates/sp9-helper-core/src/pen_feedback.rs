@@ -102,6 +102,9 @@ pub enum PenState {
     /// the eraser end touches: Windows gives no speed for it, and the pen plays no continuous
     /// waveform with that end
     Eraser,
+    /// the tip touches and the host cannot tell its speed (the stylus axes have no
+    /// resolution): contact without a speed. Not a frame seen from Windows
+    Contact,
 }
 
 /// `8e a5` (V06) as Windows' touch processor sends it for a pen it has no pen ID and LocalId
@@ -122,7 +125,7 @@ pub fn pen_feedback(seq: u8, fhid: u16, state: PenState) -> [u8; REPORT_LEN] {
     b[38] = if state == PenState::Hover { A_BASE } else { A_BASE | A_CONTACT };
     b[40..42].copy_from_slice(&fhid.to_le_bytes());
     b[42] = 1; // protocol type
-    b[43] = if matches!(state, PenState::Tip(_)) { ZFI_CONTACT } else { ZFI_HOVER };
+    b[43] = if matches!(state, PenState::Tip(_) | PenState::Contact) { ZFI_CONTACT } else { ZFI_HOVER };
     b[44] = PROCESS[(seq & 1) as usize];
     let (speed, valid) = match state {
         PenState::Tip(q) => (q.min(SPEED_MAX), V_BASE | V_SPEED),
@@ -162,6 +165,10 @@ impl SpeedEstimator {
     }
 
     pub fn add(&mut self, t: f64, x_mm: f64, y_mm: f64) -> f64 {
+        // a gap: what was estimated before it says nothing about the movement now
+        if self.samples.last().is_some_and(|s| t - s.0 > Self::MAX_DT) {
+            self.reset();
+        }
         self.samples.push((t, x_mm, y_mm));
         self.samples.retain(|s| t - s.0 <= Self::MAX_DT);
         if let Some(&(t0, x0, y0)) = self.samples.iter().find(|s| t - s.0 >= Self::MIN_DT) {
@@ -211,25 +218,38 @@ pub fn load_fast_host_id(file: &Path, legacy: &Path, random: impl FnOnce() -> u1
     (v, crate::sys::write_atomic(file, format!("0x{v:04x}\n").as_bytes()))
 }
 
-/// What to send to the digitizer and when, fed with the stylus events. Times are seconds on
-/// a monotonic clock.
+/// What the digitizer was told last.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Sent {
+    Nothing,
+    /// something was sent, but it may not have arrived or the digitizer may have lost it
+    Unknown,
+    Known(PenState),
+}
+
+/// What to send to the digitizer and when, fed with the stylus state. Times are seconds on
+/// the clock of the input events (monotonic).
 pub struct Feeder {
     pub fhid: u16,
     seq: u8,
     est: SpeedEstimator,
-    sent: Option<PenState>,
+    sent: Sent,
     sent_at: f64,
+    /// a state change was held back by `MIN_INTERVAL_S`: `wait_s` says when to come back
+    held: bool,
     display_at: Option<f64>,
     in_range: bool,
     rubber: bool,
     tip: bool,
     last_pos: f64,
+    /// the positions are in mm (the axes have a resolution)
+    speed_usable: bool,
 }
 
 impl Feeder {
     /// resend an unchanged value this often while the pen is in range
     pub const KEEPALIVE_S: f64 = 1.0;
-    /// no position for this long while in contact: the pen stands still
+    /// no new position for this long while in contact: the pen stands still
     pub const STILL_S: f64 = 0.06;
     /// Windows sends about 134 messages a second
     pub const MIN_INTERVAL_S: f64 = 0.007;
@@ -240,13 +260,15 @@ impl Feeder {
             fhid,
             seq: 0,
             est: SpeedEstimator::default(),
-            sent: None,
+            sent: Sent::Nothing,
             sent_at: f64::NEG_INFINITY,
+            held: false,
             display_at: None,
             in_range: false,
             rubber: false,
             tip: false,
             last_pos: f64::NEG_INFINITY,
+            speed_usable: true,
         }
     }
 
@@ -254,11 +276,19 @@ impl Feeder {
         self.in_range
     }
 
-    /// The digitizer lost what it was told (new node, resume): the next `display_due` is true
-    /// and the next frame is sent even when its value did not change.
+    /// Whether the positions fed are in mm. Without it no speed is sent.
+    pub fn set_speed_usable(&mut self, usable: bool) {
+        self.speed_usable = usable;
+    }
+
+    /// The digitizer lost what it was told, or may not have got it (new node, resume, a failed
+    /// write): the next `display_due` is true and the next frame is sent whatever its value,
+    /// also the hover frame of a pen that is out of range.
     pub fn forget(&mut self) {
         self.display_at = None;
-        self.sent = None;
+        if self.sent != Sent::Nothing {
+            self.sent = Sent::Unknown;
+        }
     }
 
     /// The digitizer has not been told the FastHostId since the last `forget`.
@@ -276,11 +306,13 @@ impl Feeder {
         display_states(self.fhid, 0)
     }
 
-    /// BTN_TOOL_PEN / BTN_TOOL_RUBBER; `rubber` says which end came into range.
+    /// BTN_TOOL_PEN / BTN_TOOL_RUBBER; `rubber` says which end is in range.
     pub fn range(&mut self, in_range: bool, rubber: bool) {
+        if in_range != self.in_range || (in_range && rubber) != self.rubber {
+            self.est.reset();
+        }
         self.in_range = in_range;
         self.rubber = in_range && rubber;
-        self.est.reset();
     }
 
     /// BTN_TOUCH.
@@ -288,52 +320,74 @@ impl Feeder {
         self.tip = down;
     }
 
-    /// A new position (SYN_REPORT with ABS_X/ABS_Y changed), in mm.
+    /// A new position (a frame in which ABS_X or ABS_Y changed), in mm.
     pub fn position(&mut self, now: f64, x_mm: f64, y_mm: f64) {
         self.est.add(now, x_mm, y_mm);
         self.last_pos = now;
     }
 
-    fn feedback(&mut self, now: f64, state: PenState) -> Option<[u8; REPORT_LEN]> {
-        if self.sent == Some(state) && now - self.sent_at < Self::KEEPALIVE_S {
+    fn feedback(&mut self, now: f64, state: PenState, force: bool) -> Option<[u8; REPORT_LEN]> {
+        if self.sent == Sent::Known(state) && now - self.sent_at < Self::KEEPALIVE_S {
+            self.held = false;
             return None;
         }
-        if now - self.sent_at < Self::MIN_INTERVAL_S {
+        // (a microsecond of slack: `wait_s` hands out the exact remainder)
+        if !force && now - self.sent_at < Self::MIN_INTERVAL_S - 1e-6 {
+            self.held = true;
             return None;
         }
+        self.held = false;
         let m = pen_feedback(self.seq, self.fhid, state);
         self.seq = self.seq.wrapping_add(1);
-        self.sent = Some(state);
+        self.sent = Sent::Known(state);
         self.sent_at = now;
         Some(m)
     }
 
-    /// End of an event frame (SYN_REPORT): the message to send, if the state changed (or the
-    /// keepalive is due). The speed goes out only while the tip touches: the frame after the
-    /// tip lifts and every eraser-end frame carry "no speed", so the digitizer does not keep
-    /// a stale one. A pen that left the range gets one last hover frame.
+    /// The message to send now, if the state changed (or the keepalive is due): at the end of
+    /// an event frame, and when `wait_s` or the poll timeout ran out. The speed goes out only
+    /// while the tip touches: the frame after the tip lifts and every eraser-end frame carry
+    /// "no speed", so the digitizer does not keep a stale one. A tip that got no new position
+    /// for `STILL_S` stands still (speed 0), whatever events keep coming. A pen that left the
+    /// range gets one last hover frame.
     pub fn frame(&mut self, now: f64, scale: SpeedScale) -> Option<[u8; REPORT_LEN]> {
         if !self.in_range {
             return match self.sent {
-                Some(PenState::Hover) | None => None,
-                Some(_) => self.feedback(now, PenState::Hover),
+                Sent::Nothing | Sent::Known(PenState::Hover) => {
+                    self.held = false;
+                    None
+                }
+                _ => self.feedback(now, PenState::Hover, false),
             };
         }
         let state = match (self.tip, self.rubber) {
             (false, _) => PenState::Hover,
             (true, true) => PenState::Eraser,
-            (true, false) => PenState::Tip(scale.quantize(self.est.value())),
+            (true, false) if !self.speed_usable => PenState::Contact,
+            (true, false) => {
+                if now - self.last_pos >= Self::STILL_S {
+                    self.est.reset();
+                }
+                PenState::Tip(scale.quantize(self.est.value()))
+            }
         };
-        self.feedback(now, state)
+        self.feedback(now, state, false)
     }
 
-    /// No event for a while: a tip in contact without a new position stands still (speed 0);
-    /// otherwise the keepalive of the state it is in.
-    pub fn idle(&mut self, now: f64, scale: SpeedScale) -> Option<[u8; REPORT_LEN]> {
-        if self.in_range && self.tip && !self.rubber && now - self.last_pos >= Self::STILL_S {
-            self.est.reset();
+    /// Seconds until a state change that `MIN_INTERVAL_S` held back can go out (call `frame`
+    /// again then); None when nothing is waiting.
+    pub fn wait_s(&self, now: f64) -> Option<f64> {
+        self.held.then(|| (Self::MIN_INTERVAL_S - (now - self.sent_at)).max(0.0))
+    }
+
+    /// Stop telling the digitizer about a contact: the hover ("no speed") frame, at once, when
+    /// the last thing it was told is a contact or is not known. For when sending is switched
+    /// off and when the stylus node goes away.
+    pub fn release(&mut self, now: f64) -> Option<[u8; REPORT_LEN]> {
+        match self.sent {
+            Sent::Nothing | Sent::Known(PenState::Hover) => None,
+            _ => self.feedback(now, PenState::Hover, true),
         }
-        self.frame(now, scale)
     }
 }
 
@@ -433,15 +487,15 @@ mod tests {
         assert_eq!(sent.len(), 1, "100 mm/s all the way");
         assert_eq!((sent[0][38], sent[0][43], sent[0][45], sent[0][3]), (0x4E, 1, 22, 1), "100 / 290 * 63");
         // standing still: 0 once after STILL_S, then the keepalive
-        assert!(f.idle(2.02, fs).is_none());
-        assert_eq!(f.idle(2.2, fs).unwrap()[45], 0);
-        assert!(f.idle(2.3, fs).is_none());
-        assert_eq!(f.idle(3.3, fs).unwrap()[45], 0, "keepalive");
+        assert!(f.frame(2.02, fs).is_none());
+        assert_eq!(f.frame(2.2, fs).unwrap()[45], 0);
+        assert!(f.frame(2.3, fs).is_none());
+        assert_eq!(f.frame(3.3, fs).unwrap()[45], 0, "keepalive");
         // the tip lifts: a frame without a speed, so the digitizer does not keep the last one
         f.tip(false);
         let m = f.frame(3.4, fs).unwrap();
         assert_eq!((m[38], m[43], m[45], &m[47..49]), (0x4C, 3, 0xFF, &[0x52, 0x03][..]));
-        assert!(f.idle(3.5, fs).is_none());
+        assert!(f.frame(3.5, fs).is_none());
         // forgetting resends the same state
         f.forget();
         assert!(f.display_due(3.6) && f.display_pending());
@@ -453,7 +507,138 @@ mod tests {
         f.range(false, false);
         f.tip(false);
         assert_eq!(f.frame(4.1, fs).unwrap()[45], 0xFF);
-        assert!(f.frame(5.0, fs).is_none() && f.idle(9.0, fs).is_none());
+        assert!(f.frame(5.0, fs).is_none() && f.frame(9.0, fs).is_none());
+    }
+
+    /// Review B1: iptsd sends an event frame every digitizer frame (ABS_MISC timestamp), so the
+    /// poll timeout never runs in range; a tip that stops must still go to speed 0.
+    #[test]
+    fn a_tip_that_stops_goes_to_zero_while_frames_keep_coming() {
+        let fs = SpeedScale::new(300.0);
+        let mut f = Feeder::new(0x143);
+        f.range(true, false);
+        f.tip(true);
+        let mut t = 1.0;
+        for i in 0..60 {
+            t = 1.0 + i as f64 * 0.0077;
+            f.position(t, i as f64 * 1.54, 0.0); // 200 mm/s
+            f.frame(t, fs);
+        }
+        assert_eq!(f.sent, Sent::Known(PenState::Tip(42)));
+        // 2 s of frames without a new position
+        let mut last = Vec::new();
+        for i in 1..260 {
+            last.extend(f.frame(t + i as f64 * 0.0077, fs).map(|m| m[45]));
+        }
+        assert_eq!(last.first(), Some(&0), "speed 0 once the position is {} ms old", Feeder::STILL_S * 1000.0);
+        assert!(last.iter().all(|q| *q == 0), "{last:?}");
+        assert_eq!(f.sent, Sent::Known(PenState::Tip(0)));
+    }
+
+    /// Review B2: estimates have an age: hovering fast, stopping and touching down later does
+    /// not put the old speed into the first contact frame.
+    #[test]
+    fn an_old_estimate_is_not_a_speed() {
+        let fs = SpeedScale::new(300.0);
+        let hover_fast = |f: &mut Feeder| {
+            f.range(true, false);
+            for i in 0..40 {
+                let t = 1.0 + i as f64 * 0.0077;
+                f.position(t, i as f64 * 1.54, 0.0);
+                f.frame(t, fs);
+            }
+        };
+        // touch-down without a new position
+        let mut f = Feeder::new(0x143);
+        hover_fast(&mut f);
+        f.tip(true);
+        assert_eq!(f.frame(2.3, fs).unwrap()[45], 0);
+        // touch-down with a position: the gap drops what was estimated before it
+        let mut f = Feeder::new(0x143);
+        hover_fast(&mut f);
+        f.tip(true);
+        f.position(2.3, 61.0, 0.0);
+        assert_eq!(f.frame(2.3, fs).unwrap()[45], 0);
+        let mut e = SpeedEstimator::default();
+        for i in 0..10 {
+            e.add(i as f64 * 0.0077, i as f64 * 1.54, 0.0);
+        }
+        assert!(e.value() > 190.0);
+        assert_eq!(e.add(1.0, 20.0, 0.0), 0.0, "a sample after a gap starts over");
+    }
+
+    /// Review B3: a state change inside the minimum interval is not lost: `wait_s` tells when
+    /// to come back, and the lift frame goes out then.
+    #[test]
+    fn a_change_held_back_by_the_interval_goes_out() {
+        let fs = SpeedScale::new(300.0);
+        let mut f = Feeder::new(0x143);
+        f.range(true, false);
+        f.tip(true);
+        assert!(f.frame(1.0, fs).is_some());
+        assert_eq!(f.wait_s(1.0), None);
+        // the lift 2 ms later (two frames in one read)
+        f.tip(false);
+        assert!(f.frame(1.002, fs).is_none());
+        let wait = f.wait_s(1.002).unwrap();
+        assert!((wait - 0.005).abs() < 1e-9, "{wait}");
+        let m = f.frame(1.002 + wait, fs).unwrap();
+        assert_eq!((m[38], m[45]), (0x4C, 0xFF), "the lift frame");
+        assert_eq!(f.wait_s(1.01), None);
+        // a change that undoes itself inside the interval leaves nothing waiting
+        f.tip(true);
+        assert!(f.frame(1.0075, fs).is_none() && f.wait_s(1.0075).is_some());
+        f.tip(false);
+        assert!(f.frame(1.008, fs).is_none());
+        assert_eq!(f.wait_s(1.008), None);
+    }
+
+    /// Review R4: after a write that failed the digitizer may still hold a contact with a
+    /// speed: a pen that is out of range by then gets its hover frame all the same.
+    #[test]
+    fn a_failed_write_is_followed_by_a_hover_frame() {
+        let fs = SpeedScale::new(300.0);
+        let mut f = Feeder::new(0x143);
+        f.forget();
+        assert!(f.frame(0.5, fs).is_none(), "nothing was ever sent: nothing to take back");
+        f.range(true, false);
+        f.tip(true);
+        assert!(f.frame(1.0, fs).is_some());
+        f.tip(false);
+        let lift = f.frame(1.1, fs);
+        assert!(lift.is_some());
+        f.forget(); // the lift frame was not delivered
+        f.range(false, false);
+        let m = f.frame(1.2, fs).unwrap();
+        assert_eq!((m[38], m[45]), (0x4C, 0xFF));
+        assert!(f.frame(1.3, fs).is_none());
+    }
+
+    #[test]
+    fn release_takes_a_contact_back_at_once() {
+        let fs = SpeedScale::new(300.0);
+        let mut f = Feeder::new(0x143);
+        assert!(f.release(0.0).is_none());
+        f.range(true, false);
+        f.tip(true);
+        assert!(f.frame(1.0, fs).is_some());
+        let m = f.release(1.001).unwrap();
+        assert_eq!((m[38], m[45], m[3]), (0x4C, 0xFF, 1), "inside the minimum interval too");
+        assert!(f.release(1.002).is_none());
+    }
+
+    /// Review R7: axes without a resolution give no mm, so no speed is sent.
+    #[test]
+    fn no_resolution_no_speed() {
+        let fs = SpeedScale::new(300.0);
+        let mut f = Feeder::new(0x143);
+        f.set_speed_usable(false);
+        f.range(true, false);
+        f.tip(true);
+        f.position(1.0, 0.0, 0.0);
+        f.position(1.02, 5000.0, 0.0);
+        let m = f.frame(1.02, fs).unwrap();
+        assert_eq!((m[38], m[43], m[45], &m[47..49]), (0x4E, 1, 0xFF, &[0x52, 0x03][..]));
     }
 
     #[test]
@@ -495,7 +680,7 @@ mod tests {
             f.position(t, i as f64 * 0.77, 0.0);
             sent.extend(f.frame(t, fs));
         }
-        sent.extend(f.idle(2.5, fs));
+        sent.extend(f.frame(2.5, fs));
         assert_eq!(sent.len(), 2, "the contact frame and its keepalive");
         for m in &sent {
             assert_eq!((m[38], m[43], m[45], &m[47..49]), (0x4E, 3, 0xFF, &[0x52, 0x03][..]));

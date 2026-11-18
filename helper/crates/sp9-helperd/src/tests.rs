@@ -190,6 +190,9 @@ fn input_and_pen() {
     r.call(P_INPUT, "Input", "SetKeyboardBacklight", &(12u32,)).unwrap();
     assert!(err_name(r.call(P_INPUT, "Input", "SetKeyboardBacklight", &(5u32,))).ends_with("InvalidArgs"));
     r.call(P_PEN, "Pen", "SetIntensity", &(200u32,)).unwrap();
+    for bad in [0u32, 1, 255, 300] {
+        assert!(err_name(r.call(P_PEN, "Pen", "SetIntensity", &(bad,))).ends_with("InvalidArgs"), "{bad}");
+    }
     r.call(P_PEN, "Pen", "TestPulse", &()).unwrap();
     let w = r.hid.0.lock().unwrap().writes.clone();
     assert_eq!(w[0], ("hidraw1".to_string(), vec![213, 12]));
@@ -246,7 +249,7 @@ fn pen_feedback_and_coupling_settings() {
             descriptor,
         };
         h.nodes.push(node("hidraw8", pen_feedback::DIGITIZER_PRODUCT, digitizer));
-        h.nodes.push(node("hidraw5", 0x09B0, cover::fake_cover_pen_descriptor()));
+        h.nodes.push(HidNode { bus: 0x19, ..node("hidraw5", 0x09B0, cover::fake_cover_pen_descriptor()) });
     }
     assert!(bool::try_from(r.get(P_PEN, "Pen", "DigitizerAvailable")).unwrap());
     assert!(bool::try_from(r.get(P_PEN, "Pen", "CoverAvailable")).unwrap());
@@ -317,84 +320,252 @@ fn pen_feedback_and_coupling_settings() {
 fn couple_request_reaches_the_thread_state() {
     let c = crate::couple::Couple::default();
     assert_eq!(c.status().state, crate::couple::STATE_IDLE);
-    c.request(false);
+    assert!(c.request(false));
     assert_eq!(c.status().state, crate::couple::STATE_WAITING);
+    // Review item 12: the thread enters a coupling and takes the request with it in one step;
+    // while it runs nothing is queued, and the state is not overwritten
+    assert_eq!(c.begin(), Some(false));
+    assert_eq!(c.status().state, crate::couple::STATE_COUPLING);
+    assert!(!c.request(true), "refused while a coupling runs");
+    assert_eq!(c.status().state, crate::couple::STATE_COUPLING);
+    assert_eq!(c.begin(), None, "nothing was queued");
 }
 
-/// The pen thread end to end: a FIFO stands in for iptsd's stylus event node.
+/// A fake device for the pen thread: a FIFO stands in for iptsd's stylus event node (no
+/// ioctls: no axis resolution, no key state, timestamps from the thread's clock).
+#[cfg(target_os = "linux")]
+struct StylusRig {
+    tree: FakeTree,
+    hid: FakeHid,
+    shared: Arc<Shared>,
+    fifo: std::fs::File,
+}
+
+#[cfg(target_os = "linux")]
+impl StylusRig {
+    fn new(name: &str, before_start: impl FnOnce(&FakeTree)) -> StylusRig {
+        let tree = FakeTree::new(name);
+        tree.file("/etc/sp9/helper.toml", "[pen]\nink_feedback = true\n")
+            .file("/sys/class/input/event9/device/name", "IPTSD Virtual Stylus 045E:0C52\n")
+            .file(pen_feedback::LEGACY_FHID, "0x0143\n");
+        let fifo = tree.root.p("/dev/input/event9");
+        std::fs::create_dir_all(fifo.parent().unwrap()).unwrap();
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: a valid path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        before_start(&tree);
+
+        let hid = FakeHid::default();
+        {
+            use sp9_helper_core::hid::build::*;
+            let digitizer = cat(&[
+                page(0xFF00),
+                usage(0x01),
+                collection(1),
+                id(9),
+                usage(0xC9),
+                lmin(0),
+                lmax(255),
+                size(8),
+                count(63),
+                feature(2),
+                end(),
+            ]);
+            let mut h = hid.0.lock().unwrap();
+            let node = |name: &str, bus, product, descriptor| HidNode {
+                name: name.into(),
+                bus,
+                vendor: 0x045E,
+                product,
+                hid_name: String::new(),
+                descriptor,
+            };
+            h.nodes.push(node("hidraw8", 1, pen_feedback::DIGITIZER_PRODUCT, digitizer));
+            h.nodes.push(node("hidraw7", 5, pen::PEN_PRODUCT, pen::fake_pen_descriptor()));
+            // the firmware's echo of the FastHostId
+            h.features.insert(("hidraw8".into(), pen_feedback::FHID_ECHO_REPORT), vec![115, 0x43, 0x01]);
+        }
+        let mut b = Backends::fake();
+        b.hid = Box::new(hid.clone());
+        let mut shared = Shared::new(b, tree.root.clone(), tree.root.p("/etc/sp9/helper.toml"), true);
+        shared.state_dir = tree.root.p("/var/lib/sp9");
+        let shared = Arc::new(shared);
+        penwatch::spawn(shared.clone());
+        // blocks until the thread has the node open
+        let fifo = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+        StylusRig { tree, hid, shared, fifo }
+    }
+
+    /// One event frame (the SYN_REPORT is added), then time for the thread to act on it.
+    fn frame(&mut self, events: &[(u16, u16, i32)]) {
+        use std::io::Write;
+        let ev = |ty: u16, code: u16, value: i32| {
+            let mut e = [0u8; std::mem::size_of::<libc::input_event>()];
+            e[16..18].copy_from_slice(&ty.to_ne_bytes());
+            e[18..20].copy_from_slice(&code.to_ne_bytes());
+            e[20..24].copy_from_slice(&value.to_ne_bytes());
+            e
+        };
+        let mut bytes: Vec<u8> = events.iter().flat_map(|(t, c, v)| ev(*t, *c, *v)).collect();
+        bytes.extend(ev(0, 0, 0));
+        self.fifo.write_all(&bytes).unwrap();
+        std::thread::sleep(Duration::from_millis(40));
+    }
+
+    fn features(&self) -> Vec<Vec<u8>> {
+        self.hid.0.lock().unwrap().feature_writes.iter().map(|(n, d)| (assert_eq!(n, "hidraw8"), d.clone()).1).collect()
+    }
+
+    fn pen_writes(&self) -> Vec<Vec<u8>> {
+        self.hid.0.lock().unwrap().writes.iter().map(|(n, d)| (assert_eq!(n, "hidraw7"), d.clone()).1).collect()
+    }
+}
+
+#[cfg(target_os = "linux")]
+const START: [u8; 7] = [0x41, 0, 0x7F, 13, 0, 0, 0]; // brush by its fixed ordinal: the fake pen has no list
+#[cfg(target_os = "linux")]
+const STOP: [u8; 7] = [0x41, 0, 0xFE, 2, 0, 0, 0];
+#[cfg(target_os = "linux")]
+const CLICK: [u8; 7] = [0x41, 0, 0x7F, 3, 0, 0, 0];
+
+/// The pen thread end to end.
 #[cfg(target_os = "linux")]
 #[test]
 fn stylus_events_reach_the_digitizer_and_the_pen() {
-    use std::io::Write;
-    let tree = FakeTree::new("penwatch");
-    tree.file("/etc/sp9/helper.toml", "[pen]\nink_feedback = true\n")
-        .file("/sys/class/input/event9/device/name", "IPTSD Virtual Stylus 045E:0C52\n")
-        .file(pen_feedback::LEGACY_FHID, "0x0143\n");
-    let fifo = tree.root.p("/dev/input/event9");
-    std::fs::create_dir_all(fifo.parent().unwrap()).unwrap();
-    let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
-    // SAFETY: a valid path.
-    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    use pen_feedback::PenState::{Contact, Eraser, Hover};
+    let mut r = StylusRig::new("penwatch", |_| {});
+    r.frame(&[(1, 0x140, 1), (3, 0, 100), (3, 1, 100)]); // pen in range
+    r.frame(&[(1, 0x14a, 1)]); // tip down
+    r.frame(&[(1, 0x14a, 0)]); // tip up
+    r.frame(&[(1, 0x140, 0)]); // out of range
+                               // the eraser end comes into range touching, in iptsd's order: touch first (review B5)
+    r.frame(&[(1, 0x14a, 1), (1, 0x140, 0), (1, 0x141, 1)]);
+    r.frame(&[(1, 0x14a, 0)]); // eraser up: nothing for the pen
+    std::thread::sleep(Duration::from_millis(200));
 
-    let hid = FakeHid::default();
-    {
-        use sp9_helper_core::hid::build::*;
-        let digitizer =
-            cat(&[page(0xFF00), usage(0x01), collection(1), id(9), usage(0xC9), lmin(0), lmax(255), size(8), count(63), feature(2), end()]);
-        let mut h = hid.0.lock().unwrap();
-        let node = |name: &str, bus, product, descriptor| HidNode {
-            name: name.into(),
-            bus,
-            vendor: 0x045E,
-            product,
-            hid_name: String::new(),
-            descriptor,
-        };
-        h.nodes.push(node("hidraw8", 1, pen_feedback::DIGITIZER_PRODUCT, digitizer));
-        h.nodes.push(node("hidraw7", 5, pen::PEN_PRODUCT, pen::fake_pen_descriptor()));
+    let f = r.features();
+    assert_eq!(f.len(), 6, "{} feature writes", f.len());
+    assert_eq!(f[0], pen_feedback::display_states(0x143, 0).to_vec(), "the FastHostId of the standalone daemon, first");
+    // (the FIFO has no axis resolution, so the contact carries no speed: review R7)
+    for (k, state) in [Hover, Contact, Hover, Eraser, Hover].into_iter().enumerate() {
+        assert_eq!(f[k + 1], pen_feedback::pen_feedback(k as u8, 0x143, state).to_vec(), "frame {k}");
     }
-    let mut b = Backends::fake();
-    b.hid = Box::new(hid.clone());
-    let mut shared = Shared::new(b, tree.root.clone(), tree.root.p("/etc/sp9/helper.toml"), true);
-    shared.state_dir = tree.root.p("/var/lib/sp9");
-    penwatch::spawn(Arc::new(shared));
+    assert_eq!(r.pen_writes(), [START.to_vec(), STOP.to_vec(), CLICK.to_vec()], "start, stop, eraser click");
+    assert_eq!(r.tree.read("/var/lib/sp9/pen-fast-host-id"), "0x0143");
+}
 
-    // blocks until the thread has the node open
-    let mut w = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+/// Review B3: contact and lift in one read(): the lift frame is not lost.
+#[cfg(target_os = "linux")]
+#[test]
+fn two_frames_in_one_read() {
+    use std::io::Write;
+    let mut r = StylusRig::new("penwatch-b3", |_| {});
+    r.frame(&[(1, 0x140, 1)]);
     let ev = |ty: u16, code: u16, value: i32| {
-        let mut e = [0u8; 24];
+        let mut e = [0u8; std::mem::size_of::<libc::input_event>()];
         e[16..18].copy_from_slice(&ty.to_ne_bytes());
         e[18..20].copy_from_slice(&code.to_ne_bytes());
         e[20..24].copy_from_slice(&value.to_ne_bytes());
         e
     };
-    let mut frame = |events: &[[u8; 24]]| {
-        w.write_all(&events.concat()).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(40));
-    };
-    let syn = ev(0, 0, 0);
-    frame(&[ev(1, 0x140, 1), ev(3, 0, 100), ev(3, 1, 100), syn]); // pen in range
-    frame(&[ev(1, 0x14a, 1), syn]); // tip down
-    frame(&[ev(1, 0x14a, 0), syn]); // tip up
-    frame(&[ev(1, 0x140, 0), syn]); // out of range
-    frame(&[ev(1, 0x141, 1), syn]); // eraser end in range
-    frame(&[ev(1, 0x14a, 1), syn]); // eraser down: one click
-    frame(&[ev(1, 0x14a, 0), syn]); // eraser up: nothing
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    let batch = [ev(1, 0x14a, 1), ev(0, 0, 0), ev(1, 0x14a, 0), ev(0, 0, 0)].concat();
+    r.fifo.write_all(&batch).unwrap();
+    std::thread::sleep(Duration::from_millis(45)); // less than the in-range poll timeout
+    let f = r.features();
+    assert_eq!(f.len(), 4, "display, hover, contact, hover");
+    assert_eq!((f[2][38], f[3][38], f[3][45]), (0x4E, 0x4C, 0xFF));
+    assert_eq!(r.pen_writes(), [START.to_vec(), STOP.to_vec()]);
+}
 
-    use pen_feedback::PenState::{Eraser, Hover, Tip};
-    let h = hid.0.lock().unwrap();
-    let f: Vec<&Vec<u8>> = h.feature_writes.iter().map(|(n, d)| (assert_eq!(n, "hidraw8"), d).1).collect();
-    assert_eq!(f.len(), 6, "{} feature writes", f.len());
-    assert_eq!(f[0], &pen_feedback::display_states(0x143, 0).to_vec(), "the FastHostId of the standalone daemon, first");
-    for (k, state) in [Hover, Tip(0), Hover, Eraser, Hover].into_iter().enumerate() {
-        assert_eq!(f[k + 1], &pen_feedback::pen_feedback(k as u8, 0x143, state).to_vec(), "frame {k}");
+/// Review R3: SIGTERM (the stop flag) and a node that goes away stop a running waveform and
+/// take the contact back.
+#[cfg(target_os = "linux")]
+#[test]
+fn leaving_a_stroke_cleans_up() {
+    let mut r = StylusRig::new("penwatch-r3", |_| {});
+    r.frame(&[(1, 0x140, 1), (1, 0x14a, 1)]);
+    assert_eq!(r.pen_writes(), [START.to_vec()]);
+    r.shared.stop.store(true, Ordering::SeqCst);
+    let end = Instant::now() + Duration::from_secs(2);
+    while !r.shared.pen_done.load(Ordering::SeqCst) && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(10));
     }
-    let pen_writes: Vec<Vec<u8>> = h.writes.iter().map(|(n, d)| (assert_eq!(n, "hidraw7"), d.clone()).1).collect();
-    assert_eq!(
-        pen_writes,
-        [vec![0x41, 0, 0x7F, 13, 0, 0, 0], vec![0x41, 0, 0xFE, 2, 0, 0, 0], vec![0x41, 0, 0x7F, 3, 0, 0, 0]],
-        "brush start (fixed ordinal: the fake pen has no list), stop, eraser click"
-    );
-    assert_eq!(tree.read("/var/lib/sp9/pen-fast-host-id"), "0x0143");
+    assert!(r.shared.pen_done.load(Ordering::SeqCst));
+    assert_eq!(r.pen_writes(), [START.to_vec(), STOP.to_vec()]);
+    let f = r.features();
+    assert_eq!((f[f.len() - 2][38], f[f.len() - 1][38], f[f.len() - 1][45]), (0x4E, 0x4C, 0xFF), "the contact is taken back");
+
+    // the node goes away in mid-stroke (iptsd restarted): closing the writer is end of file
+    let mut r = StylusRig::new("penwatch-r3b", |_| {});
+    r.frame(&[(1, 0x140, 1), (1, 0x14a, 1)]);
+    let StylusRig { hid, fifo, .. } = r;
+    drop(fifo);
+    std::thread::sleep(Duration::from_millis(150));
+    let h = hid.0.lock().unwrap();
+    assert_eq!(h.writes.last().unwrap().1, STOP.to_vec());
+    assert_eq!(h.feature_writes.last().unwrap().1[38], 0x4C);
+}
+
+/// Review B4 through the thread: speed feedback switched off in contact.
+#[cfg(target_os = "linux")]
+#[test]
+fn speed_feedback_switched_off_in_contact() {
+    let mut r = StylusRig::new("penwatch-b4", |_| {});
+    r.frame(&[(1, 0x140, 1), (1, 0x14a, 1)]);
+    let before = r.features().len();
+    r.shared.update(|c| c.pen.speed_feedback = false).unwrap();
+    std::thread::sleep(Duration::from_millis(450));
+    let f = r.features();
+    assert_eq!(f.len(), before + 1, "one frame that takes the contact back");
+    assert_eq!((f[before][38], f[before][45]), (0x4C, 0xFF));
+    r.frame(&[(1, 0x14a, 0)]);
+    assert_eq!(r.features().len(), before + 1, "silent afterwards");
+    assert_eq!(r.pen_writes(), [START.to_vec(), STOP.to_vec()], "the inking haptics go on");
+}
+
+/// Review R8: while another program holds the digitizer lock nothing is written to the
+/// digitizer; the inking haptics do not depend on it.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_digitizer_lock_keeps_a_second_writer_out() {
+    use std::os::fd::AsRawFd;
+    let mut holder = None;
+    let mut r = StylusRig::new("penwatch-r8", |tree| {
+        tree.file(penwatch::DIGITIZER_LOCK, "");
+        let f = std::fs::File::open(tree.root.p(penwatch::DIGITIZER_LOCK)).unwrap();
+        // SAFETY: flock on a valid fd.
+        assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        holder = Some(f);
+    });
+    r.frame(&[(1, 0x140, 1), (1, 0x14a, 1)]);
+    r.frame(&[(1, 0x14a, 0)]);
+    assert!(r.features().is_empty(), "{:?}", r.features().len());
+    assert_eq!(r.pen_writes(), [START.to_vec(), STOP.to_vec()]);
+    drop(holder);
+}
+
+/// Review R6: a settings file that cannot be read is kept before a setter writes the defaults
+/// over it.
+#[test]
+fn an_unreadable_settings_file_is_kept_before_it_is_overwritten() {
+    let tree = FakeTree::new("badcfg");
+    let text = "[display]\npsr_dc = \"psr2\"\n[pen]\nauto_couple = true\n";
+    tree.file("/etc/sp9/helper.toml", text);
+    let shared = Shared::new(Backends::fake(), tree.root.clone(), tree.root.p("/etc/sp9/helper.toml"), true);
+    assert!(!shared.cfg().pen.auto_couple, "the defaults stand in");
+    shared.update(|c| c.pen.intensity = 90).unwrap();
+    assert_eq!(tree.read("/etc/sp9/helper.toml.bad"), text.trim());
+    assert!(tree.read("/etc/sp9/helper.toml").contains("intensity = 90"));
+    // only once: the file is readable now
+    std::fs::remove_file(tree.root.p("/etc/sp9/helper.toml.bad")).unwrap();
+    shared.update(|c| c.pen.intensity = 91).unwrap();
+    assert!(!tree.root.exists("/etc/sp9/helper.toml.bad"));
+    // a readable file with one unknown value keeps everything else and is not copied
+    tree.file("/etc/sp9/helper.toml", "[pen]\nink_waveform = \"glitter\"\nauto_couple = true\n");
+    let w = shared.reload();
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert!(shared.cfg().pen.auto_couple);
+    shared.update(|c| c.pen.intensity = 92).unwrap();
+    assert!(!tree.root.exists("/etc/sp9/helper.toml.bad"));
+    assert!(tree.read("/etc/sp9/helper.toml").contains("ink_waveform = \"brush\""));
 }

@@ -29,6 +29,7 @@ use sp9_helper_core::sys::Root;
 use sp9_helper_core::Backends;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use zbus::object_server::SignalEmitter;
@@ -54,6 +55,12 @@ pub struct Shared {
     /// the machine's Bluetooth and cover are in reach (system bus, real backends): the
     /// coupling thread runs
     pub hardware: bool,
+    /// the settings file is there but could not be read (the defaults are in force)
+    cfg_unreadable: AtomicBool,
+    /// the daemon is stopping: the device threads leave their devices in a quiet state
+    pub stop: AtomicBool,
+    /// the pen thread has done so
+    pub pen_done: AtomicBool,
 }
 
 impl Shared {
@@ -65,11 +72,19 @@ impl Shared {
     pub fn update(&self, change: impl FnOnce(&mut Config)) -> std::io::Result<()> {
         let mut g = self.cfg.lock().unwrap();
         change(&mut g);
+        // the file could not be read and the defaults stood in for it: keep it before they replace it
+        if self.cfg_unreadable.swap(false, Ordering::SeqCst) {
+            match Config::keep_unreadable(&self.cfg_path) {
+                Ok(bad) => eprintln!("sp9-helperd: config: the unreadable settings file is kept as {}", bad.display()),
+                Err(e) => eprintln!("sp9-helperd: config: cannot keep the unreadable settings file: {e}"),
+            }
+        }
         g.save(&self.cfg_path)
     }
 
     pub fn reload(&self) -> Vec<String> {
-        let (c, w) = Config::load(&self.cfg_path);
+        let (c, w, readable) = Config::load_checked(&self.cfg_path);
+        self.cfg_unreadable.store(!readable, Ordering::SeqCst);
         *self.cfg.lock().unwrap() = c;
         self.rt.lock().unwrap().reset();
         w
@@ -142,7 +157,7 @@ async fn watch<T: zbus::object_server::Interface + Snapshot>(
 
 impl Shared {
     pub fn new(b: Backends, root: Root, cfg_path: PathBuf, no_polkit: bool) -> Shared {
-        let (cfg, warnings) = Config::load(&cfg_path);
+        let (cfg, warnings, readable) = Config::load_checked(&cfg_path);
         for w in warnings {
             eprintln!("sp9-helperd: config: {w}");
         }
@@ -176,6 +191,9 @@ impl Shared {
             last_report: Mutex::new(String::new()),
             couple: couple::Couple::default(),
             hardware: false,
+            cfg_unreadable: AtomicBool::new(!readable),
+            stop: AtomicBool::new(false),
+            pen_done: AtomicBool::new(false),
         }
     }
 }
@@ -217,11 +235,12 @@ async fn run(no_polkit: bool, session: bool, fake: bool) -> zbus::Result<()> {
     if let Err(e) = shared.withdraw_stale_fan_request() {
         eprintln!("sp9-helperd: withdrawing the fan request: {e}");
     }
-    penwatch::spawn(shared.clone());
 
     let bld = if session { zbus::connection::Builder::session()? } else { zbus::connection::Builder::system()? };
     let bld = serve(bld, &shared)?;
     let conn = bld.name(BUS)?.build().await?;
+    // only the owner of the bus name touches the devices: a second instance ends before this
+    penwatch::spawn(shared.clone());
     kbdwatch::spawn(shared.clone(), conn.clone());
     if shared.hardware {
         couple::spawn(shared.clone(), conn.clone());
@@ -270,9 +289,40 @@ async fn run(no_polkit: bool, session: bool, fake: bool) -> zbus::Result<()> {
             watch::<Diagnostics>(&conn, P_DIAG, &mut last).await;
         }
         n += 1;
-        async_io::Timer::after(Duration::from_secs(1)).await;
+        for _ in 0..4 {
+            if TERMINATE.load(Ordering::SeqCst) {
+                // let the pen thread stop a running waveform and take a contact back
+                shared.stop.store(true, Ordering::SeqCst);
+                let end = Instant::now() + Duration::from_secs(2);
+                while !shared.pen_done.load(Ordering::SeqCst) && Instant::now() < end {
+                    async_io::Timer::after(Duration::from_millis(20)).await;
+                }
+                eprintln!("sp9-helperd: terminated");
+                return Ok(());
+            }
+            async_io::Timer::after(Duration::from_millis(250)).await;
+        }
     }
 }
+
+/// SIGTERM or SIGINT arrived; the main loop winds down.
+static TERMINATE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn on_terminate(_: libc::c_int) {
+    TERMINATE.store(true, Ordering::SeqCst);
+}
+
+#[cfg(unix)]
+fn catch_termination() {
+    for sig in [libc::SIGTERM, libc::SIGINT] {
+        // SAFETY: the handler only stores to an atomic.
+        unsafe { libc::signal(sig, on_terminate as extern "C" fn(libc::c_int) as libc::sighandler_t) };
+    }
+}
+
+#[cfg(not(unix))]
+fn catch_termination() {}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -286,6 +336,7 @@ fn main() {
     if no_polkit {
         eprintln!("sp9-helperd: WARNING: --no-polkit, every caller is authorized (tests only)");
     }
+    catch_termination();
     if let Err(e) = zbus::block_on(run(no_polkit, session, fake)) {
         eprintln!("sp9-helperd: {e}");
         std::process::exit(1);

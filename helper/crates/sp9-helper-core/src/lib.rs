@@ -13,6 +13,7 @@
 pub mod battery;
 pub mod btmgmt;
 pub mod config;
+pub mod coupling;
 pub mod cover;
 pub mod display;
 pub mod engine;
@@ -22,6 +23,7 @@ pub mod pen;
 pub mod pen_feedback;
 pub mod perf;
 pub mod ssam;
+pub mod stylus;
 pub mod sys;
 pub mod thermal;
 
@@ -49,7 +51,7 @@ impl Backends {
             ssam: Box::new(ssam::Cdev::new(root.p(ssam::CDEV))),
             battery: Box::new(battery::SysfsBattery::new(root.clone())),
             display: Box::new(display::SysfsDisplay::new(root.clone())),
-            hid: Box::new(hid::Hidraw::new(root.clone())),
+            hid: Box::new(hid::Cached::new(hid::Hidraw::new(root.clone()))),
             input: Box::new(input::SysfsInput::new(root.clone())),
             leds: Box::new(input::SysfsLeds::new(root)),
         }

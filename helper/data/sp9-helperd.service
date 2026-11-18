@@ -12,12 +12,12 @@ Restart=on-failure
 RestartSec=2
 # /sys: RAPL, EPP, platform_profile, input inhibit, debugfs PSR; /etc/sp9 (created by systemd):
 # settings; /var/lib/sp9: diagnostics, the panel ICC profile and the pen's FastHostId; /etc/iptsd.d:
-# the iptsd drop-in. Pen coupling uses Bluetooth management and raw HCI sockets (root) and BlueZ
+# the iptsd drop-in; /run/lock: surface-pen-digitizer.lock, held while the helper feeds the digitizer. Pen coupling uses Bluetooth management and raw HCI sockets (root) and BlueZ
 # over D-Bus.
 ProtectSystem=strict
 ConfigurationDirectory=sp9
 StateDirectory=sp9
-ReadWritePaths=/sys -/etc/iptsd.d
+ReadWritePaths=/sys -/etc/iptsd.d -/run/lock
 ProtectHome=yes
 PrivateTmp=yes
 

@@ -81,7 +81,13 @@ pub fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
         fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("tmp");
-    fs::write(&tmp, content)?;
+    {
+        use std::io::Write;
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(content)?;
+        // the rename must not reach the disk before the content does
+        f.sync_all()?;
+    }
     fs::rename(&tmp, path)
 }
 

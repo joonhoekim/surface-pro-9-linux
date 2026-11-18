@@ -13,6 +13,7 @@ sp9-helper-core = { path = "../sp9-helper-core" }
 zbus.workspace = true
 async-io = "2"
 blocking = "1"
+futures-lite = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true

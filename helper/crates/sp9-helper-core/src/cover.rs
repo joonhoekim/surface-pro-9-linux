@@ -15,7 +15,6 @@
 //! collection; it is not the cover.
 
 use crate::hid::{self, Descriptor, HidBackend, Kind};
-use crate::pen_feedback::DIGITIZER_PRODUCT;
 
 pub const TLC: u32 = hid::usage(0xFFF4, 0x0001);
 pub const PEN_ID: u32 = hid::usage(0xFF0F, 0x0050);
@@ -74,9 +73,17 @@ pub struct CoverPen {
     desc: Descriptor,
 }
 
+/// The covers known to have the pen slot: (bus, vendor, product). The node gets the host's
+/// Bluetooth address and the pairing key, and what it reports ends as a trusted bond, so a
+/// descriptor that looks right is not enough.
+pub const KNOWN_COVERS: &[(u16, u16, u16)] = &[
+    // Surface Pro Signature Keyboard with pen slot, as on the Surface Pro 9 (surface-hid, bus "host")
+    (0x19, 0x045E, 0x09B0),
+];
+
 /// The cover's hidraw node with the pen-bonding collection.
 pub fn find(h: &dyn HidBackend) -> Option<CoverPen> {
-    h.nodes().into_iter().filter(|n| n.product != DIGITIZER_PRODUCT).find_map(|n| {
+    h.nodes().into_iter().filter(|n| KNOWN_COVERS.contains(&(n.bus, n.vendor, n.product))).find_map(|n| {
         let desc = hid::parse(&n.descriptor).ok()?;
         let complete = desc.has_application(TLC)
             && desc.find(Kind::Feature, HOST_ADDR, None).is_some_and(|f| f.report_id == FEATURE_HOST)
@@ -169,11 +176,13 @@ pub struct SeatedPen {
     pub requested: bool,
     /// the request asked to replace the bond without proof that it is dead
     pub forced: bool,
-    /// BlueZ has a bond under the pen's coupling address
-    pub bonded: bool,
+    /// BlueZ has a bond under the pen's coupling address; None when BlueZ did not answer
+    /// (bluetoothd restarting): then nothing is known and nothing is done
+    pub bonded: Option<bool>,
     /// BlueZ shows the device connected
     pub connected: bool,
-    /// encryption with that bond failed since it was made: the pen no longer has the key
+    /// the link to this pen was dropped because encryption with the bond failed (the
+    /// controller's "PIN or key missing"), a moment ago: the pen no longer has the key
     pub stale: bool,
     /// a coupling of this pen failed a moment ago
     pub failed_recently: bool,
@@ -206,13 +215,14 @@ pub enum Seated {
 /// healthy pen can sit in the slot unconnected, and a coupling that gets no answer after the
 /// old bond is gone leaves the pen with none.
 pub fn on_seated(p: SeatedPen) -> Seated {
-    if p.bonded && p.connected {
+    let Some(bonded) = p.bonded else { return Seated::Skip };
+    if bonded && p.connected {
         return Seated::Connected;
     }
     if !p.requested && p.failed_recently {
         return Seated::Skip;
     }
-    if !p.bonded {
+    if !bonded {
         return Seated::Couple;
     }
     if p.stale || p.forced {
@@ -225,6 +235,18 @@ pub fn on_seated(p: SeatedPen) -> Seated {
         return Seated::Skip;
     }
     Seated::Probe
+}
+
+/// How long after a failed coupling of a pen the cover is asked again by itself: 1, 2, 5,
+/// then every 15 minutes.
+pub fn retry_after(failures: u32) -> std::time::Duration {
+    let minutes = match failures {
+        0 | 1 => 1,
+        2 => 2,
+        3 => 5,
+        _ => 15,
+    };
+    std::time::Duration::from_secs(minutes * 60)
 }
 
 /// How a probe of a bonded pen ended.
@@ -270,7 +292,9 @@ impl PendingKeys {
 
     /// A pairing went through with the pending key: the pen has used it up.
     pub fn paired(&mut self, addr: &Addr) {
-        self.0.remove(addr);
+        if let Some(mut k) = self.0.remove(addr) {
+            k.fill(0);
+        }
     }
 
     pub fn has(&self, addr: &Addr) -> bool {
@@ -278,15 +302,8 @@ impl PendingKeys {
     }
 }
 
-/// How often one coupling connects and pairs before it gives up.
+/// How often one coupling asks the cover and writes the key before it gives up.
 pub const COUPLE_ATTEMPTS: u32 = 3;
-
-/// After attempt `attempt` (0-based) failed: go round again with the same key? Only for a
-/// pairing the pen refused (it used another key: the one from the write before); a pen that
-/// does not answer, or any other error, ends the coupling.
-pub fn retry_pairing(authentication_failed: bool, attempt: u32) -> bool {
-    authentication_failed && attempt + 1 < COUPLE_ATTEMPTS
-}
 
 /// SHA-1 (FIPS 180-4); only for the address derivation above.
 pub fn sha1(msg: &[u8]) -> [u8; 20] {
@@ -427,13 +444,19 @@ mod tests {
 
     #[test]
     fn what_to_do_with_a_seated_pen() {
-        let p = SeatedPen::default();
+        let p = SeatedPen { bonded: Some(false), ..SeatedPen::default() };
         assert_eq!(on_seated(p), Seated::Couple, "no bond");
+        // BlueZ did not answer: nothing is known, nothing is done, whoever asks (review item 1)
+        let unknown = SeatedPen::default();
+        assert_eq!(on_seated(unknown), Seated::Skip);
+        assert_eq!(on_seated(SeatedPen { requested: true, forced: true, stale: true, ..unknown }), Seated::Skip);
+        // not bonded but connected (a link without keys): couple on that link
+        assert_eq!(on_seated(SeatedPen { connected: true, ..p }), Seated::Couple);
         assert_eq!(on_seated(SeatedPen { after_resume: true, ..p }), Seated::Couple);
         assert_eq!(on_seated(SeatedPen { failed_recently: true, ..p }), Seated::Skip);
         assert_eq!(on_seated(SeatedPen { failed_recently: true, requested: true, ..p }), Seated::Couple);
 
-        let bonded = SeatedPen { bonded: true, ..p };
+        let bonded = SeatedPen { bonded: Some(true), ..p };
         // connected: it works, whatever else is known and whoever asks
         let connected = SeatedPen { connected: true, ..bonded };
         assert_eq!(on_seated(connected), Seated::Connected);
@@ -484,11 +507,9 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_pairing_is_tried_again_with_the_same_key() {
-        assert_eq!(COUPLE_ATTEMPTS, 3);
-        assert!(retry_pairing(true, 0) && retry_pairing(true, 1));
-        assert!(!retry_pairing(true, 2), "the third failure is the result");
-        assert!(!retry_pairing(false, 0), "no answer or another error is not retried");
+    fn retry_interval_grows() {
+        let m = |n| retry_after(n).as_secs() / 60;
+        assert_eq!([m(0), m(1), m(2), m(3), m(4), m(20)], [1, 1, 2, 5, 15, 15]);
     }
 
     #[test]
@@ -507,6 +528,23 @@ mod tests {
         assert!(c.parse_seen(&[110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none(), "no pen");
     }
 
+    /// Review item 6: the descriptor alone does not make a node the cover.
+    #[test]
+    fn only_known_covers() {
+        for (bus, vendor, product) in [(0x03, 0x045E, 0x09B0), (0x19, 0x1234, 0x09B0), (0x19, 0x045E, 0x09AF), (0x05, 0x045E, 0x09B0)] {
+            let h = FakeHid::default();
+            h.0.lock().unwrap().nodes.push(HidNode {
+                name: "hidraw9".into(),
+                bus,
+                vendor,
+                product,
+                hid_name: "looks like a cover".into(),
+                descriptor: fake_cover_pen_descriptor(),
+            });
+            assert!(find(&h).is_none(), "{bus:#x} {vendor:#x} {product:#x}");
+        }
+    }
+
     #[test]
     fn the_digitizer_is_not_the_cover() {
         let h = FakeHid::default();
@@ -514,7 +552,7 @@ mod tests {
             name: "hidraw7".into(),
             bus: 1,
             vendor: 0x045E,
-            product: DIGITIZER_PRODUCT,
+            product: crate::pen_feedback::DIGITIZER_PRODUCT,
             hid_name: "Intel Touch Host Controller".into(),
             descriptor: fake_cover_pen_descriptor(),
         });

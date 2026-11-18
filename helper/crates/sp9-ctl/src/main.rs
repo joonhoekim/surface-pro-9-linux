@@ -40,7 +40,7 @@ const USAGE: &str = "usage: sp9-ctl [--json] [--session] COMMAND
   pen ink on|off                         haptics as a whole: inking haptics and the digitizer feedback
   pen strength PERCENT                   how hard the pen vibrates: 100 = Windows' default (intensity
                                          127), about 2..200 (intensity 2..254)
-  pen intensity N | pen test             the same setting as the raw intensity byte 1..255; one click
+  pen intensity N | pen test             the same setting as the raw intensity byte 2..254; one click
   pen waveform [NAME]                    the vibration while writing: ink pencil marker chisel-marker
                                          brush sparkle (default brush); without NAME: the current one
   pen eraser-click on|off                one click when the eraser end touches down (it plays no
