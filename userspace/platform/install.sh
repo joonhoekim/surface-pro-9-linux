@@ -9,7 +9,7 @@
 #   sudo ./install.sh --uninstall            # remove everything this script installs
 #   DESTDIR=/mnt/root ./install.sh           # files only, into a mounted root
 #
-# Components (default): iptsd initramfs cmdline speakers
+# Components (default): iptsd initramfs cmdline speakers sensors
 # Components (opt-in):  hda-pins, audio-legacy, hibernate-reboot
 #
 # Runs only on SKU Surface_Pro_9_2038 (/sys/class/dmi/id/product_sku). With
@@ -23,8 +23,8 @@ DESTDIR=${DESTDIR:-}
 PREFIX=${PREFIX:-/usr}
 SYSCONFDIR=${SYSCONFDIR:-/etc}
 SKU=Surface_Pro_9_2038
-DEFAULT="iptsd initramfs cmdline speakers"
-ALL="iptsd initramfs cmdline speakers hda-pins audio-legacy hibernate-reboot"
+DEFAULT="iptsd initramfs cmdline speakers sensors"
+ALL="iptsd initramfs cmdline speakers sensors hda-pins audio-legacy hibernate-reboot"
 state=$DESTDIR/var/lib/sp9-platform
 
 dry=0
@@ -87,6 +87,7 @@ pkg() { # what -> package name for this family
 	swh:fedora) echo ladspa-swh-plugins ;;
 	swh:*) echo swh-plugins ;;
 	iptsd:*) echo iptsd ;;
+	iio-sensor-proxy:*) echo iio-sensor-proxy ;;
 	esac
 }
 
@@ -119,6 +120,7 @@ iptsd_files="iptsd/surface-pro-9.conf:$PREFIX/share/iptsd/surface-pro-9.conf
 libinput/sp9-stylus.quirks:$PREFIX/share/libinput/60-sp9-stylus.quirks"
 speakers_files="pipewire/pipewire.conf.d/60-sp9-speakers.conf:$PREFIX/share/pipewire/pipewire.conf.d/60-sp9-speakers.conf
 wireplumber/wireplumber.conf.d/60-sp9-speaker-raw.conf:$PREFIX/share/wireplumber/wireplumber.conf.d/60-sp9-speaker-raw.conf"
+sensors_files="udev/rules.d/61-sp9-sensors.rules:$PREFIX/lib/udev/rules.d/61-sp9-sensors.rules"
 legacy_files="optional/modprobe.d/sp9-audio-legacy.conf:$PREFIX/lib/modprobe.d/sp9-audio-legacy.conf"
 hibernate_files="optional/sleep.conf.d/sp9-hibernate-reboot.conf:$PREFIX/lib/systemd/sleep.conf.d/sp9-hibernate-reboot.conf"
 hda_conf=$PREFIX/lib/modprobe.d/sp9-alc274.conf
@@ -347,6 +349,9 @@ check_deps() {
 			note "speakers: LADSPA sc4/fastLookaheadLimiter not found; install $(pkg swh). Without it the filter chain is skipped"
 		fi
 	fi
+	if has sensors $selected && ! ls "$DESTDIR"/usr/lib/udev/rules.d/*iio-sensor-proxy.rules > /dev/null 2>&1; then
+		note "sensors: iio-sensor-proxy not installed; install $(pkg iio-sensor-proxy) for automatic rotation and brightness"
+	fi
 	if has iptsd $selected && [ ! -x "$DESTDIR/usr/bin/iptsd" ]; then
 		note "iptsd: daemon not installed; install $(pkg iptsd) (linux-surface repository)"
 	fi
@@ -358,6 +363,7 @@ check_deps() {
 if [ $uninstall = 1 ]; then
 	del_list "$iptsd_files"
 	del_list "$speakers_files"
+	del_list "$sensors_files"
 	del_list "$legacy_files"
 	del_list "$hibernate_files"
 	remove_hda
@@ -380,6 +386,7 @@ for c in $selected; do
 	case $c in
 	iptsd) put_list "$iptsd_files" ;;
 	speakers) put_list "$speakers_files" ;;
+	sensors) put_list "$sensors_files" ;;
 	initramfs) install_initramfs ;;
 	cmdline) install_cmdline ;;
 	hda-pins) install_hda ;;

@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 15:03:12 +0900
+Subject: [PATCH] libipa: agc: Take analogue gain limits and a flicker period
+ from the tuning data
+
+minAnalogueGain and maxAnalogueGain narrow the range read from the
+sensor's gain control. Sensor drivers expose ranges the sensor does not
+follow: the image of an OV5693 gets darker again above 62x and that of
+an OV13858 above 15.5x, and below 1x the highlights no longer reach
+white. Where the image stops following the gain the regulation runs
+away or oscillates.
+
+flickerPeriod is the period of the mains flicker in microseconds. An
+exposure time that reaches it is kept at a whole number of periods, and
+the analogue gain makes up for the difference. An exposure within 2% of
+a period below a multiple is left alone, as the longest exposure of a
+30 fps mode is typically just short of four periods of 60 Hz light.
+---
+ src/ipa/libipa/agc.cpp | 45 ++++++++++++++++++++++++++++++++++++++++++
+ src/ipa/libipa/agc.h   |  3 +++
+ 2 files changed, 48 insertions(+)
+
+diff --git a/src/ipa/libipa/agc.cpp b/src/ipa/libipa/agc.cpp
+index 182dd738..95bf567f 100644
+--- a/src/ipa/libipa/agc.cpp
++++ b/src/ipa/libipa/agc.cpp
+@@ -320,6 +320,21 @@ int AgcAlgorithm::init(const ValueNode &tuningData, CameraSensorHelper *sensor,
+ 
+ 	sensor_ = sensor;
+ 
++	/*
++	 * A sensor driver may expose a wider analogue gain range than the
++	 * sensor follows, and the regulation fails where the image stops
++	 * following the gain. The tuning data can narrow the range.
++	 */
++	minGainLimit_ = tuningData["minAnalogueGain"].get<double>();
++	maxGainLimit_ = tuningData["maxAnalogueGain"].get<double>();
++
++	/*
++	 * Period of the mains flicker in microseconds (10000 for 50 Hz, 8333
++	 * for 60 Hz). Exposure times that reach it are kept at a multiple of
++	 * it, and the analogue gain makes up the difference.
++	 */
++	flickerPeriod_ = tuningData["flickerPeriod"].get<double>().value_or(0) * 1us;
++
+ 	/*
+ 	 * The purpose of this `configure()` is merely to provide the
+ 	 * available controls in `config.ctrlMap`.
+@@ -383,6 +398,12 @@ int AgcAlgorithm::configure(agc::Session &session, agc::ActiveState &state,
+ 	float maxGain = extractGain(v4l2Gain.max());
+ 	float defGain = extractGain(v4l2Gain.def());
+ 
++	if (minGainLimit_)
++		minGain = std::max<float>(minGain, *minGainLimit_);
++	if (maxGainLimit_)
++		maxGain = std::max(minGain, std::min<float>(maxGain, *maxGainLimit_));
++	defGain = std::clamp(defGain, minGain, maxGain);
++
+ 	LOG(Agc, Debug)
+ 		<< "exposure: [" << minExposure << ',' << maxExposure << "], "
+ 		<< "gain: [" << minGain << ',' << maxGain << "], "
+@@ -814,6 +835,30 @@ void AgcAlgorithm::process(const agc::Session &session, agc::ActiveState &state,
+ 			/* Update the estimated exposure and gain. */
+ 			state.automatic.exposure = newEv.exposureTime / lineDuration;
+ 			state.automatic.gain = newEv.analogueGain;
++
++			/*
++			 * Keep the exposure time at a multiple of the flicker
++			 * period when it reaches one and the gain can make up
++			 * for the shorter exposure.
++			 */
++			if (flickerPeriod_ > 0s && frameContext.autoExposureEnabled &&
++			    frameContext.autoGainEnabled &&
++			    newEv.exposureTime >= flickerPeriod_) {
++				/*
++				 * An exposure within 2% of a period of a multiple counts as
++				 * that multiple: the longest exposure of a 30 fps
++				 * mode is often just short of four periods.
++				 */
++				unsigned int periods = newEv.exposureTime / flickerPeriod_ + 0.02;
++				utils::Duration quantized = std::min<utils::Duration>(periods * flickerPeriod_,
++										      newEv.exposureTime);
++				double gain = newEv.analogueGain * (newEv.exposureTime / quantized);
++
++				if (gain <= maxAnalogueGain) {
++					state.automatic.exposure = std::lround(quantized / lineDuration);
++					state.automatic.gain = gain;
++				}
++			}
+ 			state.automatic.quantizationGain = newEv.quantizationGain;
+ 			state.automatic.digitalGain = newEv.digitalGain;
+ 			state.automatic.yTarget = newEv.yTarget;
+diff --git a/src/ipa/libipa/agc.h b/src/ipa/libipa/agc.h
+index a5700d26..b6794a78 100644
+--- a/src/ipa/libipa/agc.h
++++ b/src/ipa/libipa/agc.h
+@@ -162,6 +162,9 @@ private:
+ 
+ 	std::variant<AgcMSV, AgcMeanLuminance> impl_;
+ 	CameraSensorHelper *sensor_ = nullptr;
++	std::optional<double> minGainLimit_;
++	std::optional<double> maxGainLimit_;
++	utils::Duration flickerPeriod_ = utils::Duration(0);
+ };
+ 
+ } /* namespace ipa */

@@ -19,6 +19,8 @@ let
   penTools = pkgs.callPackage ./pen-tools.nix { };
   helper = pkgs.callPackage ./helper.nix { };
   digitizerd = pkgs.callPackage ./digitizerd.nix { };
+  libcamera = pkgs.callPackage ./libcamera.nix { inherit (cfg.camera) mainsFrequency; };
+  pipewire = pkgs.callPackage ./pipewire-libcamera.nix { inherit libcamera; };
 
   # The file is the one install.sh applies; a parameter switched off below is dropped by its name.
   kernelParams = lib.filter
@@ -49,6 +51,11 @@ let
   mic = fileAt "sp9-mic"
     "share/wireplumber/wireplumber.conf.d/60-sp9-mic.conf"
     (platform + "/wireplumber/wireplumber.conf.d/60-sp9-mic.conf")
+    { };
+
+  sensors = fileAt "sp9-sensors"
+    "lib/udev/rules.d/61-sp9-sensors.rules"
+    (platform + "/udev/rules.d/61-sp9-sensors.rules")
     { };
 
   codecFirmware = fileAt "sp9-alc274-pins"
@@ -153,6 +160,17 @@ in
         both.'';
     };
 
+    sensors.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        iio-sensor-proxy (hardware.sensor.iio.enable, mkDefault) for automatic rotation and
+        brightness, and the udev rule that sets the accelerometer's change sensitivity to 0:
+        without it the proxy finds the buffer empty, falls back to polled reads, and those
+        take 5 s and return 0 on this hub.
+      '';
+    };
+
     diagnostics.enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -224,19 +242,44 @@ in
       default = true;
       description = ''
         Leave WirePlumber's libcamera monitor on, which is what gives PipeWire applications
-        (browsers, portals) the two cameras. Its cost: libcamera opens the rear lens sub-device
-        (dw9719) when it enumerates and keeps it open, dw9719 powers up on open, and the lens is a
-        runtime-PM supplier link of the rear sensor, so the ov13858 rails and its 19.2 MHz clock
-        stay on for the whole session. The front sensor has no
-        lens and suspends.
-        false disables the monitor: the rear sensor can suspend, PipeWire applications lose both
-        cameras, programs that use libcamera themselves (cam) keep them. Meant for measuring what
-        the idle rear sensor costs in standby; compare
+        (browsers, portals) the two cameras. nixpkgs' libcamera opens the rear lens sub-device
+        (dw9719) when it enumerates and keeps it open; after the first focus write the lens and,
+        through its runtime-PM link, the rear sensor then stay powered until WirePlumber exits
+        (kernel patch 0021). With camera.libcamera the lens device is only open while the camera
+        streams and this cost is gone.
+        false disables the monitor: PipeWire applications lose both cameras, programs that use
+        libcamera themselves (cam) keep them. Compare
           cat /sys/bus/i2c/devices/i2c-OVTID858:00/power/runtime_status
-        There is no setting in between. Taking the lens node away from the user does not work:
-        libcamera then rejects the whole media device ("Device node /dev/v4l-subdev6 can't be
-        accessed") and lists no camera at all. The fix belongs in dw9719 (power on streaming, not
-        on open).
+        Taking the lens node away from the user does not work: libcamera then rejects the whole
+        media device ("Device node /dev/v4l-subdev6 can't be accessed") and lists no camera at
+        all.
+      '';
+    };
+
+    camera.libcamera = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        libcamera 0.8.0 with userspace/libcamera/*.patch (nix/libcamera.nix) for the PipeWire
+        session: services.pipewire.package and services.pipewire.wireplumber.package become
+        builds against it (mkDefault), and `cam` in the system profile is the patched one. The
+        patches: GPU debayering without the magenta lines and with a centred, filtered
+        reduction, exposure regulation that settles in a few frames and stays on the gain range
+        the sensors follow, flicker-free exposure times, contrast autofocus for the rear camera,
+        and a rear lens that is only powered while the camera streams.
+        Only the two PipeWire packages are rebuilt. Programs that link libcamera themselves
+        (GStreamer's libcamerasrc) keep nixpkgs' libcamera.
+        false leaves PipeWire and libcamera as nixpkgs has them.
+      '';
+    };
+
+    camera.mainsFrequency = lib.mkOption {
+      type = lib.types.enum [ 50 60 ];
+      default = 60;
+      description = ''
+        Mains frequency of the lighting. With camera.libcamera the exposure time stays at a
+        multiple of its flicker period (8.33 ms at 60 Hz, 10 ms at 50 Hz) once it reaches one,
+        which keeps bands and brightness beats out of the picture under mains-powered light.
       '';
     };
 
@@ -310,6 +353,11 @@ in
       systemd.tmpfiles.rules = [ "d /etc/iptsd.d 0755 root root -" ];
     })
 
+    (lib.mkIf cfg.sensors.enable {
+      hardware.sensor.iio.enable = lib.mkDefault true;
+      services.udev.packages = [ sensors ];
+    })
+
     (lib.mkIf cfg.touch.enable {
       # libinput reads one override file. `text` is of type lines, so other modules can add to it.
       environment.etc."libinput/local-overrides.quirks".text =
@@ -341,7 +389,8 @@ in
 
     (lib.mkIf cfg.diagnostics.enable {
       environment.systemPackages = with pkgs; [
-        libcamera v4l-utils alsa-utils alsa-tools pulseaudio libinput hid-tools evtest drm_info
+        (if cfg.camera.libcamera then libcamera else pkgs.libcamera)
+        v4l-utils alsa-utils alsa-tools pulseaudio libinput hid-tools evtest drm_info
         i2c-tools intel-gpu-tools acpica-tools lm_sensors pciutils usbutils
       ]
       # services.iptsd only registers the unit and the udev rule of the package.
@@ -385,6 +434,12 @@ in
 
     (lib.mkIf cfg.audio.legacy {
       boot.extraModprobeConfig = builtins.readFile (platform + "/optional/modprobe.d/sp9-audio-legacy.conf");
+    })
+
+    (lib.mkIf cfg.camera.libcamera {
+      services.pipewire.package = lib.mkDefault pipewire;
+      services.pipewire.wireplumber.package =
+        lib.mkDefault (pkgs.wireplumber.override { inherit pipewire; });
     })
 
     (lib.mkIf (!cfg.camera.pipewire) {

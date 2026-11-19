@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 15:03:12 +0900
+Subject: [PATCH] libcamera: software_isp: swstats_cpu: Keep the histogram
+ index in range
+
+Unpacked 10 and 12 bit frames may carry values beyond their bit depth
+when the receiver delivers a corrupt frame (reported for IPU6 at the
+start of a stream). The luminance of such a pixel indexes past the end
+of the histogram. Clamp the index.
+---
+ src/libcamera/software_isp/swstats_cpu.cpp | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 74633815..51c6019b 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -11,6 +11,8 @@
+ 
+ #include "libcamera/internal/software_isp/swstats_cpu.h"
+ 
++#include <algorithm>
++
+ #include <libcamera/base/log.h>
+ 
+ #include <libcamera/stream.h>
+@@ -201,7 +203,12 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 	yVal = r * kRedYMul;                    \
+ 	yVal += g * kGreenYMul;                 \
+ 	yVal += b * kBlueYMul;                  \
+-	stats.yHistogram[yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div))]++;
++	/*                                                                  \
++	 * A corrupt frame may carry values beyond the bit depth (seen at   \
++	 * the start of a stream on IPU6): keep the index in the histogram. \
++	 */                                                                 \
++	stats.yHistogram[std::min<uint64_t>(yVal * SwIspStats::kYHistogramSize / (256 * 256 * (div)), \
++					    SwIspStats::kYHistogramSize - 1)]++;
+ 
+ #define SWSTATS_FINISH_LINE_STATS() \
+ 	stats.sum_.r() += sumR;     \

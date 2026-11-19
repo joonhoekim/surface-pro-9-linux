@@ -32,6 +32,11 @@
         surface-pen-tools = pkgs.callPackage ./nix/pen-tools.nix { };
         sp9-helper = pkgs.callPackage ./nix/helper.nix { };
         sp9-digitizerd = pkgs.callPackage ./nix/digitizerd.nix { };
+        libcamera = pkgs.callPackage ./nix/libcamera.nix { };
+        pipewire = pkgs.callPackage ./nix/pipewire-libcamera.nix {
+          libcamera = self.packages.${system}.libcamera;
+        };
+        wireplumber = pkgs.wireplumber.override { pipewire = self.packages.${system}.pipewire; };
       };
 
       # tools/linux/kmod-dev.sh: module rebuilds against the booted kernel. The kernel derivation's own
