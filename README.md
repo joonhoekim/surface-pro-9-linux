@@ -1,7 +1,8 @@
 # surface-pro-9-linux
 
 Linux support for one device: the Microsoft Surface Pro 9 with an Intel CPU, SKU `Surface_Pro_9_2038`
-(tested unit: i5-1235U, 16 GB, 256 GB). The documents abbreviate it as SP9.
+(tested unit: i5-1235U, 16 GB, 256 GB). The documents abbreviate it as SP9. The same documents as a website:
+<https://joonhoekim.github.io/surface-pro-9-linux/>.
 
 - **Scope.** This SKU only. Not the Surface Pro 9 5G (ARM), and not any other Surface device: those belong to
   [linux-surface](https://github.com/linux-surface/linux-surface).
