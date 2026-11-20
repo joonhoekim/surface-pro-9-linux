@@ -23,3 +23,12 @@ __pycache__/
 
 # Rust build output
 /helper/target/
+
+# Website (site/): dependencies, build output, files generated at build time
+/site/node_modules/
+/site/.next/
+/site/out/
+/site/public/_repo/
+/site/public/third-party-licenses.txt
+/site/next-env.d.ts
+/site/*.tsbuildinfo
