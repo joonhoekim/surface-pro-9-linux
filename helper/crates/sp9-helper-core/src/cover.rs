@@ -141,7 +141,7 @@ impl CoverPen {
     }
 }
 
-/// The constant of Windows' SurfacePenBleLcAddrAdaptationDriver (.rdata).
+/// The constant of Windows' SurfacePenBleLcAddrAdaptationDriver.
 const COUPLED_CONST: [u8; 16] = [0xf8, 0x76, 0xaf, 0x01, 0x2e, 0x1c, 0x28, 0x40, 0x91, 0x8f, 0x6f, 0x60, 0x5e, 0x6b, 0x1f, 0xd6];
 const ADDR_MASK: u64 = (1 << 46) - 1;
 const ADDR_STATIC: u64 = 0xC000_0000_0000;
@@ -525,7 +525,7 @@ mod tests {
         assert!(c.parse_seen(&[110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none(), "no pen");
     }
 
-    /// Review item 6: the descriptor alone does not make a node the cover.
+    /// The descriptor alone does not make a node the cover.
     #[test]
     fn only_known_covers() {
         for (bus, vendor, product) in [(0x03, 0x045E, 0x09B0), (0x19, 0x1234, 0x09B0), (0x19, 0x045E, 0x09AF), (0x05, 0x045E, 0x09B0)] {

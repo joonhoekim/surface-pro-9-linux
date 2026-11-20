@@ -38,6 +38,13 @@ them is at the [end](#untested-parts-of-this-guide).
 
 ## 1. Prepare Windows
 
+The steps below change the disk. Shrinking a partition can lose data if it is interrupted or goes wrong, and
+nothing in this guide can undo it.
+
+0. **Back up first.** Copy everything you want to keep off the device. Write down the BitLocker recovery key
+   before you change anything: in an administrator terminal `manage-bde -protectors -get C:` prints it (the
+   48-digit "Numerical Password"), and a device signed in with a Microsoft account also keeps it in that
+   account. Until decryption has finished, a change of the UEFI settings can make Windows ask for this key.
 1. **Turn BitLocker / device encryption off** and wait until decryption has finished. In an administrator
    terminal `manage-bde -status C:` must report `Fully Decrypted` (as it did on the test device). With BitLocker
    on, changing Secure Boot makes Windows ask for the recovery key. Linux tools also cannot resize an encrypted
@@ -104,6 +111,8 @@ sgdisk -p /dev/nvme0n1                              # "Total free space" must be
 sgdisk -n 0:0:0 -t 0:8300 -c 0:root /dev/nvme0n1    # one partition over the largest free block
 sgdisk -v /dev/nvme0n1 && sgdisk -p /dev/nvme0n1
 udevadm settle
+lsblk -o NAME,SIZE,FSTYPE,PARTLABEL /dev/nvme0n1   # the new partition: PARTLABEL root, no FSTYPE
+readlink -f /dev/disk/by-partlabel/root            # must name that partition; if it names another disk, stop
 
 mkfs.ext4 -L nixos /dev/disk/by-partlabel/root
 
@@ -133,9 +142,14 @@ mounted at `/efi`. Kernels and initrds then go to the XBOOTLDR partition, the EF
 systemd-boot itself, and the generation limit is unnecessary. This layout was planned for the test device but
 not used.
 
+It replaces part of step 3: create the XBOOTLDR partition before the root partition, and mount it instead of
+the EFI system partition at `/mnt/boot`.
+
 ```sh
-sgdisk -n 0:0:+2G -t 0:ea00 -c 0:xboot /dev/nvme0n1     # before creating the root partition
+sgdisk -n 0:0:+2G -t 0:ea00 -c 0:xboot /dev/nvme0n1     # before the root partition (sgdisk -n 0:0:0 ... root)
+udevadm settle && readlink -f /dev/disk/by-partlabel/xboot   # must name the new partition on nvme0n1
 mkfs.fat -F 32 -n xboot /dev/disk/by-partlabel/xboot
+# then create, format and mount the root partition as above, but without the /mnt/boot mount
 mkdir -p /mnt/boot /mnt/efi
 mount -o fmask=0077,dmask=0077 /dev/disk/by-partlabel/xboot /mnt/boot
 mount -o fmask=0077,dmask=0077 /dev/nvme0n1p1 /mnt/efi
@@ -324,7 +338,9 @@ bootctl status                    # Secure Boot: disabled, systemd-boot on the E
 ```
 
 The collector script reads everything that can be checked without a person and writes one file per area plus
-`summary.txt` into `~/sp9-check-<host>/`. It is read-only and masks MAC addresses, UUIDs and serial numbers.
+`summary.txt` into `~/sp9-check-<host>/`. It is read-only and masks MAC addresses, UUIDs,
+serial numbers and Wi-Fi network names, and leaves out the names of paired Bluetooth devices other than the pen.
+The report still describes the machine (kernel log, ACPI tables, firmware versions): read it before you share it.
 Run it from a clone of this repository:
 
 ```sh
@@ -358,8 +374,9 @@ sp9-ctl diagnostics     # runs the same collector and prints the path of a tar.g
 - **Remove NixOS and keep only Windows, untested.** In Windows as administrator: delete the "Linux Boot
   Manager" firmware entry (`bcdedit /enum firmware`, then `bcdedit /delete {identifier}`); mount the EFI
   system partition (`mountvol S: /s`) and remove `S:\EFI\systemd`, `S:\loader` and `S:\EFI\nixos`
-  (the NixOS kernels and initrds); delete the Linux partition with `diskpart` and extend C: into the free
-  space (possible only if nothing lies between C: and the free space); set Secure Boot back to "Microsoft
+  (the NixOS kernels and initrds); delete the Linux partition with `diskpart` (`list partition`, and check by
+  size and type that the selected one is the Linux partition before `delete partition override`) and extend C:
+  into the free space (possible only if nothing lies between C: and the free space); set Secure Boot back to "Microsoft
   Only". The directory names are those of the working setup (the boot loader is
   `\EFI\systemd\systemd-bootx64.efi` and the booted initrd is under `\EFI\nixos`, both read on the device;
   `\loader` is where systemd-boot keeps its entries). The Windows commands are general Windows knowledge.

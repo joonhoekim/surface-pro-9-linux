@@ -13,7 +13,7 @@ Serials, MAC addresses and other values that identify a unit are not in the repo
 | CPU | i5-1235U (Alder Lake-P, 2P+8E, 12 threads) | |
 | Memory | 16 GB LPDDR5 SK Hynix `H58G56AK6BX069`, 5200 MT/s | |
 | Storage | Samsung `MZ9L4256HCJQ-00BMV` (PM9B1) 256 GB NVMe, GPT, 512 B logical sectors | |
-| Display | 2880x1920, up to 120 Hz, panel LG Display `LGD0719` | The EDID is not in the repository; `tools/linux/post-install-check.sh` saves the one of your own device as `edid-linux.bin` |
+| Display | 2880x1920, up to 120 Hz, panel LG Display `LGD0719` | The EDID is not in the repository; `tools/linux/post-install-check.sh` decodes the one of your own device (`edid-decode`, without the hex dump, which holds the panel serial number) |
 | GPU | Iris Xe (`8086:46a8`) | `i915`/`xe` |
 | Wi-Fi / BT | Intel AX211 CNVi (`8086:51f0`), BT `8087:0033` | `iwlwifi`, `btusb` |
 | Audio | Realtek ALC274 (`10ec:0274`, HDA) + Intel SST (`8086:51c8`) | `snd_hda_intel`/SOF |
@@ -64,9 +64,10 @@ after installing Linux.
   UEFI setup screen).
 - **Turn off Fast Startup and hibernation** in Windows (`powercfg /h off`) so that NTFS is closed cleanly.
 - **Secure Boot / Secure Core**: according to the wiki, the firmware does not attempt USB boot while Secure Core
-  is on. In the UEFI setup, change Secure Boot to "Microsoft & 3rd party CA" or turn it off, and turn Secure Core
-  off. linux-surface provides its own MOK signing key. On the test device both Secure Boot and Secure Core were
-  turned off.
+  is on. systemd-boot and the kernel built from this repository are unsigned, so they boot only with Secure Boot
+  off (UEFI setting "None"). "Microsoft & 3rd party CA" with linux-surface's MOK signing key boots only what is
+  signed with that key, such as linux-surface's own kernel packages. On the test device both Secure Boot and
+  Secure Core were turned off.
 - The hypervisor (VBS) is on in Windows (the reason given for Hybrid Sleep in `powercfg /a`). It has no effect on
   Linux.
 
@@ -104,5 +105,9 @@ linux-surface patches that deal with the Surface Pro 9 directly (7.3 series, bas
   compared with what `acpidump` returns on Linux. The dumps are not in this repository; dumps for this model are published at
   <https://github.com/linux-surface/acpidumps> (directory `surface_pro_9_intel`). Decompiling (`iasl -d`) is done
   on Linux, because winget has no ACPICA package.
-- The audio codec pin configuration, the camera sensor tuning values and the touch firmware are inside the
-  Windows drivers. They are not in this repository.
+- The touch firmware and the Windows drivers and their data files are not in this repository. Some values read
+  from them are: the codec pin defaults in
+  [`sp9-alc274-pins.fw`](../userspace/platform/optional/firmware/sp9-alc274-pins.fw) (the same values Linux reads
+  from the codec at boot), the speaker processing chain in
+  [`60-sp9-speakers.conf`](../userspace/platform/pipewire/pipewire.conf.d/60-sp9-speakers.conf), and the
+  helper's power-limit defaults ([research/control/power-thermal.md](research/control/power-thermal.md)).
