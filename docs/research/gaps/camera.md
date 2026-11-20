@@ -40,6 +40,11 @@ without a stated patch range are from a kernel with patches 0001–0017. In shor
 - The rear camera delivers frames (measured: 1920x1080 30/30), the VCM binds as `dw9800k` and `focus_absolute` appears. Whether the image
   orientation is right and whether it focuses is unverified. When the camera is not in use the rear sensor and VCM are powered off
   (patch 0021, measured). Patch 0022 addresses boots in which the lens device did not appear (with that kernel it appeared in 1/1 boots).
+- Three defects that showed in applications (purple lines, exposure that moved oddly, no rear focus) were not in the kernel but in
+  libcamera's software ISP and in the gain ranges the sensor drivers advertise (section 6). With libcamera 0.8.0 and the patches of
+  `userspace/libcamera` the lines are gone and the exposure settles (measured with `cam`, then observed in a camera application). The
+  contrast autofocus is implemented and sweeps the lens (measured). Whether the rear camera focuses is **unverified**: an opaque protective
+  film covers the rear camera of the test unit (observed), and the rear image stays diffuse at every lens position (measured; 6.3).
 
 ## 1. Windows reference values
 
@@ -215,6 +220,7 @@ The patches are in [`kernel/patches`](../../../kernel/patches).
 | 9 (DSM clock frequency) | Patch 0015: the third `_DSM` argument is 0 when the SSDB mclk is 24 MHz. For 19.2 MHz sensors (front and rear) it stays 1 |
 | 8 (VD55G0) | No patch (4.1) |
 | 2 (binned mode) | No patch fixes it (4.2). Patch 0020: the mode is not offered on `clock-noncontinuous` links |
+| Sensor gain ranges (6.2) | 0025 (ov5693: 16–992), 0026 (ov13858: 0x80–0x7c0) |
 
 ### 4.1 VD55G0 is not supported by vd55g1
 
@@ -304,4 +310,128 @@ together with it, change `LINK_FREQ` to 358.4 MHz in the binned mode (section 5 
 | Without patch 0021 the rear sensor and VCM stay powered when the camera is not in use | Measured: `i2c-OVTID858:00` was runtime active for 1006 of 1025 seconds of uptime, with avdd, pwr1 and the 19.2 MHz clock of `INT3472:00` on. The libcamera monitor of wireplumber keeps the lens subdevice open, `dw9719_open` takes a runtime PM reference, and ipu-bridge sets a PM link from the VCM to the sensor (code). The front camera has no VCM and is suspended when not in use. With patch 0021 (the VCM powers up on the first focus write, not on open): in the idle state with wireplumber holding the lens node open, both sensor and VCM are `suspended` (measured) | After one focus write both stay on until wireplumber closes the node. Image quality when focus is never written is unverified |
 | CSI-2 errors are logged when a stream stops | Measured: for the front camera `csi2-2 error: Transfer FIFO overflow` and `Inter-frame long packet discarded` on every stream; for the rear, in 7 of 29 raw captures. The delivered frames have no errors and none are missing | Cause unverified |
 | After power-up the VCM position and the control value differ | Measured (once): the VCM register read 512 with the control value at 0. The driver apparently does not write the current value after power-up (inferred) | Confirm that it reproduces |
-| Auto exposure converges slowly | Measured: front mean 0.02 → 0.39 over 90 frames, rear 0.07 → 0.42 over 120 frames | CAM-6 |
+| Auto exposure converges slowly (libcamera 0.7.2) | Measured: front mean 0.02 → 0.39 over 90 frames, rear 0.07 → 0.42 over 120 frames | Fixed with the patched libcamera (6.2) |
+
+## 6. Defects in libcamera's software ISP, and the patches
+
+A camera application (GNOME Snapshot, for one) gets its frames through PipeWire, WirePlumber's libcamera monitor and libcamera's simple
+pipeline with the software ISP (SoftISP) and its GPU debayer. The measurements below were taken on that path. Raw frames were captured
+straight from the IPU6 ISYS node with [`tools/linux/cam-raw.sh`](../../../tools/linux/cam-raw.sh) (libcamera is not involved); processed
+frames with `cam`. The fixes are ten patches on libcamera 0.8.0 ([`userspace/libcamera/`](../../../userspace/libcamera/README.md)) and
+the kernel patches 0025 and 0026. On NixOS the option `hardware.surface-pro-9.camera.libcamera` (on by default) rebuilds PipeWire and
+WirePlumber against this libcamera ([`nix/libcamera.nix`](../../../nix/libcamera.nix), [nixos.md](../../nixos.md)).
+
+Where the results stand: the patched libcamera was measured with `cam` and through PipeWire with a GStreamer pipeline, and after it
+was installed through the NixOS option a person looked at both cameras in Snapshot: no purple lines, and the brightness regulates
+normally (observed; [test-results.md](../../test-results.md) CAM-2, CAM-7). The response to a change of lighting was not measured.
+
+### 6.1 Purple lines: the GPU debayer
+
+| Measurement | Value |
+|---|---|
+| Magenta columns in a processed 1920x1080 frame (libcamera 0.7.2, GPU) | Rear 791 and 1271 (rows 311 and 791), front 731 and 1211 (row 731). Spacing 480. In those columns green is lower by 11–46/255 and red and blue are higher |
+| The same frame through the CPU debayer (`LIBCAMERA_SOFTISP_MODE=cpu`) | No lines |
+| Column and row means of the raw frames (front and rear, per Bayer position) | No column or row differs from its neighbours |
+| libcamera 0.8.0 unpatched | Lines in the same columns |
+| With patch 0002 (front and rear; 640x480, 1280x720, 1920x1080, 2560x1440) | No lines; no colour error in the two outermost rows either |
+
+The cause is neither the sensor nor the IPU6 but the way the GPU debayer scales. It draws the whole input scaled to the output size and
+reads the nearest texel; where the input position of an output pixel falls on a texel boundary, the centre pixel, its neighbours (their
+distance is computed from `stride − 1` and `height − 1`, slightly too large) and the Bayer phase (`floor()`) refer to different pixels.
+1920/2108 = 480/527, so such a column and row occur every 480 pixels: the period matches the measured positions. Only the vertical
+lines stood out, presumably because there is a single horizontal one near the top (inferred). The same code had three more defects
+(from the code, and measured): the scaled image is anchored in one corner, so an output of another aspect ratio is cropped on one side
+only; it scales by skipping pixels, which gives staircases; and the statistics window is not the area the output shows but **the corner
+of the input, of the size of the output** (6.2).
+
+Patch 0002 debayers the centred area of the input that has the aspect ratio of the output pixel for pixel (texels are read at their
+centres) and, when the output is smaller, scales in a second pass (bilinear down to 70 %, mipmaps below). The statistics come from the
+same area. Debayer time at a 1280x720 output: 7.3 ms a frame for the front camera, 5.5 ms for the rear (measured; 0.7.2: 7.1–7.7 ms).
+
+### 6.2 Exposure
+
+| Measurement | Value |
+|---|---|
+| Raw mean against the front `analogue_gain` (in sixteenths) | Proportional from 16 (1x) to 992 (62x). From 993 it drops to the level of 512 (32x) and stays there up to 1023; 1024–2047 repeat lower gains; below 16 the sensor attenuates. The driver's range was 1–2047 |
+| Rear `analogue_gain` (in 1/128) | Proportional from 0x80 (1x) to 0x7c0 (15.5x). 0x800 and 0x1000 equal 0x400, 0x1fff equals 0x7ff; 0x40 is brighter than 0x80. The driver's range was 0–0x1fff |
+| Black level (10 bit) | Front 16, rear 64 |
+| Control delay (written after the frame start; first frame that shows it; [`cam-ctrl-delay`](../../../tools/linux/cam-ctrl-delay.c)) | Exposure 2 and gain 2 for both sensors. libcamera's default assumption is exposure 2, gain 1 |
+| First frame after start | The front camera delivers a black one (plain black level) about one time in three |
+| Lighting | At 5 ms exposure the frame mean swings between 157 and 193 (flicker of 60 Hz mains) |
+| libcamera 0.7.2, front, 640x480 | Settles at 33 ms × 10.4x with a mean output green of 220/255 (blown out). Same scene with the patches: 33 ms × 2.4x, mean 110–116 |
+| libcamera 0.7.2, rear, dim scene | The gain climbs to 8191 and the mean swings between 86 and 116 |
+| libcamera 0.8.0 unpatched, front, at start | The gain flips 64 → 1 → 32 → 128 → 16 → 64 → 8 → … for 40 frames |
+| With the patches, front | Starting from the previous session's values: settled from the first result (frame 5), standard deviation 0.03–1.7 afterwards. Starting dark (exposure 300 lines, 1x): settled at frame 7. Starting bright (62x): settled at frames 19–23 |
+| With the patches, rear | Settled at frame 7, standard deviation 0.1–0.6 afterwards |
+
+Several causes overlapped:
+
+- **The metering area was wrong** (GPU path of 0.7.2 and 0.8.0). The statistics window is the top-left corner of the input, of the size
+  of the output: with a 640x480 output the exposure is set from the top-left 6 % of 2592x1944. When that corner is dark the image is
+  blown out. Patch 0002.
+- **Gain ranges the sensors do not follow.** Auto exposure believes the gain reaches 127.9x (front) and 64x (rear) and raises it there,
+  where the image gets darker again or does not change. Kernel patches 0025 and 0026 make the ranges the real ones; the tuning files
+  carry `minAnalogueGain` and `maxAnalogueGain` as well (patches 0004 and 0010), which takes effect on a kernel without them too.
+- **The assumed delay.** With a gain delay of 1 the statistics are attributed to values one frame ahead. Patch 0003 (2 and 2).
+- **Loop delay.** The result for statistics frame N went out one frame late, missed frame N+4 and was evaluated only at N+8, so the
+  regulation fell apart into two loops taking turns. Patch 0005.
+- **The brightness estimate of dark frames.** The gain was applied to the lower edge of each histogram bin, so the first bin always
+  stayed 0: a frame that needed 17x got 1434x (measured). Patch 0005.
+- **The black first frame** sent the exposure to its maximum. Patch 0005 ignores the statistics of the first frame and leaves the
+  sensor values alone until the first result.
+- **Flicker.** The exposure time had no relation to the mains period, so the brightness swung and bands moved through the image.
+  Patch 0004: once the exposure reaches the flicker period (8.33 ms at 60 Hz) it stays at a multiple of it and the gain makes up the
+  rest. The NixOS option `camera.mainsFrequency` selects 50 or 60. In scenes bright enough to need less than one period the flicker
+  remains.
+- libcamera 0.7.2 also had a smallest gain step of 1/100 of the range (1.28x for the front camera; from the code). 0.8.0 does not.
+
+libcamera 0.8.0 prefers the CSI-2 packed formats on IPU6. On this device every packed buffer arrives with the error flag and no frame
+comes out (measured: also when captured directly with `v4l2-ctl`, front and rear, with CSI-2 receiver errors in the kernel log).
+Patch 0001 reverts that preference. Why packed capture fails was not investigated.
+
+### 6.3 Rear focus
+
+| Measurement | Value |
+|---|---|
+| Simple pipeline of libcamera 0.7.2 and 0.8.0 | Finds the lens (`focusLens`) and does not use it. There is no focus control (from the code) |
+| `cam` with the patches | `Lens range 400 (far) to 800 (near, 10 dioptres)`; at start it steps from 400 to 800 in steps of 50 (9 positions, 4 frames each), and the metadata carry `AfState`, `LensPosition` and `FocusFoM`. Afterwards the VCM registers hold the last position written (440 = `01 b8`) |
+| Device standing on a desk (the rear camera faces a nearby surface) | The contrast varies by less than a factor of 1.2 over the range, so the scan ends as "nothing to focus on" and the lens rests at the default position (1 dioptre = 440). A raw sweep (350–850, steps of 25, up and down) has no maximum either |
+| Device held by a person towards a distant scene (a row of ceiling lights) | The contrast of the raw sweep is the same 0.00117 from 350 to 550 and falls above that, to 0.00048 at 850. Even in the sharpest frame a light is a diffuse blob about a tenth of the image width across, with a halo (Tenengrad 0.0037; the front camera looking at the same room gives 0.029–0.070) |
+| An object held about 30 cm in front of the camera | The contrast is flat over the whole range, 0.00054–0.00059. The object is a blob without contours |
+| Autofocus on those two scenes (three runs each) | "Nothing to focus on" in 4 of 6 runs; in the 2 runs in which the scene moved it chose an end position |
+| Reference frame taken on Windows (unattended) | Diffuse in the same way. What the camera was facing is not known |
+
+Implementation (patches 0007–0009): the SoftISP statistics gain a focus measure, the green contrast of the centre half of the image
+(squared differences of neighbouring green pairs, divided by the squared brightness). The `Af` algorithm of the IPA scans from the far
+end in coarse steps, stops once the contrast has fallen below 60 % of its maximum for two steps, scans the neighbourhood of the maximum
+in fine steps and rests at the position a parabola through the samples gives. Continuous mode (the default) scans once at start and
+again when the contrast differs from its reference by more than 35 % for four statistics frames in a row. Applications see `AfMode`
+(manual, auto, continuous), `AfTrigger` and `LensPosition` (dioptres). PipeWire's libcamera plugin selects continuous mode when
+`AfMode` exists (from the code).
+
+**The rear image does not get sharp at any lens position (measured).** With the distant scene the contrast is highest at the low values
+(350–550) and falls as the value rises; facing a nearby surface it rises slightly towards 800. That agrees with the direction of
+`lensRange: [400, 800]`, low values being far. But at the best position a distant light is still a large blob. A blur of that size
+would take a lens almost 1 mm away from its infinity position (estimated with a focal length of 3.5 mm at F2), more than the VCM
+travels, and the blob has a diffuse rim instead of the edge of a defocus disc. So the blur is not a matter of the focus position.
+**An opaque protective film covers the rear camera of the test unit (observed).** Until it is removed and the measurement is repeated
+with [`tools/linux/cam-af-check.sh`](../../../tools/linux/cam-af-check.sh), focus cannot be judged, and the dioptre scale of the lens
+range is not settled either. The focus range Windows Media Foundation reports, 450–700, lies inside the range used here.
+
+Lens power: libcamera opens the lens node when it enumerates the cameras, and after one focus write the VCM and the rear sensor stay
+powered until the node is closed (the consequence of patch 0021; measured: with the WirePlumber of 0.7.2 holding the node,
+`i2c-OVTID858:00` stays `active` after a focus write). Autofocus writes the focus in every stream, so the sensor would stay on for the
+whole session. Patch 0008 closes the lens node while the camera is not streaming. With a WirePlumber built against this libcamera no
+process holds the lens node when idle, and the rear sensor is `suspended` again within 3 s of the end of a stream (measured).
+
+### 6.4 Other measurements
+
+| Observation | Evidence | Open |
+|---|---|---|
+| The CSI-2 packed output of the IPU6 ISYS does not work on this device | Measured: `pBAA` and `pgAA`, 20/20 buffers with the error flag, `csi2-N error` in the kernel log | Cause on the kernel side unverified. libcamera avoids it with patch 0001 |
+| Frame rate | Measured: front 28.64 fps (the sensor's default vertical blanking), rear 29.95 fps. Debayer 5.5–7.3 ms a frame | — |
+| Through PipeWire | Measured with a WirePlumber built against the patched libcamera, started in place of the session's: the nodes `Built-in Front Camera` and `Built-in Back Camera` appear, and GStreamer `pipewiresrc` received 75/75 frames at 1280x720 and at 1920x1080 from each; no lines, no change of brightness after the first result | — |
+| Colour | `Awb` is grey-world and there is no colour correction matrix (the tuning files have none). Saturation is low | A CCM and lens shading correction need shots of a colour chart |
+| Noise at high gain | SoftISP has no noise reduction. In dim light the gain goes up to 62x (front) and 15.5x (rear) | — |
+| Rear image orientation | Unverified (CAM-1) | A person |
+| Privacy LED | Unverified (CAM-5) | A person |

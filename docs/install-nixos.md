@@ -275,9 +275,13 @@ Added to `configuration.nix`. These are the options the working setup sets; ever
   hardware.surface-pro-9.helper.enable = true;
 ```
 
-What the defaults already do: iptsd with the device preset, the speaker filter chain, the microphone default
-gain, the echo-cancel source, and the diagnostic tools are on; the pen tools (`pen.enable`) and the codec
-patch are off. The full option table is in [nixos.md](nixos.md). Do not import nixos-hardware's
+What the defaults already do: iptsd with this repository's pen patches and the device preset, the speaker
+filter chain, the microphone default gain, the echo-cancel source, iio-sensor-proxy with the accelerometer
+rule (automatic rotation in a desktop that supports it), PipeWire and WirePlumber built against the patched
+libcamera, and the diagnostic tools are on; the pen tools (`pen.enable`) and the codec patch are off.
+`hardware.surface-pro-9.touch.daemon = "digitizerd"` replaces iptsd with this repository's own touch and pen
+daemon ([digitizerd.md](digitizerd.md)); the test device runs it. The first build also compiles libcamera,
+PipeWire and WirePlumber. The full option table is in [nixos.md](nixos.md). Do not import nixos-hardware's
 `microsoft-surface` modules together with this one: both define the kernel.
 
 Build and boot:
@@ -313,7 +317,9 @@ uname -r                          # 7.3.4
 cat /proc/cmdline                 # neither i915.enable_psr nor pci=hpiosize
 cat /proc/sys/kernel/tainted      # 0
 sudo cat /sys/kernel/debug/dri/0000:00:02.0/i915_edp_psr_status    # "PSR mode: PSR1 enabled"
-journalctl -b | grep 'Loading config /etc/iptsd'                   # iptsd.conf, then iptsd.d/surface-pro-9.conf
+journalctl -b | grep 'Loading config /etc/iptsd'                   # iptsd.conf, then iptsd.d/surface-pro-9.conf (touch.daemon = "iptsd")
+cat /sys/bus/iio/devices/iio:device*/in_accel_hysteresis 2>/dev/null   # 0: the sensor rule applied
+cam -l                            # both cameras, from the patched libcamera 0.8.0
 bootctl status                    # Secure Boot: disabled, systemd-boot on the EFI system partition
 ```
 
@@ -382,9 +388,13 @@ The full list is [hardware-status.md](hardware-status.md).
   continuous waveforms ([helper.md](helper.md), the section on the pen). Without the helper,
   `hardware.surface-pro-9.pen.feedbackService` provides the continuous haptics and the cover coupling has to
   be done by hand ([research/gaps/pen-vendor-exchange.md](research/gaps/pen-vendor-exchange.md)).
-- **Rear camera.** Frames arrive, but there is no autofocus through libcamera: the lens stays where it is
-  unless `focus_absolute` is written by hand, and whether the image then focuses is unverified.
-- **Front camera.** Works; the sensor always runs its full-resolution mode at about 28.6 fps.
+- **Rear camera.** Frames arrive and the patched libcamera has a contrast autofocus that moves the lens.
+  Whether the image focuses is unverified: on the test unit an opaque protective film covers the rear camera
+  and the image is diffuse at every lens position.
+- **Front camera.** Works; the sensor always runs its full-resolution mode at about 28.6 fps. Colours are
+  uncalibrated (low saturation).
+- **Pen in drawing applications.** Writing, the barrel button and the eraser end work. After erasing, the
+  application may keep showing the eraser cursor when the pen is taken away; it does nothing.
 - **IR camera.** No driver, so no face unlock.
 - **Speakers.** The volume control you move is the "Speakers" filter sink, which the module makes the default.
   The raw sink behind it is kept at 100 % by the module; leave it there.
@@ -392,8 +402,12 @@ The full list is [hardware-status.md](hardware-status.md).
   applies only to an account with no stored volume; on an account that already recorded at 100 % run
   `wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 32%`. For calls there is a separate source, "Microphone (echo
   cancelled)", which has to be selected in the application; call quality is unverified.
-- **Touch, Type Cover keys and touchpad, buttons, tablet mode, rotation, external monitor.** Unverified: no
-  test by a person is on record.
+- **Rotation.** The screen follows the device in a compositor that reads iio-sensor-proxy (observed). Whether
+  your desktop holds the orientation while the cover is attached is the desktop's business.
+- **Touch.** Works in everyday use with `sp9-digitizerd` (observed); the test of light taps and swipes and of
+  palm rejection has not been run.
+- **Type Cover keys and touchpad, buttons, tablet mode switch, external monitor.** Unverified: no test by a
+  person is on record.
 - **Hibernation.** Not available with zram swap only.
 - **Heat.** Under sustained load the surface gets hotter than on Windows, which lowers the power limit at a
   lower skin temperature.

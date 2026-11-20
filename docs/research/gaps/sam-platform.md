@@ -247,7 +247,21 @@ Each item is the check, followed by its result on Linux 7.3.4 where there is one
     (`monitor-sensor` if iio-sensor-proxy is present, otherwise iio buffer mode).
     Result (measured): 7 iio devices (gyro_3d, accel_3d, incli_3d, als, dev_rotation, gravity, magn_3d) are under `01:15:01:06:00`. Buffer mode gave 1 acceleration sample in 8 seconds
     (magnitude 9.70 m/s²). A one-shot read of sysfs `_raw` on accel, gravity and als takes more than 5 seconds and then returns 0 (the 0 is not a value but a missing response).
-    `dev_rotation` returns a value in 0.2–0.3 seconds. iio-sensor-proxy was not installed on the test system. Orientation changes are unverified (SAM-7).
+    `dev_rotation` returns a value in 0.2–0.3 seconds. At that time iio-sensor-proxy was not installed on the test system.
+    Cause (measured, and from the code): the SAM HID transport has no request for an input report. `raw_request` in `surface_hid_core.c`
+    takes output and feature reports only and answers −EIO to anything else (the Windows `SurfaceHidMiniDriver` likewise answers error
+    121 to a GetInputReport on the Type Cover, [typecover.md](../control/typecover.md)). A single read in `hid-sensor-hub` sends
+    GET_REPORT and then waits 5 seconds for an input report, and the hub sends one only when the reading has moved by more than its
+    change sensitivity (0.05 g for the accelerometer, 0.004 for gravity) and once right after the sensor was switched on from off. On a
+    device at rest the buffer therefore stays empty and a single read returns 0. With the accelerometer's sensitivity written as 0
+    (`in_accel_hysteresis`) the hub reports at 8 Hz for as long as the sensor is on, and a single read returns a value in 0.09 seconds.
+    iio-sensor-proxy 3.9 takes the empty buffer at the default sensitivity for a broken one, falls back to polling and reads (0, 0, 0);
+    at sensitivity 0 it uses its buffer driver and reports an orientation (measured on a separate system bus).
+    [`userspace/platform/udev/rules.d/61-sp9-sensors.rules`](../../../userspace/platform/udev/rules.d/61-sp9-sensors.rules) sets the
+    sensitivity to 0 (NixOS option `sensors.enable`). With the rule applied at boot and iio-sensor-proxy running, the screen follows
+    when the device is turned, in a compositor that reads iio-sensor-proxy (observed, SAM-7). The figures are in
+    [test-results.md](../../test-results.md) under SAM-7. The kernel is left alone: a driver cannot produce what the transport does
+    not deliver, and the sensitivity is a value for user space to choose.
 13. Watching SAM events: enable the `surface_aggregator` tracepoints and look at the events that arrive on lid, power, load and charging changes (G6, G7).
     Result (measured, idle only): see G6.
 14. Shutdown: whether the device turns off completely after `poweroff` on a kernel that includes linux-surface `0011-surface-shutdown.patch` (G12).

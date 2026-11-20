@@ -161,8 +161,8 @@ The address the driver derives is not the address of pairing mode but a second o
 | # | Wrong or missing | Evidence | Effect | How to fill it | Confidence | Checked on Linux |
 |---|---|---|---|---|---|---|
 | 1 | There is no iptsd preset for the SP9, and the touch thresholds in the code defaults (40/36/15) differ from the values in the documentation and wiki (24/20/5) | iptsd touch defaults in section 2, wiki | Light touches and swipes are missed (iptsd #171) | `etc/presets/surface-pro-9.conf`: `[Device] Vendor=0x045E Product=0x0C52`, `[Contacts] ActivationThreshold=24 DeactivationThreshold=20 OrientationThresholdMax=5`. Width/Height are not set: the metadata is enough | confirmed (the values differ); the best values are inferred | Compare the rate of missed light taps with `iptsd-calibrate` and `libinput debug-events` → measured: the preset is loaded as `/etc/iptsd.d/surface-pro-9.conf`, and at 24/20/5 there were 0 ghost touches in 150 seconds without contact. The comparison of missed taps and swipes is unverified (TOUCH-1) |
-| 2 | No pen pressure curve, tilt-compensated pressure or ZFI. iptsd's pressure is the linear value of the frequency interpolation | 1.6 (pressure), `dft.hpp:233`–248 | Pressure feel and the start of the first stroke differ from Windows | Add a `[Stylus] PressureCurve` kind of setting to iptsd (gamma/spline post-processing), or correct it with a libinput tablet pressure curve (`libinput` pressure range quirk, the GNOME/KDE pen pressure curve) | confirmed (the function is absent); the numbers are unknown | With `evtest`: the minimum ABS_PRESSURE at which a stroke starts, the distribution of values at the same force → measured: the ABS_PRESSURE range of the iptsd virtual stylus is 0..4096 (declared). Reaching 4096 and the stroke start pressure are unverified (PEN-1) |
-| 3 | No tilt filter; `TiltDistance 0.6` cm is not a value confirmed for the SP9 and Slim Pen 2 | 1.6 (tilt filters), `config.hpp:69` | Jitter in the tilt values, angle error | Check whether the unknown floats of the metadata (178/182/180 …) relate to tilt or the transmitters, then set `[DFT] TiltDistance` in the preset; add a median filter to iptsd | inferred | Fix the pen at 30/45/60° with a protractor and record ABS_TILT_X/Y → measured: ABS_TILT_X/Y range −9000..9000, resolution 5730 (declared). The comparison against angles is unverified (PEN-2) |
+| 2 | (Filled, section 5.) No pen pressure curve, tilt-compensated pressure or ZFI. iptsd's pressure is the linear value of the frequency interpolation | 1.6 (pressure), `dft.hpp:233`–248 | Pressure feel and the start of the first stroke differ from Windows | Add a `[Stylus] PressureCurve` kind of setting to iptsd (gamma/spline post-processing), or correct it with a libinput tablet pressure curve (`libinput` pressure range quirk, the GNOME/KDE pen pressure curve) | confirmed (the function is absent); the numbers are unknown | With `evtest`: the minimum ABS_PRESSURE at which a stroke starts, the distribution of values at the same force → measured: the ABS_PRESSURE range of the iptsd virtual stylus is 0..4096 (declared). Reaching 4096 and the stroke start pressure are unverified (PEN-1) |
+| 3 | (Filled, section 5.) No tilt filter; `TiltDistance 0.6` cm is not a value confirmed for the SP9 and Slim Pen 2 | 1.6 (tilt filters), `config.hpp:69` | Jitter in the tilt values, angle error | Check whether the unknown floats of the metadata (178/182/180 …) relate to tilt or the transmitters, then set `[DFT] TiltDistance` in the preset; add a median filter to iptsd | inferred | Fix the pen at 30/45/60° with a protractor and record ABS_TILT_X/Y → measured: ABS_TILT_X/Y range −9000..9000, resolution 5730 (declared). The comparison against angles is unverified (PEN-2) |
 | 4 | Default for false side button detection | iptsd #102, #99 (per user, anywhere from 2000 to 20000), `config.hpp:64`·67 | Spurious right clicks while drawing | Settle a `[DFT] ButtonMinMag` value in the SP9 preset (needs measurement). Before that, find out whether the Slim Pen 2 uses the MPP2 path (`Mpp2ButtonMinMag`) | confirmed (the issues); the value is inferred | Collect the magnitude of the 0x09 and 0x0A windows with `iptsd-dump`, button pressed and released → measured: only that `BTN_STYLUS` is declared. The count of false detections is unverified (PEN-3) |
 | 5 | Palm decision is the size and aspect ratio rule only. Windows uses an LLR classifier + handedness + screen rotation as inputs | 1.6 (palm decision; handedness mode and screen rotation keys) | Palm touches are taken as input while using the pen | First step: `[Touchscreen] DisableOnStylus = true` in the preset (blocks touch while the pen is in proximity). Longer term: add to iptsd a block of the hand-side region relative to the pen position (handedness) | confirmed (the functions differ); the effect is inferred | With the pen hovering and the palm on the screen, whether `libinput debug-events` shows touch events → measured: the drop-in overrides it with `DisableOnStylus = true` (load order from the journal, the override from reading the code). The effect is unverified (TOUCH-2) |
 | 6 | Pen haptics not supported | 1.1 (pen haptics in the Windows input stack), #1066 (manual vibration achieved with report 65), the kernel's `HID_HAPTIC` is for touchpads only. Windows ETW analysis: [pen-ble-trace.md](pen-ble-trace.md) | No vibration | Short term: a user-space tool that writes report 65 to the BLE pen's hidraw (start/stop while inking, intensity). Longer term: widen `hid-haptic` to the Simple Haptic Controller of the Stylus TLC, or expose an FF device. Getting the pen's descriptor comes first. Prototype: [userspace/pen](../../../userspace/pen/README.md) | confirmed (absent); the protocol details are inferred | Decode `/sys/class/hidraw/*/device/report_descriptor` with `hid-decode`, check the usages of page 0x0E, then write report 65 → observed (writing directly to the pen's hidraw, PEN-9): the click (ordinal 3) of report 65 Manual Trigger is felt. ink-continuous (ordinal 9) was not felt, neither with the same bytes as the Windows capture nor at intensity 255. Writing 9 to the Auto Trigger of Feature 65 gives a weak, intermittent vibration during a stroke: unlike the continuous vibration on Windows. No difference was felt between waveforms 9–13 or between intensities 100/255. **Resolved since** (observed): the cause was the digitizer, not report 65. The continuous waveforms play once the host feeds the pen's speed back to the digitizer through Feature 9 (difference 11), which the device helper or `surface-pen-feedback` does; the values Windows writes while inking were captured and are the ones tried here ([pen-vendor-exchange.md](pen-vendor-exchange.md) sections 1, 5) |
@@ -187,7 +187,7 @@ The address the driver derives is not the address of pairing mode but a second o
 4. Touch: compare missed light taps and three-finger swipes between the defaults and 24/20/5.
    → unverified (TOUCH-1).
 5. Pen: with `evtest`, pressure reaching 0..4096, tilt ± angle, false side button detection (count of BTN_STYLUS glitches in 30 seconds of continuous drawing), `BTN_TOOL_RUBBER` on the eraser end.
-   → unverified (PEN-1–4). Only the ranges and key declarations were measured. A stroke drawn with the pen was seen (observed; the pressure range was not measured).
+   → with the iptsd patches of section 5: writing, the barrel button held while drawing and the eraser end work (observed, PEN-1, PEN-3, PEN-4). Reaching 4096, tilt against real angles (PEN-2) and a count of false button detections over 30 seconds were not taken on the device; the replayed captures of section 5.3 are the measurement.
 6. Whether `libinput list-devices` shows kernel-side 0C52 input devices, and whether events are duplicated.
    → measured: they exist (difference 12). Whether events are duplicated is unverified (PEN-8).
 7. BLE: after pairing, get the pen descriptor with `hid-decode` (the 0x0E haptic usages under Col05 Stylus), vibration with report 65, the tail button key combinations, battery (`upower -d`).
@@ -196,6 +196,82 @@ The address the driver derives is not the address of pairing mode but a second o
    → unverified (PEN-7).
 9. Touch and pen recovery after entering and leaving s2idle; touch and pen in `fwupdmgr get-devices`.
    → for the kernel log after s2idle see difference 13. `fwupdmgr` is not on the test system (difference 15).
+
+## 5. The pen pipeline: what Windows does and the iptsd patches
+
+The row "iptsd pen (DFT)" in section 2 is the state before the patches. Patches 0001–0017 of
+[userspace/iptsd](../../../userspace/iptsd/README.md) change what follows; the Rust daemon
+[sp9-digitizerd](../../digitizerd.md) implements the same pipeline.
+
+### 5.1 Raw frames
+
+The digitizer sends frames at 66.6 Hz (15.014 ms). One frame carries these DFT windows, in this order:
+
+| Window | Content | Time within the frame |
+|---|---|---|
+| 0x06 Position | Pen tip at 25 kHz, 8 rows | 0 |
+| 0x09 Button | 4 rows | |
+| 0x07 PositionMPP_2 | 10 rows. Row 0 pen tip (161.4 kHz), row 1 ring, row 2 the tone of "no force", row 3 the tone of "force" | +2.88 ms |
+| 0x0A BinaryMPP_2, twice | 16 rows | +3.72, +4.42 ms |
+| 0x0B Pressure | 16 rows. Rows 0–5 pressure tone, row 6 the tone of "no force", rows 7–15 digital bits | +7.42 ms |
+| 0x08 | The second MPP v2 position window (165.9 kHz) | +10.12 ms |
+
+### 5.2 What Windows does with them
+
+The Windows touch processor (`TouchPenProcessor0C52.dll`) handles every DFT window on its own. The list below
+was checked by running the same captures through that processor and comparing its output. No table, weight or
+model taken from the Windows binary is in this repository; the numbers that Linux needs are the values of the
+preset [`surface-pro-9.conf`](../../../userspace/platform/iptsd/surface-pro-9.conf).
+
+| Stage | What it does |
+|---|---|
+| Position | From the 0x07 and 0x08 windows: a weighted centroid of the strongest antenna and its two neighbours. A learned correction model sits on top of it; its size is about 0.06 mm in the median and 0.1 mm at most |
+| Screen coordinates | Antenna number times the antenna pitch plus the position of the first antenna (4.0748 mm and 0.44 mm horizontally, 4.0158 mm and 0.94 mm vertically) |
+| Tilt | From the distance between the pen tip and the ring in the same window; the ring sits 9.098 mm up the pen |
+| Position correction for tilt | A term linear and a term quadratic in that distance, followed slowly by a low-pass filter |
+| Filters | In contact a four-state Kalman filter (measurement noise from how well the phases of the three middle antennas agree, process noise from the speed); while hovering an adaptive low-pass filter; a pen that stands still has its coordinates held (radius 0.158 mm) |
+| Pressure | The frequency of the pressure tone and the digital bits. Reported one frame late and stepped between windows |
+| Zero-force contact (ZFI) | Contact is decided from an estimate of the distance between pen and screen, with hysteresis; a stroke that starts without force needs eight samples in a row; after a firm stroke that was lifted quickly, zero-force contact is locked out for 100 windows. The pressure reported meanwhile is derived from the pressure at which recent strokes started |
+| State | Ink starts after two windows in a row and ends after two or four |
+| Button | Only while the other three rows of the button window are clearly weaker than row 0 |
+
+### 5.3 After the iptsd patches
+
+Measured by replaying captures; the reference is the output of the Windows processor for the same capture.
+
+| Item | Before | After |
+|---|---|---|
+| Position reports | 67 a second | 133 a second |
+| Position (unfiltered, median over the writing) | Off by up to 0.44 mm horizontally and 0.94 mm vertically at the edges | 0.04–0.05 mm |
+| Tilt | 9–32° too large, 3–7° of jitter between samples | Median difference within 2°, jitter 1–2° |
+| Strokes (writing with a tilted pen) | 12 | 19 (Windows 19) |
+| Strokes (small, light handwriting) | 47 | 50 (Windows 53) |
+| Pressure at light force | 1.8 times | 1.0 times |
+| Strokes that start at the pressure floor | 100 % | 0–6 % |
+| Jitter of a resting pen (median) | 0.029 mm | 0 |
+
+- The Kalman filter (`InkFilter`) is implemented and the preset leaves it off: switched on, the output agrees
+  with Windows to 0.05–0.07 mm but lags by 0.16–0.24 mm. On the device it made no visible difference to the
+  wobble and the line followed later (observed).
+- The learned correction model of Windows is not reproduced (its size is 0.1 mm or less).
+- Contact is decided from the strength of the tip signal, relative to a reference learned per pen from frames
+  with force, not from a distance estimate. For this pen: 0.09–0.30 at a 5 mm hover, 0.85–1.01 resting on the
+  glass, 0.65 or less at the moment the pen is lifted between letters.
+- The error that repeats with every antenna cell (a slow diagonal comes out wavy) is removed by patch 0015.
+  Against a straight edge, strokes deviated by 0.078–0.090 mm rms before and 0.026–0.061 mm after at a normal
+  writing angle; 0.050–0.155 mm with the pen laid down to about 45°; laid down and very slow, 0.34 → 0.21 mm.
+- Light, joined-up handwriting: before patch 0016 nine letters came out as 12 strokes (three breaks of
+  15–60 ms where the pen stopped reporting force); after it the captures have no break within a stroke.
+  The barrel button that appeared for 40 ms as the pen came into range (and switched the drawing application
+  to selection) is gone from the captures after patch 0017.
+- Differences that remain: three short gaps in the small, light handwriting cannot be told apart by signal
+  strength. A pen resting on the glass without force stays in contact.
+- Not covered by the replays: the barrel button held down, the eraser, the screen edges, the palm, another
+  pen, a rotated screen.
+- On the device: handwriting in a drawing application, the barrel button held while drawing and the eraser end
+  were tried by a person ([test-results.md](../../test-results.md) PEN-1, PEN-3, PEN-4). After the pen is
+  taken away from erasing, the application keeps showing the eraser cursor although the daemon reports the
+  tool as gone; this happens with iptsd and with sp9-digitizerd alike (PEN-4).
 
 The iptsd tools (`iptsd-dump`, `iptsd-calibrate`, `iptsd-show`) set Feature 5 back to single-touch mode when they exit, and the daemon does not write the mode again (from reading the code,
 not run). Running them while the daemon is running can turn touch off, so do `sudo systemctl stop 'iptsd@*'` first. For whether these tools, `libinput` and

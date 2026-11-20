@@ -43,9 +43,16 @@ set (off by default). Otherwise use the ones in
   and start it again afterwards (post-install test section of [pen-touch.md](research/gaps/pen-touch.md)).
 - The PkgTmp and CoreTmp columns of `turbostat` appear only when the `msr` module is loaded (`sudo modprobe msr`).
 - A single-shot read of an iio sensor's sysfs `_raw` file can take more than 5 seconds and then return 0. That 0
-  is not a value but a missing response. Read in buffer mode.
-- The recorded results were taken under a Wayland compositor that is not GNOME, without iio-sensor-proxy
-  (`monitor-sensor`).
+  is not a value but a missing response: the sensor hub reports only on change
+  ([sam-platform.md](research/gaps/sam-platform.md) test 12). Read in buffer mode; for the accelerometer the
+  option `sensors.enable` (or the udev rule of `userspace/platform`) sets the change sensitivity to 0, and then
+  single reads return values as well.
+- The recorded results were taken under a Wayland compositor that is not GNOME. The early rows were taken
+  without iio-sensor-proxy; `sensors.enable` installs it (`monitor-sensor`).
+- With `touch.daemon = "digitizerd"` there is no iptsd on the system: the touch and pen rows then test
+  `sp9-digitizerd` ([digitizerd.md](digitizerd.md)), and the configuration column of a result says which daemon ran.
+- The camera rows are run with the libcamera the session uses: with `camera.libcamera` (the default) that is
+  libcamera 0.8.0 with the patches of `userspace/libcamera`, and `cam` on PATH is the same build.
 
 ## Reading the tables
 
@@ -85,9 +92,10 @@ Capture with `cam` (libcamera-tools). Use the names from the output of `cam -l`.
 | CAM-1 | Rear capture and orientation | [camera](research/gaps/camera.md) difference 7 | `cam -c '\_SB_.PC00.I2C2.CAMR' -C30 -F`, with an object whose top and bottom are recognisable at least 30 cm in front | 30 frames, the image is upright (record whether it is flipped) |
 | CAM-2 | Front capture | [camera](research/gaps/camera.md) difference 1 | `cam -c '\_SB_.PC00.I2C3.CAMF' -C30`. Once on the unmodified linux-surface kernel and once on the kernel with the 0x4800 patch | Unmodified: 0 frames expected (`stream stop time out`); patched: 30 frames and correct orientation |
 | CAM-3 | Binned mode | [camera](research/gaps/camera.md) difference 2 | `cam -c … -s width=1280,height=720 -C30`, and check that the log shows `Input 1296x972`, i.e. that the sensor is in the binned mode (the SoftISP of libcamera 0.7.2 picks the sensor's 2592x1944 mode for a `width=1296,height=972` request). A kernel with patch 0020 does not offer this mode, so no request reaches the binned mode: this test can only be run with an `ov5693` module built without 0020 | Frames arrive without `Frame sync error` or `Transfer FIFO overflow` (failure expected before a fix) |
-| CAM-4 | Autofocus | [camera](research/gaps/camera.md) difference 4 | On the kernel with the VCM patch, change `v4l2-ctl -d /dev/v4l-subdevN -c focus_absolute=…` while watching a preview | Focus moves nearer and farther |
+| CAM-4 | Autofocus | [camera](research/gaps/camera.md) difference 4 and section 6.3 | On the kernel with the VCM patch, change `v4l2-ctl -d /dev/v4l-subdevN -c focus_absolute=…` while watching a preview. With the patched libcamera: hold the rear camera at a distant scene with detail and then at print 30 cm away, each with [`tools/linux/cam-af-check.sh`](../tools/linux/cam-af-check.sh) | Focus moves nearer and farther. The position autofocus chooses is close to the sharpest position of the sweep and differs between the two scenes |
 | CAM-5 | Privacy LED | [camera](research/gaps/camera.md) difference 11 | Watch the device while streaming from the front and the rear camera in turn | Record which LED lights (the white LED next to the front camera is expected) |
 | CAM-6 | Image quality | [camera](research/gaps/camera.md) difference 10 | Compare with the Windows Camera app under the same indoor lighting | Record the differences in exposure, colour and noise with two photos (kept outside the repository) |
+| CAM-7 | Lines and exposure in the processed image | [camera](research/gaps/camera.md) section 6 | For the front and the rear camera, `cam -c N -s width=1920,height=1080 -C60 -F` and a preview in a camera application (PipeWire path). Look for coloured columns or rows at a fixed spacing; note exposure time, gain and mean brightness per frame from the metadata. Compare a raw frame from [`tools/linux/cam-raw.sh`](../tools/linux/cam-raw.sh) with [`cam-raw-stats.py --columns`](../tools/linux/cam-raw-stats.py) | No column or row differs from its neighbours; the brightness settles within about a second of the start and does not swing afterwards; the image is neither blown out nor dark |
 
 ## SAM and platform (SAM)
 

@@ -4,8 +4,10 @@ What each part of the Surface Pro 9 (Intel, SKU `Surface_Pro_9_2038`) does on Li
 is in the [README](../README.md).
 
 Conditions: NixOS, kernel 7.3.4 = stable v7.3.4 + linux-surface 7.3 + [`kernel/patches`](../kernel/README.md)
-0001–0023, firmware UEFI 24.103.143 and SAM 6.603.139, Type Cover attached, Slim Pen 2. Most results were
-measured on kernels with 0001–0022; patch 0023 (Bluetooth) only matters for the pen's cover coupling.
+0001–0026, firmware UEFI 24.103.143 and SAM 6.603.139, Type Cover attached, Slim Pen 2. Most results were
+measured on kernels with 0001–0022. The later patches matter only for the pen's cover coupling and reconnection
+(0023, 0024, Bluetooth) and for the gain range of the camera sensors (0025, 0026); each row of the test
+results names the patch range of its kernel.
 
 How to read this page:
 
@@ -48,49 +50,81 @@ Verdict: works, with a caveat. Tests: DSP-1 partial, DSP-2 unverified, DSP-3 par
 
 ## Touch
 
-Verdict: unverified. Tests: TOUCH-1, TOUCH-2, TOUCH-4 unverified, TOUCH-3 partial, PEN-8 partial.
+Verdict: works in everyday use; the defined tests are mostly open. Tests: TOUCH-1 partial, TOUCH-2 and TOUCH-4
+unverified, TOUCH-3 partial, PEN-8 partial.
 
-- **Measured.** iptsd reads `/etc/iptsd.conf` and then the preset `/etc/iptsd.d/surface-pro-9.conf`, and runs
-  in touchscreen mode. With the preset's thresholds 24/20/5 there were 0 ghost touches in 150 s without
-  contact. After 17 s2idle cycles the kernel log has 0 lines of ithc "DMA RX timeout" or "failed to reset".
-  With patch 0018 every Feature response belongs to the requested report, and the kernel log has 0 lines of
-  `hid_input_report failed` or `too short`. Kernel-side input devices
-  (`Intel Touch Host Controller Touchscreen` and `… Stylus`) exist next to the iptsd virtual devices; libinput
-  takes them as a touch device and a tablet, and the compositor opens both. In the same boot the iptsd devices
-  held non-zero values and the kernel-side devices held only zeros.
+Two daemons can turn the digitizer's raw data into input devices, selected with the option `touch.daemon`:
+iptsd with this repository's patches (the default) and `sp9-digitizerd`, this repository's own daemon
+([digitizerd.md](digitizerd.md)). The test device runs `sp9-digitizerd`; the measurements without contact
+below were taken with iptsd.
+
+- **Observed.** With `sp9-digitizerd`: touch works, as do pen writing, the eraser end, the barrel button and
+  the pen haptics of the helper (TOUCH-1).
+- **Measured.** `sp9-digitizerd` starts by itself after a reboot and finds the digitizer by its ID (the hidraw
+  number differed between two boots). A pen setting changed through the helper reaches the daemon without a
+  restart of the process. iptsd reads `/etc/iptsd.conf` and then the preset
+  `/etc/iptsd.d/surface-pro-9.conf`, and runs in touchscreen mode. With the preset's thresholds 24/20/5 there
+  were 0 ghost touches in 150 s without contact. After 17 s2idle cycles the kernel log has 0 lines of ithc
+  "DMA RX timeout" or "failed to reset". With patch 0018 every Feature response belongs to the requested
+  report, and the kernel log has 0 lines of `hid_input_report failed` or `too short`. Kernel-side input devices
+  (`Intel Touch Host Controller Touchscreen` and `… Stylus`) exist next to the virtual devices of the daemon;
+  libinput takes them as a touch device and a tablet, and the compositor opens both. In the same boot the
+  daemon's devices held non-zero values and the kernel-side devices held only zeros.
 - **Inferred.** Wake by touch will not work: `power/wakeup` of the controller is disabled, and ithc takes the
   device down on suspend and has no wake set-up (TOUCH-4). Not tried.
-- **Unverified.** Missed taps and swipes against the iptsd defaults 40/36/15 (TOUCH-1). Palm rejection with
-  `DisableOnStylus = true` (TOUCH-2). Whether touch and pen work after every resume (TOUCH-3). Whether the
-  kernel-side duplicate devices deliver events during contact (PEN-8). No person has recorded a touch test.
-- **Responsible.** linux-surface's ithc driver and iptsd. The preset
+- **Unverified.** Missed light taps and swipes counted against the iptsd defaults 40/36/15 (TOUCH-1). Palm
+  rejection with `DisableOnStylus = true` (TOUCH-2). Whether touch and pen work after every resume (TOUCH-3);
+  for `sp9-digitizerd`, which keeps its input devices while the digitizer's node is away, finding the node
+  again after a resume has not been checked on the device. Whether the kernel-side duplicate devices deliver
+  events during contact (PEN-8).
+- **Responsible.** linux-surface's ithc driver; iptsd or `sp9-digitizerd`. The preset
   [`userspace/platform/iptsd/surface-pro-9.conf`](../userspace/platform/iptsd/surface-pro-9.conf) (option
-  `touch.enable`). Patch 0018 (ithc: match Feature responses to the requested report ID). The helper can
-  override the thresholds (`sp9-ctl iptsd`: works) and inhibit the touchscreen while the panel is off
-  (`sp9-ctl touch-off`: the setting toggles; the effect with the panel off is unverified).
+  `touch.enable`; `sp9-digitizerd` has the same values built in). Patch 0018 (ithc: match Feature responses to
+  the requested report ID). The helper can override the thresholds (`sp9-ctl iptsd`: works with iptsd; the
+  hand-over to `sp9-digitizerd` is unverified for the touch thresholds) and inhibit the touchscreen while the
+  panel is off (`sp9-ctl touch-off`: the setting toggles; the effect with the panel off is unverified).
 - **Research.** [research/gaps/pen-touch.md](research/gaps/pen-touch.md),
-  [research/control/input.md](research/control/input.md).
+  [research/control/input.md](research/control/input.md), [digitizerd.md](digitizerd.md).
 
 ## Pen (Slim Pen 2)
 
-Verdict: works with the device helper; pressure, tilt, side button and eraser are unverified. Tests: PEN-5 pass, PEN-6 pass, PEN-9 pass, PEN-8 partial, PEN-1–4 and PEN-7 unverified.
+Verdict: works: writing, barrel button, eraser end, and with the device helper haptics, cover coupling and
+reconnection. Tilt against real angles is unverified. Tests: PEN-3, PEN-5, PEN-6 and PEN-9 pass, PEN-1, PEN-4
+and PEN-8 partial, PEN-2 and PEN-7 unverified.
 
-- **Observed.** Strokes draw (the iptsd stylus device reports `BTN_TOUCH`). Haptics: a click (waveform
+- **Observed, writing.** With the pen patches for iptsd ([userspace/iptsd](../userspace/iptsd/README.md),
+  0001–0017) handwriting in a drawing application is good: light strokes are not lost or broken, slow diagonals
+  no longer wobble at a normal writing angle (a little remains with the pen laid down to about 45°), and the
+  drawing application no longer drops into selection when the pen comes into range. Drawing with the barrel
+  button held works (PEN-3) and the eraser end erases (PEN-4). The same holds with `sp9-digitizerd`, which
+  the device runs now. One defect is open: after erasing, when the pen is taken away, the drawing application
+  keeps showing its eraser cursor although the daemon reports the tool as gone; nothing is erased, and it is
+  the same with both daemons (PEN-4).
+- **Measured, writing** (by replaying raw captures, against the output of the Windows touch processor for the
+  same captures; [research/gaps/pen-touch.md](research/gaps/pen-touch.md) section 5). 133 position reports a
+  second instead of 67; position within 0.04–0.05 mm in the median (it was off by up to 0.94 mm at the edges);
+  tilt within 2° in the median (it was 9–32° too large); pressure at light force 1.0 times (it was 1.8 times);
+  the stroke count of two handwriting captures 19 of 19 and 50 of 53. Deviation of slow strokes along a
+  straight edge after patch 0015: 0.026–0.061 mm rms at a normal tilt. The stylus device declares X 0..27389
+  and Y 0..18259 (0.01 mm), pressure 0..4096, tilt ±9000, `BTN_STYLUS` and `BTN_TOOL_RUBBER`.
+- **Optional, unverified on the device.** `sp9-digitizerd` can report the pen position a few milliseconds
+  ahead (`sp9-ctl pen predict`, off by default; measured by replay only, [digitizerd.md](digitizerd.md)
+  section 13).
+- **Observed, haptics.** Haptics: a click (waveform
   ordinal 3) sent with output report 65 is felt. The continuous ink waveform (ordinal 9, intensity 127) is
   felt during strokes, almost as on Windows, once the host feeds the pen's speed back to the digitizer
   (Feature 9 of the touch controller). The device helper does this with `sp9-ctl pen ink on`: the pen vibrates
   while drawing and stops on lift (observed, with the helper alone); `surface-pen-feedback` is the standalone
-  alternative. Faster strokes feel stronger (observed). The helper's strength setting is now the
-  intensity byte written to the pen, as on Windows; that and the feedback frames changed to match Windows have
-  not been felt on the device yet. Without that feedback it is not
+  alternative. Faster strokes feel stronger (observed). The helper's strength setting is the intensity byte
+  written to the pen, as on Windows: 30 % is not felt and 200 % is clearly stronger than 100 % (observed).
+  Without that feedback the continuous waveform is not
   felt, neither with the bytes Windows was captured sending (`41 00 7f 09 00 00 00`) nor at intensity 255, and
   written as the Auto Trigger of Feature 65 it gives only a weak, intermittent vibration.
 - **Measured.** Tail button: single click Meta+F20, double click Meta+F19, long press Meta+F18. Pairing by
   hand works (2/2): a long press of the tail button puts the pen in pairing mode and it bonds with a
   `NoInputNoOutput` agent; without an agent pairing fails with `AuthenticationFailed`. BlueZ and UPower then
   show the pen's battery level. The pen disconnects by itself after 50–80 s without use (reason 0x13, as on
-  Windows). The stylus device declares `ABS_PRESSURE` 0..4096, `ABS_TILT_X/Y` −9000..9000, `BTN_STYLUS` and
-  `BTN_TOOL_RUBBER`. The touch controller's descriptor has the FFF4:0001 collection with input reports 84 and
+  Windows). The touch controller's descriptor has the FFF4:0001 collection with input reports 84 and
   110, 12 B each.
 - **Measured, with kernel patch 0023** (first loaded as a module, then on a booted kernel built with it).
   - Bonding through the cover's pen slot, without pairing mode. After the host address is written to the
@@ -98,13 +132,17 @@ Verdict: works with the device helper; pressure, tilt, side button and eraser ar
     and to the kernel as the pairing key, connects to the pen's coupling address (a second address, derived
     from the pen ID and the host address) and pairs with LE legacy OOB pairing. The device helper does this,
     automatically when a pen without a bond is put into the cover (`sp9-ctl pen auto-couple on`) or once with
-    `sp9-ctl pen couple`: connection 0.4 s, pairing 0.5 s, Paired, Bonded and Trusted in BlueZ, and the pen's
-    HID attached without restarting bluetoothd. A pen that has a bond gives `already-coupled`. A `pen couple`
-    issued right after a coupling fails (the pen does not answer) and leaves the pen without a bond until it
-    is run again a few seconds later.
+    `sp9-ctl pen couple`: Paired, Bonded and Trusted in BlueZ, and the pen's HID attached without restarting
+    bluetoothd. The helper hands the key to the pen first and connects with the controller's address
+    resolution switched off; with that order `pen couple` on a pen without a bond succeeded at the first
+    attempt 12 times out of 12 (about 11 s each) and 6 times out of 6 in the state that used to fail (the pen
+    still on the controller's resolving list; [helper-reference.md](helper-reference.md)). A connected pen
+    that has a bond gives `already-coupled`.
   - Reconnection. A pen bonded that way, to which the host gave its identity key, disconnected by itself
     after 50 s and was connected again 3.5 s after it was picked up and drawn with; reconnection was confirmed
-    again on the booted kernel with 0023.
+    again on the booted kernel with 0023. A pen that is bonded again in the same boot reconnects as well with
+    patch 0024 (measured on a kernel built with it); without it the controller keeps the old identity key and
+    the pen comes back only after a discovery scan or after the adapter is powered off and on.
   - A bonded pen in the cover. It stays connected there after the bonding; after a resume from suspend it is
     disconnected and does not come back by itself, and it accepts a connection only after a key was written to
     the cover. The helper then probes instead of coupling again (key to the cover only, connect, the stored
@@ -113,7 +151,7 @@ Verdict: works with the device helper; pressure, tilt, side button and eraser ar
     once it is proven dead.
   - The battery level of a pen bonded this way reads 100 % (PEN-5).
 - **With the eraser end** there is no continuous vibration, on Windows as on Linux (observed); only a click is
-  felt, and the helper writes one at eraser touch-down (that click is unverified by feel).
+  felt, and the helper writes one at eraser touch-down (observed: one click, as intended).
 - **Does not work.**
   - Reconnection of a pen bonded in pairing mode. After its idle disconnect the pen does not advertise again
     when it is picked up, drawn with, or its tail button is pressed; a two-minute unfiltered scan (30 000
@@ -124,18 +162,21 @@ Verdict: works with the device helper; pressure, tilt, side button and eraser ar
   - Automatic bonding through the digitizer. Setting Features 86 and 112 on the digitizer leaves their values
     unchanged, input reports 84 and 110 do not arrive, and the pen does not appear over Bluetooth. The channel
     that works is the cover (above).
-- **Unverified.** Reaching full pressure and the pressure at the start of a stroke (PEN-1), tilt against real
-  angles (PEN-2), the side button (PEN-3), the eraser (PEN-4), whether reports 84 and 110 are received on the
-  digitizer (PEN-7). Whether the FastHostId is needed for the continuous waveforms. In the helper: the pen feedback
-  frames changed since to match what Windows sends, the strength as intensity byte and the eraser click (none
-  felt on the device yet), `pen test`, speed feedback after an iptsd restart, the stale-bond path after Windows
-  couples the pen again, `pen couple --force`, `unsupported-kernel` on a kernel without 0023. The standalone
-  unit `surface-pen-feedback.service` and the option `pen.feedbackService` as installed. The responder and
-  Secure Connections paths of patch 0023 (compile-tested only).
-- **Responsible.** iptsd for drawing. Drawing does not need Bluetooth; the tail button, the battery level and
-  haptics do. The device helper for haptics, speed feedback and cover coupling ([helper.md](helper.md), the
-  section on the pen; pen haptics and automatic coupling are off by default). Kernel patch 0023 (LE legacy OOB
-  pairing) for the cover coupling. The prototypes in [userspace/pen](../userspace/pen/README.md) (`pen-haptic`,
+- **Unverified.** Tilt against real angles (PEN-2); reaching full pressure and a count of false barrel button
+  detections on the device (the replays are the measurement); the screen edges, the palm, another pen and a
+  rotated screen; whether reports 84 and 110 are received on the digitizer (PEN-7). Whether the FastHostId is
+  needed for the continuous waveforms. In the helper: whether the continuous waveform plays with the feedback
+  frames changed to match what Windows sends and the scale of 300 mm/s, the choice of the inking waveform, the
+  dead zone, zero-force contact and prediction set through the helper, `pen test`, the automatic coupling with
+  the new order, the stale-bond path after Windows couples the pen again, `unsupported-kernel` on a kernel
+  without 0023. The standalone unit `surface-pen-feedback.service` and the option `pen.feedbackService` as
+  installed. The responder and Secure Connections paths of patch 0023 (compile-tested only).
+- **Responsible.** iptsd with the patches of `userspace/iptsd`, or `sp9-digitizerd`, for drawing; the libinput
+  quirk of `userspace/platform` for the tip threshold. Drawing does not need Bluetooth; the tail button, the
+  battery level and haptics do. The device helper for haptics, speed feedback and cover coupling ([helper.md](helper.md), the
+  section on the pen; pen haptics and automatic coupling are off by default). Kernel patches 0023 (LE legacy OOB
+  pairing) and 0024 (resolving list entry replaced when a device is paired again) for the cover coupling and
+  reconnection. The prototypes in [userspace/pen](../userspace/pen/README.md) (`pen-haptic`,
   `surface-pen-connect`, `surface-pen-feedback`; options `pen.enable`, `pen.connectService`,
   `pen.feedbackService`, off by default) for systems without the helper.
 - **Research.** [research/gaps/pen-touch.md](research/gaps/pen-touch.md),
@@ -144,48 +185,74 @@ Verdict: works with the device helper; pressure, tilt, side button and eraser ar
 
 ## Cameras
 
-Stack used in the tests: libcamera 0.7.2, simple pipeline with the software ISP, WirePlumber running.
+Stack: libcamera's simple pipeline with the software ISP, through PipeWire and WirePlumber for applications.
+The early measurements were taken with libcamera 0.7.2 as nixpkgs ships it; the option `camera.libcamera`
+(on by default) now installs libcamera 0.8.0 with the patches of
+[userspace/libcamera](../userspace/libcamera/README.md), which is what the device runs.
+
+With the unpatched 0.7.2 three defects showed in camera applications: purple lines at a fixed spacing, an
+exposure that was off or swung, and no focus control for the rear camera (measured, CAM-7). They were in the
+software ISP and in the gain ranges the sensor drivers advertised, not in the kernel's capture path
+([research/gaps/camera.md](research/gaps/camera.md) section 6). With the patched libcamera and kernel patches
+0025 and 0026 the lines are gone and the exposure settles within 5–23 frames of the start (measured with `cam`
+and through PipeWire); in a camera application neither camera shows lines and the brightness regulates normally
+(observed, CAM-2).
 
 ### Front (OV5693)
 
-Verdict: works. Tests: CAM-2 pass, CAM-3 fail, CAM-5 and CAM-6 unverified.
+Verdict: works. Tests: CAM-2 pass, CAM-7 pass, CAM-3 fail, CAM-5 and CAM-6 unverified.
 
 - **Measured.** Frames arrive for 640x480, 1280x720 and 1920x1080 requests: 1280x720 120/120 frames at
   28.6 fps, 640x480 30/30, 1920x1080 90/90 at 28.65 fps, no dropped sequence numbers, 0 lines of
   `Frame sync error`. The image is upright and in focus. Whatever is requested, the sensor runs its 2592x1944
-  mode.
+  mode. With the patched libcamera: exposure 33 ms × 2.4x where 0.7.2 settled at 10.4x and blew the image out;
+  no column or row differs from its neighbours at 640x480 to 2560x1440. The analogue gain control ranges from
+  16 to 992 (patch 0025), the range in which the sensor follows it.
+- **Observed.** In a camera application the image has no purple lines and the brightness regulates normally.
 - **Does not work.** The binned 1296x972 mode. With either flip control on, every buffer fails with
   `csi2-2 error: Frame sync error`; with both flips off 20/20 frames arrive at 57 fps. libcamera turns both
   flips on because the sensor is mounted rotated by 180°. The cause is unverified, so the mode is not fixed:
   patch 0020 stops the driver from offering it, and requests of 720p and below go to the full mode. What is
-  lost is the 57 fps binned mode without flips.
+  lost is the 57 fps binned mode without flips. The CSI-2 packed formats do not work either (every buffer has
+  the error flag); libcamera patch 0001 keeps to the unpacked ones.
 - **Unverified.** Whether the image is mirrored. Behaviour on a kernel without the patches. Which LED lights
   (the privacy LED GPIO goes high while streaming and low afterwards: measured; CAM-5). Image quality against
-  Windows (CAM-6): frames from the uncalibrated software ISP look desaturated with a grey-green cast and
-  clipped highlights, and auto exposure takes about 90 frames to settle.
+  Windows (CAM-6): there is no colour calibration (grey-world white balance, no colour correction matrix), so
+  saturation is low, and the software ISP has no noise reduction. How the exposure follows a change of
+  lighting (starting from wrong values was measured instead).
 - **Responsible.** Patches 0001–0006 (upstream v7.4 backports: non-continuous MIPI clock for the OV5693 on
-  IPU6) and 0020.
+  IPU6), 0020 and 0025; the libcamera patches.
 
 ### Rear (OV13858)
 
-Verdict: works, focus unverified. Tests: CAM-1 partial, CAM-4 partial.
+Verdict: frames arrive and the exposure works; focus is unverified, because an opaque protective film covers
+the rear camera of the test unit. Tests: CAM-1 partial, CAM-4 partial.
 
 - **Measured.** 1920x1080 30/30 frames at 29.95 fps, 1280x720 120/120, 3840x2160 10/10, no buffer errors. The
   lens device (`dw9800k`) is created and `focus_absolute` (0–1023) exists; a written value is read back from
   the VCM registers (900 reads as `03 84`). The image changes only between about 400 and 800. When the camera
-  is not in use the sensor and the VCM are runtime-suspended (patch 0021). On the first boot of the kernel with
-  patch 0022 the lens device was created (1/1 boots).
-- **Unverified.** Image orientation (libcamera offers only rot180 for this camera). Whether near and far
-  subjects come into focus: the test scenes were too dark or had no edges to tell. Whether patch 0022 removes
-  the boots without a lens device (seen in one of two boots before it) needs many boots. Image quality when
-  focus is never written.
-- **Does not work.** Autofocus: libcamera has no focus control for this camera, so focus stays where it is
-  unless something writes `focus_absolute`.
+  is not in use the sensor and the VCM are runtime-suspended (patch 0021); with the patched libcamera the lens
+  node is closed outside streaming, and the sensor is suspended again within 3 s of the end of a stream. On
+  the first boot of the kernel with patch 0022 the lens device was created (1/1 boots). The analogue gain
+  control ranges from 128 to 1984 (patch 0026); before, auto exposure drove it to 8191, where the sensor does
+  not follow, and the brightness swung. With the patched libcamera the exposure settles at frame 7.
+- **Measured, autofocus.** The patched libcamera gives the camera `AfMode`, `AfTrigger` and `LensPosition`.
+  At start the lens steps through 400–800 and the metadata report the state. **The image does not get sharp at
+  any lens position**: held by a person towards a distant scene and towards an object 30 cm away, the contrast
+  stays low and flat (a distant light is a diffuse blob), and autofocus ends as "nothing to focus on" in 4 of 6
+  runs (CAM-4). The blur is not explained by the focus position.
+- **Observed.** An opaque protective film covers the rear camera of the test unit. In a camera application the
+  rear image has no purple lines.
+- **Unverified.** Whether near and far subjects come into focus, and with it the dioptre scale of the lens
+  range: to be measured again without the film
+  ([`tools/linux/cam-af-check.sh`](../tools/linux/cam-af-check.sh)). Image orientation (libcamera offers only
+  rot180 for this camera). Whether patch 0022 removes the boots without a lens device (seen in one of two boots
+  before it) needs many boots.
 - **Responsible.** linux-surface's camera patches for the sensor; patch 0011 (maps the firmware's VCM type
   0x11 to `dw9800k`; the mapping is confirmed from Windows, compatibility with the dw9719 driver's DW9800K
   settings is inferred), 0021 (the lens powers up on the first focus write, not on open), 0022 (ov13858 enables
-  runtime PM before registering). Option `camera.pipewire` turns WirePlumber's libcamera monitor off for
-  standby measurements.
+  runtime PM before registering), 0026; the libcamera patches (0007–0009 for autofocus). Option
+  `camera.pipewire` turns WirePlumber's libcamera monitor off for standby measurements.
 
 ### IR (VD55G0)
 
@@ -270,7 +337,9 @@ Verdict: buttons and tablet mode unverified; the lid works. Tests: SAM-2 and SAM
 
 - **Measured.** `pinctrl_tigerlake` is loaded in the initrd and the button devices exist: `gpio-keys` with
   volume down, volume up and power (power has wakeup enabled). The tablet mode switch reads 0 (`laptop`) with
-  the cover attached, which matches.
+  the cover attached, which matches. A compositor with automatic rotation reads the switch through libinput:
+  with the cover open it holds the panel upright, and with the switch forced on through the compositor's test
+  hook the panel follows an injected orientation.
 - **Measured + observed.** Lid close → open on battery, four times: 4/4 entered and left s2idle, 0 suspend
   failures, `gpe52` counted about twice per close and open, 0 lines of "No handler or method for GPE" (without
   `pci=hpiosize`).
@@ -282,15 +351,26 @@ Verdict: buttons and tablet mode unverified; the lid works. Tests: SAM-2 and SAM
 
 ## Ambient light and orientation sensors
 
-Verdict: partial. Tests: DSP-4 partial, SAM-7 partial.
+Verdict: rotation works; the light sensor is partly checked. Tests: SAM-7 pass, DSP-4 partial.
 
+- **Observed.** With `sensors.enable` (the default) the screen follows when the device is turned, in a
+  compositor that reads iio-sensor-proxy (SAM-7).
 - **Measured.** Seven iio devices (gyroscope, accelerometer, inclinometer, ambient light, device rotation,
-  gravity, magnetometer). In buffer mode samples arrive: one acceleration sample in 8 s, magnitude 9.70 m/s².
-  Single sysfs `_raw` reads of acceleration, gravity and light take 5.3–5.6 s and return 0 (6/6); polling the
-  light sensor 35 times gave a value twice (about 81 lux).
-- **Unverified.** Rotating the device, covering the light sensor, automatic rotation in a desktop
-  (`iio-sensor-proxy` was not installed on the test system).
-- **Research.** [research/gaps/sam-platform.md](research/gaps/sam-platform.md).
+  gravity, magnetometer). The sensor hub sends a report only when a reading moved by more than its change
+  sensitivity (0.05 g for the accelerometer), and the SAM HID transport cannot ask for an input report. On a
+  device at rest the accelerometer's buffer therefore stays empty, and single sysfs `_raw` reads of
+  acceleration, gravity and light take 5.3–5.6 s and return 0 (6/6); iio-sensor-proxy then reads (0, 0, 0).
+  With the accelerometer's sensitivity written as 0, which the udev rule of `sensors.enable` does (0 after
+  boot: measured), the hub reports at 8.5 Hz while the sensor is on, a single read returns a value in 0.09 s,
+  and iio-sensor-proxy reports the orientation within 0.7 s. Polling the light sensor 35 times gave a value
+  twice (about 81 lux); iio-sensor-proxy takes it through its buffer driver.
+- **Unverified.** Holding the orientation by cover posture and the rotation lock of a desktop. The sensors
+  after a suspend (the kernel is written to restore the sensitivity; from the code only). Covering the light
+  sensor, automatic brightness.
+- **Responsible.** linux-surface's SAM HID and the kernel's `hid-sensor-hub`; the rule
+  [`61-sp9-sensors.rules`](../userspace/platform/udev/rules.d/61-sp9-sensors.rules) and iio-sensor-proxy
+  (option `sensors.enable`).
+- **Research.** [research/gaps/sam-platform.md](research/gaps/sam-platform.md), test 12.
 
 ## Battery and charging
 
@@ -429,10 +509,12 @@ Optional (`helper.enable`): the system service `sp9-helperd`, the command `sp9-c
 | PSR policy | Works on AC; battery side unverified |
 | Panel ICC | The file is produced; colour unverified |
 | Keyboard backlight | Works through the LED; following the backlight key unverified |
-| iptsd thresholds | Works |
+| iptsd thresholds | Works with iptsd. With `sp9-digitizerd` the values are handed over on D-Bus without a restart: unverified for the touch thresholds |
+| Zero-force contact and pressure floor of the pen | With `sp9-digitizerd`: a changed value reaches the running daemon (measured). Through iptsd's drop-in: unverified by the helper's own path |
+| Pen position prediction | Unverified on the device (`sp9-digitizerd` only; off by default) |
 | Touch off while the panel is off | The setting toggles; effect unverified |
-| Pen haptics and speed feedback | Works: vibration while drawing, stop on lift (observed); the digitizer state is restored after a suspend (measured). Unverified: the frames changed since to match Windows, strength as the intensity byte, the eraser click, `pen test`, the state after an iptsd restart |
-| Pen cover coupling | Works, automatic and manual; a bonded pen that is not connected is probed and reconnected with its bond kept (measured). Unverified: replacing a dead bond after Windows coupled the pen, `--force`, `unsupported-kernel` |
+| Pen haptics and speed feedback | Works: vibration while drawing, stop on lift (observed); strength (30 % not felt, 200 % clearly stronger than 100 %) and one click at eraser touch-down (observed); the digitizer state is restored after a suspend (measured). Unverified: the frames changed to match Windows together with the scale of 300 mm/s, the choice of waveform, the dead zone, `pen test`, the state after an iptsd restart |
+| Pen cover coupling | Works: `pen couple` on a pen without a bond at the first attempt 12/12, and 6/6 in the state that failed before address resolution was switched off for the connection; a bonded pen that is not connected is probed and reconnected with its bond kept (measured). Unverified: the automatic coupling with the new order, replacing a dead bond after Windows coupled the pen, `--force` on a pen without a bond, `unsupported-kernel` |
 | Skin temperature guard | Experimental, off by default, unverified |
 | Diagnostics report | Works |
 | Settings app | The window opens (observed); individual controls unverified |

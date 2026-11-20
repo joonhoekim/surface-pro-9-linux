@@ -15,7 +15,7 @@ device-specific preparation in [install-nixos.md](install-nixos.md) steps 1 and 
 
 ## 1. Kernel
 
-The kernel is stable v7.3.4 + linux-surface's 7.3 series + this repository's 23 patches
+The kernel is stable v7.3.4 + linux-surface's 7.3 series + this repository's 26 patches
 ([kernel/README.md](../kernel/README.md)).
 
 [`tools/linux/build-kernel.sh`](../tools/linux/build-kernel.sh) fetches the pinned sources, applies both
@@ -30,8 +30,8 @@ tools/linux/build-kernel.sh --prepare-only   # fetch, apply patches, verify the 
 Results go to `out/kernel/dist/` with a `SHA256SUMS`. The release string is `7.3.4-sp9`.
 
 - **Verified**: the patches apply cleanly in this order (v7.3.4, linux-surface's 47 commits, then 0001–0017
-  with `git am`; 0018–0022 were exported from commits on the tree of the booted kernel, and 0023 from the same
-  tree, where it was first built and loaded as a module; a NixOS-built kernel with all 23 has been booted).
+  with `git am`; 0018–0026 were exported from commits on the tree of the booted kernel, where 0023, 0025 and
+  0026 were first built and loaded as modules; a NixOS-built kernel with all 26 has been booted).
 - **Untested**: the build itself, the packages, and booting their kernel. The configuration starts from the
   Ubuntu mainline config that linux-surface uses for its Debian packages, not from the nixpkgs configuration
   the verified kernel was built with: the options the fragments request are the same, the rest of the driver
@@ -45,7 +45,7 @@ Results go to `out/kernel/dist/` with a `SHA256SUMS`. The release string is `7.3
   while keeping another kernel as the default.
 
 Without this kernel (a distribution kernel, or linux-surface's packaged kernel) the platform files below
-still apply, but the 23 patches are missing: see [kernel/PROVENANCE.md](../kernel/PROVENANCE.md) for what
+still apply, but the 26 patches are missing: see [kernel/PROVENANCE.md](../kernel/PROVENANCE.md) for what
 each one changes. No such combination was tested.
 
 ## 2. Platform files
@@ -81,7 +81,10 @@ sudo ./install.sh --uninstall             # remove everything the script install
 | Firmware (`hardware.enableRedistributableFirmware`) | The distribution's `linux-firmware` package: Wi-Fi and Bluetooth (AX211), i915, IPU6 |
 | `pinctrl_tigerlake` in the initrd | `install.sh` component `initramfs` |
 | `kernelParams.*` | `install.sh` component `cmdline`; not with this kernel |
-| `touch.enable` | The `iptsd` package and service, plus `install.sh` component `iptsd` |
+| `touch.enable`, `touch.daemon = "iptsd"` | The `iptsd` package and service, plus `install.sh` component `iptsd` (the preset and the libinput quirk for the pen's tip threshold). The pen keys of the preset need iptsd 3.1.0 built with the patches of [`userspace/iptsd`](../userspace/iptsd/README.md) (`patch -p1`, in the order of their numbers); a stock iptsd ignores those keys and reads only the touch thresholds |
+| `touch.daemon = "digitizerd"` | Not covered by either `install.sh`. Build `sp9-digitizerd` in `helper/` (`cargo build --release -p sp9-digitizerd`), install the binary, [`sp9-digitizerd.service`](../helper/data/sp9-digitizerd.service) and the D-Bus policy [`io.github.joonhoekim.Sp9Digitizer1.conf`](../helper/data/io.github.joonhoekim.Sp9Digitizer1.conf) by hand (replace `@BINDIR@` in the unit with the directory of the binary), load `uinput`, and stop and disable iptsd: only one of the two daemons may run ([digitizerd.md](digitizerd.md)). Untested outside NixOS |
+| `sensors.enable` | `install.sh` component `sensors` (the udev rule for the accelerometer) and the distribution's `iio-sensor-proxy` package |
+| `camera.libcamera` | Build libcamera 0.8.0 with the patches of [`userspace/libcamera`](../userspace/libcamera/README.md) and build PipeWire's libcamera plugin against it (PipeWire 1.6 needs the two small source adjustments that [`nix/pipewire-libcamera.nix`](../nix/pipewire-libcamera.nix) makes). Untested outside NixOS |
 | `speakers.enable`: filter chain and raw sink name | `install.sh` component `speakers` |
 | `speakers.enable`: raw sink at 100 % | Not installed by `install.sh`. Run [`pipewire/sp9-speaker-raw-volume`](../userspace/platform/pipewire/sp9-speaker-raw-volume) after every WirePlumber start (a systemd user unit of type `oneshot`, `After=` and `WantedBy=wireplumber.service`), or run `wpctl set-volume` on the sink `sp9_speaker_raw` once. Without it the raw sink starts at 40 %, which caps the output at −23.9 dB whatever the volume control shows |
 | `microphone.enable` | Copy [`60-sp9-mic.conf`](../userspace/platform/wireplumber/wireplumber.conf.d/60-sp9-mic.conf) to `/usr/share/wireplumber/wireplumber.conf.d/`. Without it the first-use gain is +60 dB and clips |
@@ -90,8 +93,12 @@ sudo ./install.sh --uninstall             # remove everything the script install
 | `helper.enable` | Section 4 |
 | `pen.enable`, `pen.connectService` | Section 5 |
 
-The cameras need libcamera with the simple pipeline and its software ISP (0.7.2 was used), and WirePlumber's
-libcamera monitor for PipeWire applications. The NixOS module does not configure this; the libcamera monitor is on by default in WirePlumber.
+The cameras need libcamera with the simple pipeline and its software ISP, and WirePlumber's libcamera monitor
+for PipeWire applications (on by default in WirePlumber). With an unpatched libcamera (0.7.2 and 0.8.0 were
+measured) frames arrive, but the processed image has purple lines at a fixed spacing, the exposure is off or
+swings, and the rear camera has no focus control; unpatched 0.8.0 delivers no frames at all on this device,
+because it selects a packed CSI-2 format that fails here ([research/gaps/camera.md](research/gaps/camera.md)
+section 6). The patches in `userspace/libcamera` fix these.
 
 ## 4. Device helper
 

@@ -77,6 +77,8 @@ Feature 9, 64 B with the report ID; offsets count from the report ID. This is th
 
 Everything else is 0. LocalId, AckStatus, DigitizerAck and the protocol type are used by the identification procedure between pen and digitizer and are not made up.
 
+These are the values those tests sent. What the helper sends now is the last column of the table in 1.8 (attributes `4c`/`4e`, protocol type 1, process type 2 and 4, valid bitmap `0x0352`/`0x0752`).
+
 ### 1.4 What was ruled out before this
 
 | Tried on Linux | Result |
@@ -95,12 +97,12 @@ That tool writes only Output 65 and does no initialisation, which already pointe
 [`userspace/pen/surface_pen/feedback.py`](../../../userspace/pen/surface_pen/feedback.py) builds the two messages, and `surface-pen-feedback` is a daemon around it ([userspace/pen](../../../userspace/pen/README.md)):
 it computes the speed from the positions of the iptsd stylus device and sends `8e a5` when the value changes. The continuous waveform itself is still started and stopped over Bluetooth with Output 65 (section 5).
 The device helper `sp9-helperd` does the same with `sp9-ctl pen ink on` ([helper.md](../../helper.md), the section on the pen), and with the helper alone the continuous waveform played during strokes (observed). Run only one of the two: both write Feature 9.
-Since then the helper sends the frames of 1.8 (contact in attribute bit 1, a speed only for tip contact, full scale 353 mm/s), takes its strength setting as the intensity byte of Output 65, and writes one click for the eraser end. Those changes have not been felt on the device yet; `surface-pen-feedback` still sends the message of 1.3.
+Since then the helper sends the frames of 1.8 (contact in attribute bit 1, a speed only for tip contact, full scale 300 mm/s), takes its strength setting as the intensity byte of Output 65, and writes one click for the eraser end. The strength and the eraser click were confirmed on the device (observed: 30 % is not felt, 200 % is clearly stronger than 100 %; one click at eraser touch-down). The frames of 1.8 and the scale of 300 mm/s have not been felt on the device yet; `surface-pen-feedback` still sends the message of 1.3.
 
 ### 1.6 Not separated yet
 
 - Whether the FastHostId (`8e a1`) is needed at all.
-- How much the speed value changes the strength of the vibration. Faster strokes feel stronger, and between full scales of 580 and 145 mm/s (the helper's former strength 50 % and 200 %) a difference seems to be there but is small (a person's impressions). The former default full scale of 290 mm/s was chosen by feel as "about as strong as on Windows"; measured on Windows the largest value is reached at about 350 mm/s, and the strength setting there is the intensity byte, not the speed scale (1.8).
+- How much the speed value changes the strength of the vibration. Faster strokes feel stronger, and between full scales of 580 and 145 mm/s (the helper's former strength 50 % and 200 %) a difference seems to be there but is small (a person's impressions). The former default full scale of 290 mm/s was chosen by feel as "about as strong as on Windows"; measured on Windows the largest value is reached at 300 mm/s, and the strength setting there is the intensity byte, not the speed scale (1.8).
 
 ### 1.7 The eraser end
 
@@ -141,24 +143,25 @@ While the eraser end is in contact the pen plays no continuous waveform, whateve
 The Feature 9 buffer the touch processor writes to the digitizer was read on Windows while strokes were drawn (measured: two runs, 179 s with 8130 frames and 143 s with 8515 frames; 1 frame missing by the sequence numbers).
 While the pen is in range it is written 134 times a second. Each frame was matched with the pen's Raw Input at the same time (tip, side button, eraser, pressure, tilt, position) and with an HCI capture (Output 65) to tell the states apart.
 
-| Offset | Field | Hover (pen identified) | Tip contact | Eraser contact | What 1.3 sent |
+| Offset | Field | Hover (pen identified) | Tip contact | Eraser contact | What the Linux helper sends |
 |---|---|---|---|---|---|
 | 4 | Section bitmap | `02` | `03` | `02` | `02` |
-| 5, 7–8 | unknown | `01`, `90 01` | same | same | 0 |
-| 9–12 | Pen ID | 4 B (the same as in the cover's report 110) | same | 0 | 0 or the 4 B |
+| 5, 7–8 | unknown | `01`, `90 01` | same | same | `01`, `90 01` |
+| 9–12 | Pen ID | 4 B (the same as in the cover's report 110) | same | 0 | 0 |
 | 13–14 | A 16-bit value that fell slowly from 5761 to 5677 in 3 minutes (taken to be the pen energy) | | | | 0 |
 | 37 | LocalId | `02` | `02` | `ff` | `ff` |
-| 38 | Attribute bitmap | `4c` | `4e` | `4e` | bit 0 = tip |
-| 42 | Protocol type | `01` | `01` | `01` | 0 |
-| 43 | ZFI | 3 (sometimes 2) | 1 (sometimes 2); 0 at the edge of the screen | 3 | 1 |
-| 44 | Process type | 2 and 4 alternating per frame | same | same | 0 |
-| 45 | Speed | `ff` | 0–63 | `ff` | 0–63 |
-| 47–48 | Valid bitmap | `0x03db` | `0x07db` | `0x0352` | `0x0652`, `0x06d3` with a pen ID |
+| 38 | Attribute bitmap | `4c` | `4e` | `4e` | `4c`, `4e` in contact |
+| 42 | Protocol type | `01` | `01` | `01` | `01` |
+| 43 | ZFI | 3 (sometimes 2) | 1 (sometimes 2); 0 at the edge of the screen | 3 | 3 for hover and eraser, 1 for tip contact |
+| 44 | Process type | 2 and 4 alternating per frame | same | same | 2 and 4 alternating (parity of the sequence number) |
+| 45 | Speed | `ff` | 0–63 | `ff` | 0–63 for tip contact only, `ff` otherwise |
+| 47–48 | Valid bitmap | `0x03db` | `0x07db` | `0x0352` | `0x0352`, `0x0752` with a speed |
 
-- **Contact is attribute bit 1** (`4c` → `4e`). Bits 2, 3 and 6 are always set and bit 0 never was. The message of 1.3 put the tip into bit 0. Because the speed alone switches the continuous waveforms on this did no harm, but it differs from Windows.
-- `0x0400` of the valid bitmap is the "speed valid" bit (set only in contact). The Windows values also have `0x0008` and `0x0100`, which 1.3 did not set.
+- **Contact is attribute bit 1** (`4c` → `4e`). Bits 2, 3 and 6 are always set and bit 0 never was. The message of 1.3 put the tip into bit 0 (because the speed alone switches the continuous waveforms on, this did no harm). The helper now puts it into bit 1, as Windows does.
+- `0x0400` of the valid bitmap is the "speed valid" bit (set only in contact). The Windows values also have `0x0008` and `0x0100`, which the message of 1.3 did not set.
 - **While rubbing with the eraser end Windows sends the speed as `ff` (unknown).** The contact bit is set, but ZFI is 3 as in hover and there is no pen ID or LocalId. Journal meanwhile writes a start for ink (9) and for eraser (14) to the pen, and there is no vibration (observed by a person). This agrees with the speed switching the continuous waveforms on: Windows gives no speed for the eraser end.
-- Speed: 0–6 for slow strokes, 0–63 for fast strokes (median 35–46), 0 when pressed and held still. The correlation with the pen speed computed from the Raw Input positions is 0.96 and one step is 5.6 mm/s (least squares over 2226 unsaturated frames). 63 is reached at about 350 mm/s.
+- Speed: 0–6 for slow strokes, 0–63 for fast strokes (median 35–46), 0 when pressed and held still. The correlation with the pen speed computed from the Raw Input positions is 0.994 and one step is 4.74 mm/s. 63 is reached at 300 mm/s: the formula from static analysis, `min(v, 30) × 63 / 30` with v in 0.01 mm/ms, is exactly 300 mm/s.
+  The helper's speed estimator run over the Windows Raw Input gives the Windows values at a full scale of 300 (ratio 1.000; 0.855 at 353). The earlier figures of 5.6 mm/s per step and about 350 mm/s for 63 came from a wrong fit. Below about 15 mm/s the value is 0 (a dead zone).
 - For about 1 s after the pen has left, hover frames without a pen ID (LocalId `ff`, valid `0x0352`) continue, then they stop.
 - **The side button does not appear in the feedback.** 1112 frames drawn with the side button pressed have the same values as plain strokes.
 - Also during tip contact there are frames without pen ID and LocalId (section `02`, valid `0x0752`, a valid speed): about half of the contact frames, independent of the side button and of the application. When the pen counts as identified was not separated. The pen vibrated in both cases.
@@ -304,7 +307,7 @@ First done by hand with the pen lying in the cover, on the booted 7.3.4 kernel w
 Kernel patch 0023 adds what the stock kernel lacks: LE legacy pairing with a TK supplied out of band (through the extended form of Add Remote OOB Data), with the host's identity key offered in that pairing (section 3). The initiator path is what ran here;
 the responder path and the path combined with Secure Connections OOB data are compile-tested only.
 
-This procedure now lives in the device helper `sp9-helperd` ([helper-reference.md](../../helper-reference.md#cover-coupling)): with `sp9-ctl pen auto-couple on` a pen without a bond is coupled when it is put into the cover, and `sp9-ctl pen couple` does it once. Measured with the helper: connection 0.4 s, pairing 0.5 s, Paired, Bonded and Trusted in BlueZ, and the pen's HID attached without restarting bluetoothd. A pen that already has a bond gives `already-coupled`. A `pen couple` issued right after a coupling fails because the pen does not answer the connection, and leaves the pen without a bond until it is run again a few seconds later.
+This procedure now lives in the device helper `sp9-helperd` ([helper-reference.md](../../helper-reference.md#cover-coupling)): with `sp9-ctl pen auto-couple on` a pen without a bond is coupled when it is put into the cover, and `sp9-ctl pen couple` does it once. Measured with the helper in this order: connection 0.4 s, pairing 0.5 s, Paired, Bonded and Trusted in BlueZ, and the pen's HID attached without restarting bluetoothd. The helper has since changed the order (the key is handed over first, and address resolution is off while it connects: 2.8 and 2.9). A pen that already has a bond gives `already-coupled`. A `pen couple` issued right after a coupling fails because the pen does not answer the connection, and leaves the pen without a bond until it is run again a few seconds later.
 Pair Device has to wait for the security channel of the new connection: issued right after the connection comes up, the kernel returns success at once without pairing, so the helper takes the pen's New Long Term Key event as the proof and repeats the step when it does not come.
 A kernel built with 0023 has been booted since, and coupling (through the helper) and reconnection work on it as well (measured).
 
@@ -324,6 +327,55 @@ Which of the three collections blocks it was not separated. Tracing this on Wind
 - **With a key it does**: adding Output 111 (any 16 B, not given to the kernel) to the same sequence connects, and 0.1 s later the host starts encryption with the stored LTK (bluetoothd and the kernel do this by themselves) and succeeds. BlueZ shows Connected and the pen's HID attaches. The pen is back on its old bond, without a new pairing.
 - After the host drops the connection (`bluetoothctl disconnect`, `RemoveDevice` of BlueZ) the pen does not advertise for more than 30 s, also when it is moved. After the pen has disconnected by itself (idle) it is back 3.5 s after being picked up.
 - A bonded pen must therefore not be judged stale because it is not connected, have its bond removed and be coupled again. A version of the helper that did so removed a good bond, the pen did not answer, and it was left without a bond (measured). Whether Windows has replaced the bond is told by whether encryption is refused in the "key, then connect" sequence above (a refusal has not been seen yet). The helper is built on this: [helper-reference.md](../../helper-reference.md#cover-coupling).
+
+### 2.8 The key reaches the pen late
+
+A reading of the traces below: **a key written with Output 111 reaches the pen only 0.4–1 s later, and the pen accepts a connection before that.** A pairing started too early meets a pen without a key (no OOB flag in its response) or a pen that holds an earlier key (Confirm value failed). The Confirm value failures turned out to have another cause (2.9), and whether the hand-over order matters is not confirmed.
+
+Measured:
+
+- After a reboot, `sp9-ctl pen couple --force` ended four times in a row in `Pair Device: authentication failed`. The traces of those attempts: Pairing Request (OOB flag, 0x05) → Pairing Response (OOB flag) → the host's Confirm, the pen's Confirm, the host's Random → Pairing Failed from the pen, reason Confirm value failed.
+  Checked offline, the host's Confirm value was not computed with a zero key: the kernel used the TK it was given.
+- A coupling by hand (the procedure of 2.5) with **the same 16 B that had been written before** then worked at once (LTK + IRK, Paired and Bonded).
+- In another trace: Output 111 written, connection complete 30 ms later, Pair Device 300 ms after that. The pen's Pairing Response had **no OOB flag** (it had no key yet). The kernel fell back to another method and raised a User Confirmation Request, which was rejected: Pairing Failed (Passkey entry failed).
+  **On the same link**, in the pairing bluetoothd started by itself 0.85 s later, the pen's response had the OOB flag. A failed pairing does not take the link down.
+- Right after that the procedure by hand (a new random key; adding the TK, connecting and pairing run as separate processes, so it is slow) worked at the first attempt.
+
+Measured later, on a kernel whose patch 0023 removes the TK once a pairing has used it:
+
+- Key written 55 ms before the connection, Pair Device 1 s after it: Request and Response both had the OOB flag, and the pen answered Pairing Failed, Confirm value failed. The second SMP exchange on the same link (bluetoothd's pairing) had no OOB flag in the Request (the kernel had already removed the TK): Passkey entry failed, and the link went down.
+  Two more attempts 3.5 s apart, each asking the cover again, writing the same key and connecting: the pen answered without the OOB flag at +1 s and at +2 s.
+- The procedure by hand right afterwards: the first attempt (a new random key) was refused (no OOB flag); a second attempt 25 s later with **yet another** new key worked. So it is not repeating the same key that makes it work, and a key written just before the connection cannot be relied on to arrive in time.
+- **Handing the key over first and pairing afterwards worked (3 times out of 3).** Each time on a pen whose bond had just been removed (50 s after the host dropped the link): Features 112 and 86 → Input 110 → TK to the kernel → Output 111 (the key) → **2.5 s without connecting** → Feature 86 again → Input 110 → Output 111 (the same key) → LE Extended Create Connection → Pair Device 0.3–0.5 s after the connection → New Long Term Key at the first attempt.
+
+Interpretation (inferred): the pen takes a key over the cover's link only while it is not connected, and that hand-over takes longer than the interval between the write and the connection. With a key handed over in advance the pen is ready at the second write and the connection.
+
+What the helper does with this:
+
+- A coupling starts by handing the key over (Output 111 without a connection, 2.5 s), then asks the cover again, writes the same key again and connects.
+- Pair Device is sent about 0.4 s after the connection. With 1 s it overlaps the pairing bluetoothd starts by itself, and on a kernel where the TK is used once that pairing consumes the key.
+- Repeating a few seconds after a refusal did not help. The next round comes more than 20 s later.
+- A key written without a pairing stays in the pen (it is not harmless).
+- Whether the cover hands the key over late or the pen applies it late, and how much margin the 2.5 s have, was not separated.
+
+### 2.9 The cause of Confirm value failed: a link on which the controller resolved the pen's private address
+
+The Confirm value failures of 2.8 were not a matter of the key. **Every link on which the pairing failed was one where the controller had resolved the pen's RPA and reported the identity address, and on such a link the kernel computes the Confirm value wrongly** (measured).
+
+- In two failed traces of the helper, the LE Enhanced Connection Complete has the peer address type Resolved Random (0x03) and a filled-in peer resolvable private address, all five times. In 22 successful traces (2 by hand, 20 with the helper) the type is Random (0x01) and the RPA field is 0 every time.
+- Computing c1 offline from the values of a failed trace, the host's Confirm matches only with the TK (as given to the kernel), responder address = **the identity address** and responder address type = **3**. In the successful traces it matches with the identity address (= the static coupling address) and type 1.
+  The pen computes with the address it used over the air (the RPA) and type 1, so the two values cannot agree. The kernel's `le_conn_update_addr()` puts the identity address and the type (0x03) of the event into `resp_addr` and `resp_addr_type` as they are and does not use `peer_rpa`. A bonded device is not paired again on such a link, so this does not show in normal use.
+- How such a link comes about: the pen is still on the controller's resolving list (address resolution on), and the pen still trusts its old bond and advertises for reconnection from an RPA. The Create Connection issued to the coupling address then matches that RPA advertising and not the directed advertising of the cover coupling.
+  Reproduced (2 times out of 2): drop the link of a bonded pen (the kernel puts the pen on the list and scans), and remove the bond a few seconds later. The next coupling comes up as a Resolved Random link and ends in Confirm value failed. Removing a bond does not make the kernel touch the controller's list (measured: in the 8 s after `bluetoothctl remove` the only HCI command is Disconnect).
+  Removing the bond while the pen is connected does not lead there (while the pen keeps its connection in the cover the kernel does not scan and the pen is not on the list): in that state the pen coupled at the first attempt 14 times out of 14.
+- **The fix in the helper**: right before the Create Connection of a coupling it sends LE Set Address Resolution Enable = 0 on the raw HCI socket, and sets it back to 1 when the connection attempt is over. With resolution off only the directed advertising from the static coupling address matches. In the reproduced state the pen coupled at the first attempt on a Random link 6 times out of 6 (0 out of 2 before the fix).
+- The proper fix on the kernel side is to set `resp_addr` (as central) to `peer_rpa` with type random on a connection whose address the controller resolved. There is no patch for that yet.
+
+What this result puts in question:
+
+- The interpretation of 2.8, that the key has to be handed over first, remains unconfirmed. Success and failure in those measurements may have been decided by the kind of link and not by the order of the hand-over (every failed trace was a Resolved link). An order without the early hand-over was not measured again on a Random link.
+- The observation that the pen answered without the OOB flag (a pen without a key yet) stands apart from this cause. Those traces were Resolved links as well.
+- After a pairing in which a wrong key was given to the kernel on purpose (Confirm value failed in both rounds), a coupling with the same key 35 s later worked at the first attempt: a failed pairing leaves nothing behind in the pen (measured).
 
 ## 3. Reconnection depends on the host's identity key
 
@@ -458,7 +510,8 @@ Start-Process C:\BTP\v1.14.0\x86\btvs.exe -ArgumentList '-Mode','Wireshark','-Re
 | Whether the FastHostId is needed for the continuous waveforms; how much the speed value sets the strength | 1.6 |
 | Continuous waveforms with a pen bonded through the cover on Linux | Not recorded: the haptic tests of section 1 used a pen bonded in pairing mode |
 | The responder path of patch 0023 and its path with Secure Connections OOB data | Compile-tested only. The initiator path was measured, first as a module and then on a booted kernel built with the patch |
-| In the helper: the frames of 1.8, the strength as intensity byte and the eraser click, by feel; the stale-bond path after Windows couples the pen again (the probe's `stale-bond`, replacing the bond) and `pen couple --force`; `unsupported-kernel` on a kernel without 0023; speed feedback after an iptsd restart; `pen test` | [helper-reference.md](../../helper-reference.md), the list of what is still to verify. Measured since with the helper: the probe of a bonded pen (by request and automatic) ends in `connected` with the bond kept; `8e a1` is restored within 3 s of a resume |
+| In the helper: the frames of 1.8, the scale of 300 mm/s, the dead zone and the choice of inking waveform, by feel; the stale-bond path after Windows couples the pen again (the probe's `stale-bond`, replacing the bond) and `pen couple --force`; `unsupported-kernel` on a kernel without 0023; speed feedback after an iptsd restart; `pen test` | [helper-reference.md](../../helper-reference.md), the list of what is still to verify. Measured or observed since with the helper: the probe of a bonded pen (by request and automatic) ends in `connected` with the bond kept; `8e a1` is restored within 3 s of a resume; the strength and the eraser click (observed) |
+| Whether the key has to be handed to the pen before the connection, on a link that is not resolved; how much margin the 2.5 s have; a kernel fix for the Confirm value on a resolved link | 2.8, 2.9 |
 | When the pen counts as identified in the Windows frames (pen ID and LocalId present or not); the fields at offsets 5 and 7–8; where the sequence number of `8e a1` is | 1.8 |
 | Reconnection: how often and how fast | Recorded: one measurement with a time (50 s idle, 3.5 s) and a re-check on the booted kernel with 0023, without a time. A pen in the cover does not reconnect by itself after a suspend (2.7); the test record has one reconnection after a suspend ([test-results.md](../../test-results.md) PEN-5) |
 | Reconnection of a pairing-mode bond when the host offers its identity key; a pairing-mode bond on Windows | No data (section 3) |
