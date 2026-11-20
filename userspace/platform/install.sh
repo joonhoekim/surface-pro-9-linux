@@ -63,6 +63,11 @@ done
 
 # --- device and environment ---------------------------------------------------
 
+# DESTDIR naming the running root is not a mounted target: treat it as no DESTDIR.
+if [ -n "$DESTDIR" ] && [ "$(cd "$DESTDIR" 2>/dev/null && pwd -P)" = / ]; then
+	DESTDIR=""
+	state=/var/lib/sp9-platform
+fi
 live=0
 [ -z "$DESTDIR" ] && live=1
 if [ $live = 1 ]; then
@@ -232,7 +237,9 @@ install_cmdline() {
 			case " $cur " in *" $t "*) ;; *) added="$added $t" ;; esac
 		done
 		if [ -n "$added" ]; then
-			run grubby --update-kernel=ALL --args="$params"
+			run grubby --update-kernel=ALL --args="${added# }"
+			# --uninstall removes only these, not parameters that were there before
+			[ $dry = 1 ] || { mkdir -p "$state"; echo "$added" >> "$state/grubby-added"; }
 			echo "grubby: added$added"
 		fi
 		handled=1
@@ -278,6 +285,8 @@ install_cmdline() {
 				echo "+ write $kcmd: $new"
 			else
 				mkdir -p "$state" "$(dirname "$kcmd")"
+				# the first version this script changed, kept for the person (uninstall edits the file)
+				[ ! -f "$kcmd" ] || [ -e "$state/kernel-cmdline.orig" ] || cp -p "$kcmd" "$state/kernel-cmdline.orig"
 				echo "$added" >> "$state/kernel-cmdline-added"
 				echo "$new" > "$kcmd"
 			fi
@@ -295,15 +304,16 @@ install_cmdline() {
 remove_cmdline() {
 	del "$cmdline_ref" || true
 	[ $live = 1 ] || return 0
-	if command -v grubby > /dev/null; then
-		run grubby --update-kernel=ALL --remove-args="$params"
+	if command -v grubby > /dev/null && [ -s "$state/grubby-added" ]; then
+		run grubby --update-kernel=ALL --remove-args="$(tr -s ' \n' '  ' < "$state/grubby-added" | sed 's/^ //; s/ $//')"
 	fi
 	del "$grubd" && changed_grub=1
 	if [ -f "$state/kernel-cmdline-created" ]; then
 		del "$kcmd" || true
 	elif [ -f "$state/kernel-cmdline-added" ] && [ -f "$kcmd" ]; then
 		local t out="" toks
-		read -r -a toks < "$kcmd"
+		# every line of the file; a here-string ends in a newline, so read succeeds under set -e
+		read -r -a toks <<< "$(tr '\n' ' ' < "$kcmd")"
 		for t in "${toks[@]}"; do
 			grep -qxF -- "$t" <(tr ' ' '\n' < "$state/kernel-cmdline-added") || out="$out $t"
 		done
@@ -314,7 +324,8 @@ remove_cmdline() {
 		fi
 		echo "$kcmd: removed the added parameters"
 	fi
-	[ $dry = 1 ] || rm -f "$state/kernel-cmdline-created" "$state/kernel-cmdline-added"
+	[ $dry = 1 ] || rm -f "$state/kernel-cmdline-created" "$state/kernel-cmdline-added" "$state/grubby-added"
+	[ $dry = 1 ] || [ ! -f "$state/kernel-cmdline.orig" ] || note "the $kcmd this script first changed is kept in $state/kernel-cmdline.orig"
 	[ $dry = 1 ] || rmdir "$state" 2>/dev/null || true
 }
 

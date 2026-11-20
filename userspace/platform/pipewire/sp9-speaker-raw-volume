@@ -15,13 +15,19 @@
 # Started with every WirePlumber start (systemd user unit sp9-speaker-raw-volume.service). The
 # node appears a little later and WirePlumber restores the stored route around the same time,
 # so the value has to read 100 % twice in a row before this exits.
+#
+# Only while the "Speakers" filter sink exists: it carries the speaker protection (high-pass,
+# compressor, limiter). Its module is nofail, so without the LADSPA plugins it is missing, the
+# raw sink is the speaker output itself, and its volume is left alone.
 node=sp9_speaker_raw
+filter=effect_input.sp9_speakers
 good=0
 i=0
 while [ "$i" -lt 30 ]; do
 	i=$((i + 1))
 	id=$(pw-cli info "$node" 2>/dev/null | sed -n 's/^[[:space:]]*id: \([0-9][0-9]*\).*/\1/p' | head -n 1)
-	if [ -n "$id" ]; then
+	fid=$(pw-cli info "$filter" 2>/dev/null | sed -n 's/^[[:space:]]*id: \([0-9][0-9]*\).*/\1/p' | head -n 1)
+	if [ -n "$id" ] && [ -n "$fid" ]; then
 		case $(wpctl get-volume "$id" 2>/dev/null) in
 		"Volume: 1.00"*)
 			good=$((good + 1))
@@ -35,5 +41,9 @@ while [ "$i" -lt 30 ]; do
 	fi
 	sleep 1
 done
-echo "sp9-speaker-raw-volume: $node is not at 100 %" >&2
+if [ -z "$fid" ]; then
+	echo "sp9-speaker-raw-volume: no $filter (speaker protection not loaded); $node left as it is" >&2
+else
+	echo "sp9-speaker-raw-volume: $node is not at 100 %" >&2
+fi
 exit 1

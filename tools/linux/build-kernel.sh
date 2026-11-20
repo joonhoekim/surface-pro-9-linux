@@ -163,10 +163,20 @@ fi
 
 git_q() { git -C "$1" -c advice.detachedHead=false "${@:2}"; }
 
+# Both trees are reset with checkout -f and clean -fdx. A tree this script did not create and that has
+# changes is someone's work (a --work pointing at an existing checkout): stop instead.
+own_tree() {
+	[ -d "$1/.git" ] || { git init -q "$1"; : > "$1/.git/sp9-build-tree"; return 0; }
+	[ -e "$1/.git/sp9-build-tree" ] && return 0
+	[ -z "$(git -C "$1" status --porcelain --untracked-files=all 2>/dev/null)" ] ||
+		die "$1 has changes and was not created by this script; use another --work"
+	: > "$1/.git/sp9-build-tree"
+}
+
 # ---- sources --------------------------------------------------------------------------------
 step "linux $BASE_TAG"
-[ -d "$SRC/.git" ] || { git init -q "$SRC"; git -C "$SRC" remote add origin "$KERNEL_URL"; }
-git -C "$SRC" remote set-url origin "$KERNEL_URL"
+own_tree "$SRC"
+git -C "$SRC" remote add origin "$KERNEL_URL" 2>/dev/null || git -C "$SRC" remote set-url origin "$KERNEL_URL"
 if ! git -C "$SRC" rev-parse -q --verify "$BASE_SHA^{commit}" >/dev/null; then
 	git -C "$SRC" fetch --depth 1 --no-tags origin "+refs/tags/$BASE_TAG:refs/tags/$BASE_TAG"
 fi
@@ -174,7 +184,8 @@ got=$(git -C "$SRC" rev-parse "$BASE_TAG^{commit}" 2>/dev/null || true)
 [ "$got" = "$BASE_SHA" ] || die "$BASE_TAG is $got, expected $BASE_SHA"
 
 step "linux-surface $LS_SHA"
-[ -d "$LS/.git" ] || { git init -q "$LS"; git -C "$LS" remote add origin "$LS_URL"; }
+own_tree "$LS"
+git -C "$LS" remote add origin "$LS_URL" 2>/dev/null || true
 if ! git -C "$LS" rev-parse -q --verify "$LS_SHA^{commit}" >/dev/null; then
 	git -C "$LS" fetch --depth 1 origin "$LS_SHA"
 fi

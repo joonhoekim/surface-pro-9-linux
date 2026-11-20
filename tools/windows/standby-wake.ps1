@@ -135,7 +135,11 @@ function Start-StandbyWake([int]$Seconds, [string]$Log = (Join-Path $env:Program
         if ((Test-Path $Log) -and (Select-String -Path $Log -Pattern "service: armed $Seconds s ok=True" -Quiet)) { break }
         Start-Sleep -Milliseconds 500
     }
-    if (-not (Select-String -Path $Log -Pattern "service: armed $Seconds s ok=True" -Quiet -ErrorAction SilentlyContinue)) { throw "wake service did not arm (see $Log)" }
+    if (-not (Select-String -Path $Log -Pattern "service: armed $Seconds s ok=True" -Quiet -ErrorAction SilentlyContinue)) {
+        # Do not leave the LocalSystem service and the highest-privilege task behind.
+        Stop-StandbyWake @{}
+        throw "wake service did not arm (see $Log)"
+    }
     @{ Log = $Log; Armed = (Get-Date) }
 }
 

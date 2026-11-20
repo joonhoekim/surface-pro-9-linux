@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 Joonhoe Kim
 # Prepare the baseline kit: build sp9probe.exe, create the Python venv, find ffmpeg, fetch the Bluetooth WPR profile.
-# Nothing here changes system settings. Re-run any time; each step is skipped when already done (-Force rebuilds).
+# It installs ffmpeg with winget and Python packages into its own venv when they are missing, and downloads the
+# profile; it changes no system settings. Re-run any time; each step is skipped when already done (-Force rebuilds).
 # Usage: powershell -ExecutionPolicy Bypass -File tools\windows\baseline\setup.ps1 [-Force]
 param([switch]$Force)
 $ErrorActionPreference = 'Stop'

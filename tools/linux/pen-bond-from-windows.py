@@ -28,8 +28,10 @@ def run(cmd, **kw):
 
 
 def find_windows_partition():
-    out = run(["lsblk", "-rno", "PATH,FSTYPE"]).stdout
-    return [l.split()[0] for l in out.splitlines() if l.split()[1:] == ["ntfs"]]
+    """NTFS partitions of internal disks. Removable and hot-plugged ones (a USB stick) are left out: their
+    hive would be taken as the Windows bond, and their file system is mounted by root."""
+    out = run(["lsblk", "-rno", "PATH,FSTYPE,RM,HOTPLUG"]).stdout
+    return [f[0] for f in (l.split() for l in out.splitlines()) if f[1:] == ["ntfs", "0", "0"]]
 
 
 def copy_hive(dev, dest):
@@ -102,8 +104,11 @@ def main():
         tmp = tempfile.mkdtemp(prefix="sp9-hive-")
         hive = os.path.join(tmp, "SYSTEM")
         devs = [a.device] if a.device else find_windows_partition()
-        if not any(copy_hive(d, hive) for d in devs):
-            sys.exit("no Windows SYSTEM hive found on " + ", ".join(devs or ["(no NTFS partition)"]))
+        found = [d for d in devs if copy_hive(d, hive)]
+        if not found:
+            sys.exit("no Windows SYSTEM hive found on " + ", ".join(devs or ["(no internal NTFS partition)"]))
+        if len(found) > 1:
+            sys.exit("Windows SYSTEM hives on " + ", ".join(found) + ": choose one with --device")
     try:
         sel = export(hive, r"\Select")
         m = re.search(r'"Current"=dword:([0-9a-f]{8})', sel)
@@ -171,7 +176,8 @@ def main():
     run(["systemctl", "stop", "bluetooth"])
     try:
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-        if old:
+        # the first state this tool replaced; a second run keeps it
+        if old and not os.path.exists(path + ".before-windows-bond"):
             shutil.copy(path, path + ".before-windows-bond")
         with open(path, "w") as f:
             f.write(text)

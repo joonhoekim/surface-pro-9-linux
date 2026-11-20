@@ -18,7 +18,7 @@ sudo ./install.sh --uninstall             # remove everything this script instal
 DESTDIR=/mnt/root ./install.sh            # install only the files into a mounted root
 ```
 
-- It stops if the DMI `product_sku` is not `Surface_Pro_9_2038`. With `DESTDIR` it does not touch the running system (no initramfs regeneration, no boot loader update, no kernel command line change), so the check is skipped.
+- It stops if the DMI `product_sku` is not `Surface_Pro_9_2038`. With `DESTDIR` (other than `/`, which counts as no `DESTDIR`) it does not touch the running system (no initramfs regeneration, no boot loader update, no kernel command line change), so the check is skipped.
 - A file with the same content is not written again, and initramfs and grub.cfg are regenerated only when something changed. Running it several times gives the same result.
 - It does not call a package manager. Missing dependencies are reported with the package names of the distribution family (Debian/Ubuntu, Fedora, Arch, from `/etc/os-release`).
 - Static files go under `/usr` (`PREFIX`). Only the kernel command line and the mkinitcpio drop-in are written to `/etc`.
@@ -40,9 +40,9 @@ User settings are not overwritten. A parameter that is already present is not ad
 
 | Boot method | What is done | Removal |
 |---|---|---|
-| `grubby` present (Fedora) | `grubby --update-kernel=ALL --args=…` | `--remove-args` |
+| `grubby` present (Fedora) | `grubby --update-kernel=ALL --args=…` with the missing parameters only | `--remove-args` with only what was added (record: `/var/lib/sp9-platform/`) |
 | `grub-mkconfig` reads `/etc/default/grub.d/*.cfg` (Debian/Ubuntu) | A line in `/etc/default/grub.d/sp9-platform.cfg` that appends to `GRUB_CMDLINE_LINUX_DEFAULT`, then `update-grub` | Delete the file, `update-grub` |
-| `/etc/kernel/cmdline` exists or systemd-boot is installed (kernel-install, UKI) | Only the missing parameters are appended. If the file does not exist it is created from the current `/proc/cmdline` (without `BOOT_IMAGE=` and `initrd=`). Regenerating the entries (`kernel-install add …`) is only pointed out | Only what was appended is removed (record: `/var/lib/sp9-platform/`); a file that was created is deleted |
+| `/etc/kernel/cmdline` exists or systemd-boot is installed (kernel-install, UKI) | Only the missing parameters are appended. If the file does not exist it is created from the current `/proc/cmdline` (without `BOOT_IMAGE=` and `initrd=`). Regenerating the entries (`kernel-install add …`) is only pointed out | Only what was appended is removed (record: `/var/lib/sp9-platform/`); a file that was created is deleted. The file as it was before the first change is kept as `/var/lib/sp9-platform/kernel-cmdline.orig` |
 | Anything else (GRUB without grub.d, rEFInd, Limine and so on) | The values to add are only printed | — |
 
 ### Speaker processing
@@ -59,7 +59,7 @@ The order and values of the EFX chain of the Windows `SurfaceAPO_1284.json` (aud
 
 Volume control is taken by the "Speakers" filter sink (the default sink). `sp9_speaker_raw` behind it is the ALSA `Master` of the amplifier and has to be at 100 %:
 WirePlumber starts a sink without a stored value at 40 % (`Master` −23.25 dB), and then the output is held at −23.9 dB even with the filter sink at 100 %.
-[`pipewire/sp9-speaker-raw-volume`](pipewire/sp9-speaker-raw-volume) raises it to 100 % with `wpctl` every time WirePlumber starts. The NixOS module runs it as the user unit
+[`pipewire/sp9-speaker-raw-volume`](pipewire/sp9-speaker-raw-volume) raises it to 100 % with `wpctl` every time WirePlumber starts, and only while the "Speakers" filter sink exists: without the swh plugins the filter is skipped, the raw sink is the unprotected speaker output, and its volume is left alone. The NixOS module runs it as the user unit
 `sp9-speaker-raw-volume.service` (wanted by `wireplumber.service`). `install.sh` does not install it, so on other distributions set up the same unit yourself or run `wpctl set-volume` once.
 
 [`pipewire/pipewire.conf.d/61-sp9-echo-cancel.conf`](pipewire/pipewire.conf.d/61-sp9-echo-cancel.conf) creates a source for calls, "Microphone (echo cancelled)" (`sp9_echo_cancel`).
