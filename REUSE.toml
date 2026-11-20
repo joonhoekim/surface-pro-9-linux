@@ -6,12 +6,12 @@
 
 version = 1
 
-# Tools, platform files, pen tools, Nix code, CI and repository metadata. The patches under
+# Tools, platform files, pen tools, Nix code, the website, CI and repository metadata. The patches under
 # userspace/iptsd/ and userspace/libcamera/ are not MIT: see their entries below.
 [[annotations]]
 path = [
-  "tools/**", "userspace/**", "nix/**", ".github/**",
-  "flake.nix", "flake.lock", ".gitignore", ".gitattributes", "NOTICE", "LICENSE", "REUSE.toml",
+  "tools/**", "userspace/**", "nix/**", "site/**", ".github/**",
+  "flake.nix", "flake.lock", ".gitignore", ".gitattributes", ".mailmap", "NOTICE", "LICENSE", "REUSE.toml",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Joonhoe Kim"
