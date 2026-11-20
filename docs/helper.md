@@ -14,7 +14,7 @@ marked "works" in the status column.
 
 | Part | Status |
 |---|---|
-| `sp9-helperd` (system D-Bus service), `sp9-ctl` (CLI) | Works on the device: start-up, per-profile PL and EPP and overrides, fan reading and fan request, battery and smart-charging reading, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics, pen haptics and speed feedback (vibration while drawing, stop on lift: observed), cover coupling (automatic and manual, up to the pen's HID without restarting bluetoothd; a bonded pen that is not connected is probed and comes back with its bond kept: measured). The strength (30 % is not felt and 200 % is clearly stronger than 100 %: observed) and the eraser click (observed). Unverified: the pen parts changed afterwards (`8e a5` frames as Windows sends them, the choice of inking waveform (default brush), the speed scale of 300 mm/s, the dead zone, replacing a dead bond after Windows coupled the pen: "Pen" below), zero-force contact and pen position prediction through the helper, the skin temperature guard, touch off while the screen is off (only switching the setting on and off was seen), smart-charging release |
+| `sp9-helperd` (system D-Bus service), `sp9-ctl` (CLI) | Works on the device: start-up, per-profile PL and EPP and overrides, fan reading and fan request, battery and smart-charging reading, keyboard backlight, PSR policy, iptsd thresholds, ICC, diagnostics, pen haptics and speed feedback (vibration while drawing, stop on lift: observed), cover coupling (automatic and manual, up to the pen's HID without restarting bluetoothd; a bonded pen that is not connected is probed and comes back with its bond kept: measured). The strength (30 % is not felt and 200 % is clearly stronger than 100 %: observed) and the eraser click (observed). Unverified: the pen parts changed afterwards (`8e a5` frames as Windows sends them, the choice of inking waveform (default brush), the speed scale of 300 mm/s, the dead zone, replacing a dead bond after Windows coupled the pen: "Pen" below), zero-force contact through the helper with iptsd (with `sp9-digitizerd` a changed value reaches the daemon without a restart: measured), pen position prediction through the helper, the skin temperature guard, touch off while the screen is off (only switching the setting on and off was seen), smart-charging release |
 | `sp9-settings` (GTK4/libadwaita settings app) | The window opens on the device (observed). Operating the individual items is unverified |
 
 What it does not do:
@@ -149,7 +149,7 @@ All the pen receives is an ordinal, an intensity, a repeat count and a cutoff, s
 on Linux. What is missing is a channel for applications to ask, so the plan is an effect method on the helper's
 D-Bus interface (`PlayEffect(kind)`, a table from effect name to write sequence) that applications call.
 To check on Linux: whether writes 6 ms apart go out at the BlueZ connection interval, and what to do with a request
-while the pen is disconnected (it disconnects by itself when idle: after about 52 s in the Windows trace, about 80 s as measured on Linux).
+while the pen is disconnected (it disconnects by itself when idle: after about 52 s in the Windows trace, after 50–80 s as measured on Linux).
 
 ## Pen
 
@@ -192,7 +192,6 @@ once more 3.8 seconds later (as Windows does after the display comes back), and 
 The speed scale (full scale: the speed that gives the largest value, 63) is 300 mm/s by default: the Windows
 formula is `min(v, 30) x 63 / 30` with v in 0.01 mm/ms, and the helper's estimator run over Raw Input recorded on
 Windows gives the Windows values exactly at 300 (measured).
-The 353 mm/s of earlier versions came from a wrong fit and made the value 15 % too small at the same speed.
 `pen full-scale N` changes the scale, but it is not a strength setting.
 Dead zone: Windows sends speed 0 below about 15 mm/s. The helper does not by default; `pen dead-zone 15`
 (0–100 mm/s) switches it on: when the averaged speed is below it, the value 0 is sent (as a valid speed).
@@ -237,7 +236,9 @@ otherwise iptsd is restarted, and only when the file changed. The commands are `
 - When a change restarts iptsd, touch and pen stop for a moment. If a stroke was in progress, the helper's pen
   thread sees the stylus node go away, stops the running waveform and takes the contact back from the digitizer
   (the same path as in "Handling of stylus events" below).
-- Through the helper this **has not been run on the device**.
+- With `sp9-digitizerd`, a value changed with `sp9-ctl pen zero-force` reaches the running daemon without a
+  restart (measured, [test-results.md](test-results.md) TOUCH-1). With iptsd, the path through the helper
+  **has not been run on the device**.
 
 **Pen position prediction.** `sp9-ctl pen predict MS` (0–30 ms, `off` = 0) sets how far ahead `sp9-digitizerd`
 reports the pen position ([digitizerd.md](digitizerd.md) section 13). The value is written to
@@ -260,8 +261,7 @@ stylus axes have no resolution no speed is sent (one journal line).
 The digitizer node is kept open for writing: hidraw numbers are reused (hidraw7 → hidraw0 after a resume), so
 remembering the name alone could write to another device. When writes keep failing the interval grows from 2 to
 60 seconds and the same error is logged once.
-What this paragraph describes was changed after a review and **has not been run on the device** (unit tests and
-FIFO tests only).
+What this paragraph describes **has not been run on the device** (unit tests and FIFO tests only).
 
 **Do not run it together with `surface-pen-feedback`.** Both write the same Feature 9 and overwrite each other's
 speed value. The helper does not write to the digitizer with `pen ink off` or `pen speed off`.
@@ -401,7 +401,7 @@ address is shown, and the journal has neither whole addresses nor keys. The reas
 ## Permissions
 
 The daemon runs as root and asks polkit on every call. Everyday settings (profile, power limits, skin temperature
-guard, smart-charging release, ICC, keyboard backlight, touch and iptsd, pen haptics, diagnostics) are allowed
+guard, smart-charging release, ICC, keyboard backlight, touch and iptsd, pen haptics) are allowed
 without a password in an active local session. The experimental fan request, the PSR policy (it writes to
 debugfs), the diagnostics report (it holds the kernel log, debugfs and the ACPI tables, which only root may read), pen coupling (switching automatic coupling on, and `pen couple`: they create a Bluetooth bond and replace a
 dead one) and reloading the settings ask for administrator authentication (kept for the session).

@@ -7,7 +7,7 @@
 //! node comes back under another number. The daemon outlives that: the uinput devices are
 //! created once and stay (clients keep stale state when their devices are replaced), the
 //! pen and all contacts are lifted when the node goes away, and the node is found again by
-//! its ID.
+//! its ID. See docs/digitizerd.md.
 //!
 //!   sp9-digitizerd [--config FILE] [--iptsd-conf FILE]... [DEVICE]
 //!     DEVICE             the hidraw node of the digitizer (045E:0C52); found by its ID

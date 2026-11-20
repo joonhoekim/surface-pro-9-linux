@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Joonhoe Kim
-//! Replays captures of the device and compares the dump with golden dumps of the C++ reference,
-//! byte for byte (every packet, and every bit of every pen sample and contact).
+//! Replays captures of the device and compares the dump with golden dumps, byte for byte (every
+//! packet, and every bit of every pen sample and contact). The golden dumps were first those of a
+//! replay harness built from iptsd with patches 0001-0017, which this code reproduced exactly;
+//! since the fixes of docs/digitizerd.md section 11 they are dumps this code produced, reviewed
+//! as a diff against the ones before each change.
 //!
 //! The captures and the golden dumps are not in the repository. The test runs when both
 //! directories are named:
 //!
 //!   SP9_CAPTURE_DIR   <capture>.bin files
-//!   SP9_GOLDEN_DIR    rdesc.bin (the report descriptor), conf/<name>.conf (iptsd configuration
-//!                     files the reference was run with), <name>/<capture>.txt (its dumps)
+//!   SP9_GOLDEN_DIR    rdesc.bin (the report descriptor), conf/<name>.conf (the iptsd
+//!                     configuration files of each configuration), <name>/<capture>.txt (the dumps)
 //!
 //! With SP9_GOLDEN_UPDATE=1 the Rust dumps are written as <name>/<capture>.rs.txt next to the
 //! golden ones instead of failing, for a diff to review after an intended change of behaviour.
