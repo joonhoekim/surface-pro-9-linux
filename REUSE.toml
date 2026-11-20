@@ -25,6 +25,14 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Joonhoe Kim"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 
+# AppStream metadata is MIT (its <metadata_license>), as its header says; the program it describes
+# is GPL-3.0-or-later.
+[[annotations]]
+path = "helper/data/io.github.joonhoekim.OpenDeviceHelper.SurfacePro9.metainfo.xml"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim"
+SPDX-License-Identifier = "MIT"
+
 # Kernel config fragment.
 [[annotations]]
 path = "kernel/config/**"
