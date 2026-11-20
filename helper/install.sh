@@ -51,6 +51,12 @@ if [ "${1:-}" = --uninstall ]; then
 	exit 0
 fi
 
+if [ -z "$DESTDIR" ]; then
+	# The power limits, fan request and SAM requests are this device's (the unit has the same condition).
+	sku=$(cat /sys/class/dmi/id/product_sku 2>/dev/null || true)
+	[ "$sku" = Surface_Pro_9_2038 ] || { echo "not a Surface Pro 9 Intel (product_sku '${sku:-unknown}'); use DESTDIR to package" >&2; exit 1; }
+	[ "$(id -u)" = 0 ] || { echo "run as root (or set DESTDIR)" >&2; exit 1; }
+fi
 [ -x "$B/sp9-helperd" ] && [ -s "$B/sp9-helperd" ] || { echo "build first: cargo build --release" >&2; exit 1; }
 install -Dm755 "$B/sp9-helperd" "$DESTDIR$LIBEXECDIR/sp9-helperd"
 install -Dm755 "$B/sp9-ctl" "$DESTDIR$BINDIR/sp9-ctl"

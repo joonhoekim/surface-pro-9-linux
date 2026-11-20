@@ -193,7 +193,8 @@ mod linux {
                 _ => {}
             }
             let path = shared.root.p(DIGITIZER_LOCK);
-            let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else {
+            // /run/lock is world-writable on some distributions: never follow a link planted there.
+            let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).custom_flags(libc::O_NOFOLLOW).open(&path) else {
                 self.lock = Lock::Unavailable;
                 return true;
             };

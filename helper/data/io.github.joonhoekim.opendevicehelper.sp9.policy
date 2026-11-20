@@ -87,6 +87,7 @@
   <action id="io.github.joonhoekim.opendevicehelper.sp9.diagnostics">
     <description>Run the hardware check and pack its report</description>
     <message>Authentication is required to run the hardware check</message>
-    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+    <!-- the report holds what only root may read (kernel log, debugfs, ACPI tables) -->
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin_keep</allow_active></defaults>
   </action>
 </policyconfig>

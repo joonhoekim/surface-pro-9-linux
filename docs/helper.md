@@ -46,7 +46,8 @@ sudo ./install.sh --uninstall  # the settings in /etc/sp9, the reports in /var/l
 PREFIX=/usr DESTDIR=$pkgdir ./install.sh   # packaging: places files only, does not touch the running system
 ```
 
-`install.sh` loads `surface_aggregator_cdev` now and adds it to `modules-load.d` so that it is loaded at boot.
+Without `DESTDIR`, `install.sh` runs only as root on SKU `Surface_Pro_9_2038`, and the unit does not start on
+another machine (`ConditionFirmware=`): the power limits and SAM requests are this device's. `install.sh` loads `surface_aggregator_cdev` now and adds it to `modules-load.d` so that it is loaded at boot.
 Without this module smart charging and the fan request show as unavailable. It also installs
 `tools/linux/post-install-check.sh` for diagnostics and `tools/sdc-blob.py` (python3) for the ICC profile.
 
@@ -117,7 +118,7 @@ sp9-ctl --json status
 | Eraser click | Writes one click (ordinal 3) when the eraser end touches the screen. The eraser end plays no continuous waveform (the same on Windows). Only while pen haptics are on | on |
 | Pen speed feedback | Sends the FastHostId (`8e a1`) and the pen state (`8e a5`: hover, tip contact with its speed, eraser contact) to Feature 9 of the digitizer (THC), with the bytes Windows sends. The pen plays its continuous waveforms only while the digitizer has a speed. Only while pen haptics are on | on (nothing is sent while pen haptics are off) |
 | Cover coupling | When the pen is put into the Type Cover's pen slot, hands a key over through the cover and bonds with LE legacy OOB pairing. Needs kernel patch 0023 | off |
-| Diagnostics | Runs `post-install-check.sh` (read only; masks MAC addresses, UUIDs and serials) and packs it as `/var/lib/sp9/diagnostics/check-<time>.tar.gz` | — |
+| Diagnostics | Runs `post-install-check.sh` (read only; masks MAC addresses, UUIDs, serials and Wi-Fi network names) and packs it as `/var/lib/sp9/diagnostics/check-<time>.tar.gz`, readable only by root and the caller; the five newest are kept | — |
 
 The desktop power mode (power-profiles-daemon) uses only three levels, so `balanced-performance` (the Windows
 default on AC) is chosen with `sp9-ctl profile`.
@@ -402,7 +403,7 @@ address is shown, and the journal has neither whole addresses nor keys. The reas
 The daemon runs as root and asks polkit on every call. Everyday settings (profile, power limits, skin temperature
 guard, smart-charging release, ICC, keyboard backlight, touch and iptsd, pen haptics, diagnostics) are allowed
 without a password in an active local session. The experimental fan request, the PSR policy (it writes to
-debugfs), pen coupling (switching automatic coupling on, and `pen couple`: they create a Bluetooth bond and replace a
+debugfs), the diagnostics report (it holds the kernel log, debugfs and the ACPI tables, which only root may read), pen coupling (switching automatic coupling on, and `pen couple`: they create a Bluetooth bond and replace a
 dead one) and reloading the settings ask for administrator authentication (kept for the session).
 The actions are listed in `helper/data/io.github.joonhoekim.opendevicehelper.sp9.policy` and can be changed in
 `/etc/polkit-1/rules.d/`.

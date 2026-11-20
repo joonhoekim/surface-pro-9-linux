@@ -135,8 +135,13 @@ fn stamp() -> String {
     s.to_string()
 }
 
+/// Reports kept in STATE/diagnostics; older ones are removed when a new one is packed.
+const DIAGNOSTICS_KEEP: usize = 5;
+
 /// tools/linux/post-install-check.sh into STATE/diagnostics/check-<time>, packed as
-/// check-<time>.tar.gz (owned by `uid` when given). The script masks MACs, UUIDs and serials.
+/// check-<time>.tar.gz, readable only by root and by `uid` (its owner when given). The script
+/// masks MACs, UUIDs and serials; the report still describes the machine, so it is not left
+/// readable by every user.
 pub fn diagnostics(data_dir: &Path, state_dir: &Path, uid: Option<u32>) -> Result<PathBuf, String> {
     let script = data_dir.join("post-install-check.sh");
     if !script.exists() {
@@ -146,12 +151,62 @@ pub fn diagnostics(data_dir: &Path, state_dir: &Path, uid: Option<u32>) -> Resul
     std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
     let name = format!("check-{}", stamp());
     let dir = base.join(&name);
-    run(Command::new("bash").arg(&script).arg(&dir).env("LC_ALL", "C"))?;
+    private_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // SUDO_USER would make the script write as, and run session tools as, that user.
+    let ran = run(Command::new("bash")
+        .arg(&script)
+        .arg(&dir)
+        .env("LC_ALL", "C")
+        .env_remove("SUDO_USER")
+        .env_remove("SUDO_UID")
+        .env_remove("SUDO_GID"));
     let tar = base.join(format!("{name}.tar.gz"));
-    run(Command::new("tar").arg("-czf").arg(&tar).arg("-C").arg(&base).arg(&name))?;
+    // Created 0600 before tar writes into it, so it is never readable by others.
+    let packed = ran
+        .and_then(|_| private_file(&tar).map_err(|e| format!("{}: {e}", tar.display())))
+        .and_then(|_| run(Command::new("tar").arg("-czf").arg(&tar).arg("-C").arg(&base).arg(&name)));
     let _ = std::fs::remove_dir_all(&dir);
+    packed?;
     chown(&tar, uid);
+    prune(&base, DIAGNOSTICS_KEEP);
     Ok(tar)
+}
+
+#[cfg(unix)]
+fn private_dir(p: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().mode(0o700).create(p)
+}
+
+#[cfg(not(unix))]
+fn private_dir(p: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(p)
+}
+
+#[cfg(unix)]
+fn private_file(p: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(p).map(|_| ())
+}
+
+#[cfg(not(unix))]
+fn private_file(p: &Path) -> std::io::Result<()> {
+    std::fs::File::create(p).map(|_| ())
+}
+
+/// Remove all but the `keep` newest check-<time>.tar.gz in `dir` (names sort by time).
+fn prune(dir: &Path, keep: usize) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut names: Vec<String> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("check-") && n.ends_with(".tar.gz"))
+        .collect();
+    names.sort_by_key(|n| n["check-".len()..n.len() - ".tar.gz".len()].parse::<u64>().unwrap_or(0));
+    let n = names.len().saturating_sub(keep);
+    for old in &names[..n] {
+        let _ = std::fs::remove_file(dir.join(old));
+    }
 }
 
 /// The panel's native ICC profile from the UEFI calibration, at STATE/display/panel-native.icc.
@@ -182,3 +237,24 @@ fn chown(p: &Path, uid: Option<u32>) {
 
 #[cfg(not(unix))]
 fn chown(_p: &Path, _uid: Option<u32>) {}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::prune;
+
+    #[test]
+    fn prune_keeps_the_newest_reports() {
+        let dir = std::env::temp_dir().join(format!("sp9-prune-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for t in [5u64, 100, 20, 3, 40] {
+            std::fs::write(dir.join(format!("check-{t}.tar.gz")), b"").unwrap();
+        }
+        std::fs::write(dir.join("other.txt"), b"").unwrap();
+        prune(&dir, 2);
+        let mut left: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["check-100.tar.gz", "check-40.tar.gz", "other.txt"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

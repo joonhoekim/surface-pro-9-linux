@@ -5,7 +5,9 @@
 # Read-only: no module loads, no sysfs/debugfs writes, no i2c or hda-verb access, no camera streaming, no network.
 # Usage: post-install-check.sh [OUTDIR]      (default: ~/sp9-check-<host>/ of the invoking user)
 #        sudo post-install-check.sh [OUTDIR]  (adds root-only parts: dmesg, debugfs, ACPI tables, libinput, turbostat)
-# Output: one file per area plus summary.txt. MAC addresses, UUIDs and serial lines are masked in every file.
+# Output: one file per area plus summary.txt. MAC addresses (also in the dev_XX_XX form of BlueZ), UUIDs, serial
+# lines and Wi-Fi network names are masked in every file; Bluetooth device names other than the pen's are left out,
+# and the EDID is kept only as edid-decode text without its hex dump.
 # Status words in summary.txt: MATCH (as docs expect), DIFF (differs), MISSING, INFO, SKIP (needs root or a tool).
 # MATCH is not "works": the person-facing tests are in docs/test-plan.md.
 # DIFF and MISSING are statements about the machine. A check whose tool is not installed reports SKIP with the
@@ -41,6 +43,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 redact() {
 	sed -E \
 		-e 's/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/XX:XX:XX:XX:XX:XX/g' \
+		-e 's/([0-9A-Fa-f]{2}_){5}[0-9A-Fa-f]{2}/XX_XX_XX_XX_XX_XX/g' \
+		-e 's/^([[:space:]]*(ssid|SSID)[[:space:]:=]+).*/\1<masked>/' \
 		-e 's/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/<uuid>/g' \
 		-e 's/(([Ss]erial|SERIAL)([ _]?([Nn]umber|NUMBER|[Nn]o|SHORT))?[[:space:]]*[:=][[:space:]]*).*/\1<masked>/'
 }
@@ -175,20 +179,36 @@ else sum SYS fw-load DIFF "$nerr firmware load failure lines (00-system.txt)"; f
 F=10-pen-touch.txt
 { printf '\n### kernel log: ithc / ipts / hid 0C52\n'; kgrep 'ithc|ipts|0c52'; } >> "$OUT/$F"
 run $F "iptsd units" systemctl list-units --all --no-pager 'iptsd*'
-run $F "iptsd journal" journalctl -b --no-pager -o short-monotonic -u 'iptsd*'
+run $F "iptsd journal" journalctl -b --no-pager --no-hostname -o short-monotonic -u 'iptsd*'
 # The iptsd tools sit next to the daemon binary. On NixOS that is a store path that is not on PATH, and the
 # presets are under the same prefix instead of /usr/share.
+# As root the tool is run, so a directory found through a process or a unit is used only when the tool and
+# every directory above it belong to root, and only root can write to them or, for a sticky directory such as
+# /nix/store, rename what is in them. Anyone can start a program named iptsd from /dev/shm.
+trusted_tool() {
+	local p m
+	p=$(readlink -f "$1" 2>/dev/null) || return 1
+	[ -f "$p" ] && [ -x "$p" ] || return 1
+	[ "$(stat -c %u "$p")" = 0 ] || return 1
+	case $(stat -c %A "$p") in ?????w*|????????w*) return 1 ;; esac
+	while [ "$p" != / ]; do
+		p=$(dirname "$p")
+		[ "$(stat -c %u "$p" 2>/dev/null)" = 0 ] || return 1
+		m=$(stat -c %A "$p")
+		case $m in ?????????[tT]) ;; ?????w*|????????w*) return 1 ;; esac
+	done
+}
 IPTSD_BIN=""
-if have iptsd-check-device; then
+if have iptsd-check-device && { [ "$IS_ROOT" -ne 1 ] || trusted_tool "$(command -v iptsd-check-device)"; }; then
 	IPTSD_BIN=$(dirname "$(command -v iptsd-check-device)")
 else
-	for pid in $(pgrep -x iptsd 2>/dev/null); do
+	for pid in $(pgrep -x -u 0 iptsd 2>/dev/null); do
 		e=$(readlink "/proc/$pid/exe" 2>/dev/null)
-		[ -n "$e" ] && [ -x "$(dirname "$e")/iptsd-check-device" ] && IPTSD_BIN=$(dirname "$e") && break
+		[ -n "$e" ] && trusted_tool "$(dirname "$e")/iptsd-check-device" && IPTSD_BIN=$(dirname "$e") && break
 	done
 	if [ -z "$IPTSD_BIN" ]; then
 		e=$(systemctl cat 'iptsd@.service' 2>/dev/null | sed -n 's/^ExecStart=[-@+!]*\([^ ]*\).*/\1/p' | head -1)
-		[ -n "$e" ] && [ -x "$(dirname "$e")/iptsd-check-device" ] && IPTSD_BIN=$(dirname "$e")
+		[ -n "$e" ] && trusted_tool "$(dirname "$e")/iptsd-check-device" && IPTSD_BIN=$(dirname "$e")
 	fi
 fi
 export IPTSD_BIN
@@ -229,7 +249,8 @@ else
 		[ "$rc" -eq 0 ] && sum TOUCH check-dev MATCH "iptsd-check-device accepts $h" || sum TOUCH check-dev DIFF "iptsd-check-device exit $rc on $h (10-pen-touch.txt)"
 	done
 fi
-run $F "bluetooth devices" bluetoothctl devices
+# Names of other paired devices are often a person's name.
+runsh $F "bluetooth devices (names other than the pen's left out)" bluetoothctl 'bluetoothctl devices | sed -E "/[Pp]en|[Ss]urface/! s/^(Device [^ ]+) .*/\1 <name left out>/"'
 run $F "upower" upower -d
 rootrun $F "fwupd devices" fwupdmgr get-devices --no-unreported-check
 
@@ -472,8 +493,8 @@ EDP=""
 for c in /sys/class/drm/card*-eDP-*; do [ -e "$c" ] && EDP=$c && break; done
 if [ -n "$EDP" ]; then
 	cats $F "eDP" "$EDP/status" "$EDP/enabled" "$EDP/modes"
-	cp "$EDP/edid" "$OUT/edid-linux.bin" 2>/dev/null
-	run $F "edid-decode" edid-decode "$EDP/edid"
+	# The raw EDID and its hex dump hold the panel's serial number.
+	run $F "edid-decode" edid-decode --skip-hex-dump "$EDP/edid"
 fi
 run $F "drm_info" drm_info
 mkdir -p "$OUT/debugfs"
@@ -544,7 +565,7 @@ if [ -n "$EDP" ]; then
 		a=$(sha256sum < "$EDP/edid" | cut -d' ' -f1)
 		[ "$a" = "$b" ] && sum DSP edid MATCH "EDID equals the edid.bin hash in docs/reference/firmware-hashes.tsv" || sum DSP edid DIFF "EDID sha256 $a, reference edid.bin $b (the serial field may differ per unit: read edid-decode output)"
 	else
-		sum DSP edid INFO "docs/reference/firmware-hashes.tsv not found next to the script: compare edid-linux.bin by hand"
+		sum DSP edid INFO "docs/reference/firmware-hashes.tsv not found next to the script: compare the edid-decode output in 50-display.txt by hand"
 	fi
 	# The kernel prints the range only as a drm debug message; the connector's debugfs file always has it.
 	vr=$OUT/debugfs/${EDPN}_vrr_range
