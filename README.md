@@ -107,4 +107,5 @@ local ones are marked unverified in [PROVENANCE.md](kernel/PROVENANCE.md). Some 
 functions are experimental and off by default (fan request, skin temperature guard). Use it at your own risk;
 there is no warranty. Keep Windows installed: firmware updates are delivered only through Windows.
 
-Statements are marked by evidence level (measured, observed, inferred, unverified).
+This repository was written with the help of an LLM under the author's direction; statements are marked by
+evidence level (measured, observed, inferred, unverified).
