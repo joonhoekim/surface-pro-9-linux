@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+blank_issues_enabled: false
+contact_links:
+  - name: Question or install help
+    url: https://github.com/joonhoekim/surface-pro-9-linux/discussions/new?category=q-a
+    about: Ask in Discussions (Q&A).
+  - name: Device report (what works on your Surface Pro 9)
+    url: https://github.com/joonhoekim/surface-pro-9-linux/discussions/new?category=device-reports
+    about: Works / does not work on your unit, firmware versions, distribution. For a single test of the plan use the "Test result" form.
+  - name: Feature idea
+    url: https://github.com/joonhoekim/surface-pro-9-linux/discussions/new?category=ideas
+    about: Something the kernel patches, the module, the helper or the documentation should do.
+  - name: Another Surface model, or linux-surface's own patches and packages
+    url: https://github.com/linux-surface/linux-surface/issues
+    about: This repository covers the Surface Pro 9 with an Intel CPU only.
+  - name: Security problem
+    url: https://github.com/joonhoekim/surface-pro-9-linux/security/advisories/new
+    about: Report vulnerabilities privately (see SECURITY.md).

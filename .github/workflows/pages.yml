@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Website: build site/ (Next.js static export of the repository's Markdown), check the export (every document has
+# a page; links, anchors and images resolve), and deploy it to GitHub Pages from main. Pull requests that touch the
+# documentation or the site are built and checked only. Without Pages enabled (Settings -> Pages -> Source: GitHub
+# Actions) main is built and checked only, too.
+name: Website
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - '**.md'
+      - 'site/**'
+      - 'kernel/patches/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      deploy: ${{ steps.check.outputs.deploy }}
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the landing page dates the test results by the last commit of docs/test-results.md
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: site/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] || [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          elif gh api "repos/$GITHUB_REPOSITORY/pages" > /dev/null 2>&1; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GitHub Pages is not enabled for this repository: building only, no deploy"
+          fi
+      - id: pages
+        if: steps.check.outputs.deploy == 'true'
+        uses: actions/configure-pages@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run build
+        env:
+          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path || '/surface-pro-9-linux' }}
+          NEXT_TELEMETRY_DISABLED: "1"
+      - run: pnpm run check
+        env:
+          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path || '/surface-pro-9-linux' }}
+      - if: steps.check.outputs.deploy == 'true'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/out
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

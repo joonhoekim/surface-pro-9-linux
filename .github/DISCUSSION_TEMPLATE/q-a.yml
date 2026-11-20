@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [install guides](https://github.com/joonhoekim/surface-pro-9-linux/blob/main/docs/install-nixos.md) and [hardware status](https://github.com/joonhoekim/surface-pro-9-linux/blob/main/docs/hardware-status.md) first. Remove serial numbers, addresses and network names from anything you paste.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What you are trying to do, what you tried, and your distribution and kernel (`uname -r`)
+    validations:
+      required: true

@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+title: "Surface Pro 9: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        What works and what does not on your Surface Pro 9 (Intel). Every result in this repository comes from one unit; a second one is worth a lot.
+        Remove serial numbers, MAC and Bluetooth addresses, disk UUIDs and network names before posting. For a single test of the [test plan](https://github.com/joonhoekim/surface-pro-9-linux/blob/main/docs/test-plan.md), the "Test result" issue form keeps the columns the results table needs.
+  - type: input
+    id: unit
+    attributes:
+      label: Unit
+      description: "SKU (`cat /sys/class/dmi/id/product_sku`), CPU, memory, storage size"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware
+      description: "UEFI version (`cat /sys/class/dmi/id/bios_version`); SAM version if you know it"
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and kernel
+      description: "Distribution and version, `uname -r`, and the commit of this repository you used"
+    validations:
+      required: true
+  - type: textarea
+    id: works
+    attributes:
+      label: What works
+      description: Per part, as in the README's hardware table, and how you know (measured or observed)
+  - type: textarea
+    id: broken
+    attributes:
+      label: What does not work
+      description: Per part, with what you saw
+  - type: textarea
+    id: check
+    attributes:
+      label: Post-install check
+      description: "Optional: the `summary.txt` of `sudo tools/linux/post-install-check.sh`. Look it over before posting."
+      render: text

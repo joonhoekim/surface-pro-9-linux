@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+name: Bug report
+description: Something on your Surface Pro 9 (Intel) does not work as the documentation says, and you can say how to see it
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before posting, remove anything that identifies your device or network: serial numbers, MAC and Bluetooth addresses, disk UUIDs, Wi-Fi network names, host and user names.
+        Check [Hardware status](https://github.com/joonhoekim/surface-pro-9-linux/blob/main/docs/hardware-status.md) first: known gaps are listed there. Only the Surface Pro 9 with an Intel CPU (SKU `Surface_Pro_9_2038`) is in scope.
+  - type: input
+    id: sku
+    attributes:
+      label: Model and SKU
+      description: "`cat /sys/class/dmi/id/product_sku` (expected: Surface_Pro_9_2038), and the CPU and memory if you know them"
+    validations:
+      required: true
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel
+      description: "`uname -r`, and the commit of this repository it was built from (or another kernel, such as a linux-surface package)"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it is installed
+      options:
+        - "NixOS with the module (hardware.surface-pro-9.*)"
+        - "Another distribution with userspace/platform/install.sh"
+        - "Another distribution, only parts of this repository"
+        - "Something else (describe it below)"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware
+      description: "UEFI version from `cat /sys/class/dmi/id/bios_version`; the SAM version if you know it (Windows: Device Manager)"
+  - type: input
+    id: helper
+    attributes:
+      label: Device helper
+      description: "Commit or package version of sp9-helperd, and the touch daemon in use (iptsd or sp9-digitizerd), or \"not installed\""
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw. Logs (`journalctl -b`, `dmesg`) as text, not screenshots.
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Post-install check
+      description: "If you can: the `summary.txt` of `sudo tools/linux/post-install-check.sh`, or the archive from `sp9-ctl diagnostics`. Addresses, UUIDs and serial lines are masked by pattern; look it over before attaching all the same."
+      render: text
