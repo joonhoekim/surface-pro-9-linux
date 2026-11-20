@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
 { pipewire, libcamera }:
 
 # PipeWire whose libcamera plugin is built against the given libcamera. PipeWire 1.6 is written for

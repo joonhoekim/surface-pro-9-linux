@@ -1,7 +1,9 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
 { lib, libcamera, fetchgit, mainsFrequency ? 60 }:
 
 # libcamera 0.8.0 with userspace/libcamera/*.patch: what the two cameras need from the simple
-# pipeline and its software ISP (docs/gaps/camera.md 6). nixpkgs' recipe with another source.
+# pipeline and its software ISP (docs/research/gaps/camera.md 6). nixpkgs' recipe with another source.
 #
 # mainsFrequency (50 or 60): the exposure time stays at a multiple of the flicker period of the
 # lighting (10 ms or 8.33 ms). The tuning files carry the 60 Hz value.

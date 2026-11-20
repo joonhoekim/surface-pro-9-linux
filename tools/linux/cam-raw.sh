@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
 # Raw Bayer capture straight from the IPU6 ISYS node, past libcamera.
 # usage: cam-raw.sh front|rear OUT.raw [exposure=N] [gain=N] [dgain=N] [focus=N] [frames=N] [size=WxH] [hflip=0|1] [vflip=0|1]
 # OUT.raw holds the last frame, 16-bit little endian, 10 significant bits. Needs v4l-utils; run as a user in group video.

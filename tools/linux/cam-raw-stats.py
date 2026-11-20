@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
 """Statistics of raw Bayer frames written by cam-raw.sh (16-bit LE, 10 bits).
 
 usage: cam-raw-stats.py WIDTH HEIGHT FILE... [--order GRBG] [--black N] [--columns] [--png OUT.png]

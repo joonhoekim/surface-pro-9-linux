@@ -6,7 +6,8 @@
 
 version = 1
 
-# Tools, platform files, pen tools, Nix code, CI and repository metadata.
+# Tools, platform files, pen tools, Nix code, CI and repository metadata. The patches under
+# userspace/iptsd/ and userspace/libcamera/ are not MIT: see their entries below.
 [[annotations]]
 path = [
   "tools/**", "userspace/**", "nix/**", ".github/**",
@@ -16,7 +17,8 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Joonhoe Kim"
 SPDX-License-Identifier = "MIT"
 
-# Device helper (sp9-helperd, sp9-ctl, sp9-settings), its data files and lock file.
+# Device helper (sp9-helperd, sp9-ctl, sp9-settings), the touch and pen daemon (sp9-digitizer,
+# sp9-digitizerd), their data files and the lock file.
 [[annotations]]
 path = "helper/**"
 precedence = "aggregate"
@@ -64,11 +66,54 @@ path = [
   "kernel/patches/0014-*.patch", "kernel/patches/0015-*.patch", "kernel/patches/0016-*.patch",
   "kernel/patches/0017-*.patch", "kernel/patches/0018-*.patch", "kernel/patches/0019-*.patch",
   "kernel/patches/0020-*.patch", "kernel/patches/0021-*.patch", "kernel/patches/0022-*.patch",
-  "kernel/patches/0023-*.patch", "kernel/patches/0024-*.patch",
+  "kernel/patches/0023-*.patch", "kernel/patches/0024-*.patch", "kernel/patches/0025-*.patch",
+  "kernel/patches/0026-*.patch",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Joonhoe Kim <26rote@gmail.com>"
 SPDX-License-Identifier = "GPL-2.0-only"
+
+# iptsd patches. They are changes to iptsd (https://github.com/linux-surface/iptsd) and carry its
+# licence: every file they touch is GPL-2.0-or-later there.
+[[annotations]]
+path = "userspace/iptsd/*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim <26rote@gmail.com>"
+SPDX-License-Identifier = "GPL-2.0-or-later"
+
+# libcamera patches. They are changes to libcamera (https://libcamera.org) and carry the licence
+# of each file they touch: LGPL-2.1-or-later for the library and the IPA module sources (also the
+# new files of 0002 and 0009), BSD-2-Clause for the debayer shader bayer_unpacked.frag (0002),
+# CC0-1.0 for the meson build files (0002, 0009, 0010) and the tuning files 0010 adds.
+# "override": the patches contain the SPDX lines of the files they add or quote.
+[[annotations]]
+path = [
+  "userspace/libcamera/0001-*.patch", "userspace/libcamera/0003-*.patch",
+  "userspace/libcamera/0004-*.patch", "userspace/libcamera/0005-*.patch",
+  "userspace/libcamera/0006-*.patch", "userspace/libcamera/0007-*.patch",
+  "userspace/libcamera/0008-*.patch",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim <26rote@gmail.com>"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+[[annotations]]
+path = "userspace/libcamera/0002-*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim <26rote@gmail.com>"
+SPDX-License-Identifier = "LGPL-2.1-or-later AND BSD-2-Clause AND CC0-1.0"
+
+[[annotations]]
+path = "userspace/libcamera/0009-*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim <26rote@gmail.com>"
+SPDX-License-Identifier = "LGPL-2.1-or-later AND CC0-1.0"
+
+[[annotations]]
+path = "userspace/libcamera/0010-*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Joonhoe Kim <26rote@gmail.com>"
+SPDX-License-Identifier = "CC0-1.0"
 
 # Documentation and reference data: every Markdown file in the tree and everything under docs/.
 # Code and commands quoted inside documents may also be used under MIT (see LICENSE).

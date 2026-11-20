@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Joonhoe Kim
 /*
  * cam-ctrl-delay: how many frames a sensor control takes to show in the image.
  *

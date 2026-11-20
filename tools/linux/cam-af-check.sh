@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
 # Rear camera focus check: what libcamera's autofocus does on the scene in front of the rear camera,
 # and where the raw image is sharpest when the lens is stepped through its range.
 # usage: cam-af-check.sh TAG [OUTDIR]

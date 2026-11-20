@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// Copyright (C) 2026 Joonhoe Kim
 /*
  * cam-focus-sweep: sharpness of the raw image against the lens position.
  *
