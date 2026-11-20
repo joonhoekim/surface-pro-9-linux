@@ -28,7 +28,9 @@
 #   size       a file over 200 kB (200000 bytes).
 #
 # Not scanned: .git, LICENSES/ (licence texts), the git-ignored directories /private/, /external/,
-# /hw/, out/, target/, result*, __pycache__, and this script (it has to spell out what it looks for).
+# /hw/, out/, target/, result*, __pycache__, the website's dependencies and generated files
+# (node_modules/, .next/, site/public/_repo/, site/public/third-party-licenses.txt, *.tsbuildinfo),
+# and this script (it has to spell out what it looks for).
 # shellcheck disable=SC2016
 
 set -u
@@ -39,7 +41,7 @@ REPO=$(cd "$(dirname "$SELF")/.." && pwd)
 
 QUIET=0
 [ "${1:-}" = "-q" ] && { QUIET=1; shift; }
-case ${1:-} in -h | --help) sed -n '4,29p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;; -*) echo "unknown option: $1" >&2; exit 2 ;; esac
+case ${1:-} in -h | --help) sed -n '4,31p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;; -*) echo "unknown option: $1" >&2; exit 2 ;; esac
 [ $# -eq 0 ] && set -- "$REPO"
 for t in grep file find; do command -v "$t" >/dev/null 2>&1 || { echo "$t not found" >&2; exit 2; }; done
 echo x | grep -qP 'x' 2>/dev/null || { echo "grep without -P (PCRE) support" >&2; exit 2; }
@@ -150,7 +152,9 @@ for root in "$@"; do
 	while IFS= read -r -d '' f; do
 		scan_file "$f" "$prefix${f#"$root"/}"
 	done < <(find "$root" \( -name .git -o -name LICENSES -o -name target -o -name out -o -name __pycache__ \
-		-o -name 'result*' -o -path "$root/private" -o -path "$root/external" -o -path "$root/hw" \) -prune \
+		-o -name 'result*' -o -name node_modules -o -name .next -o -name '*.tsbuildinfo' \
+		-o -path "$root/private" -o -path "$root/external" -o -path "$root/hw" \
+		-o -path '*site/public/_repo' -o -path '*site/public/third-party-licenses.txt' \) -prune \
 		-o -type f -print0 | sort -z)
 done
 
