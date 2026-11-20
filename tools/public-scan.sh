@@ -17,7 +17,9 @@
 #              twelve hex digits after Dev_ / BTHLE / addr). Allowed: the synthetic values in
 #              ADDRESS_OK, which the pen tools' tests and examples use.
 #   homepath   /home/<name> or C:\Users\<name> with a real-looking name (use ~, $HOME, %LOCALAPPDATA%).
-#   private    pointers to things that exist only in the author's private tree (PRIVATE_RE).
+#   private    names of things that exist only outside this repository: the Perl regular expression in
+#              the file named by $PUBLIC_SCAN_PRIVATE (default: .git/info/public-scan-private of the
+#              repository, which is never committed). Not scanned for when that file is absent.
 #   position   positional references into driver binaries or firmware blobs: module@0x..., RVA,
 #              blob:<n>, and the Korean for "file offset". Facts taken from a driver are stated
 #              without saying where in the file they are. Not a finding: the message arguments of
@@ -71,10 +73,12 @@ C3:D5:15:AC:4B:7E
 HOMEPATH_RE='/home/[A-Za-z0-9][A-Za-z0-9._-]*|[A-Za-z]:\\{1,2}Users\\{1,2}[A-Za-z0-9][A-Za-z0-9._ -]*'
 HOMEPATH_OK='^(/home/(user|username|you|me|name)|[A-Za-z]:\\{1,2}Users\\{1,2}(Public|Default|user|username|name))$'
 
-# private/linux and hw/linux/check held working notes; AGENTS.md held instructions for coding
-# agents; subline is the author's private Wayland compositor (and its repository); y705 is a
-# private repository.
-PRIVATE_RE='private/linux|hw/linux/check|AGENTS\.md|(?i:subline)|\b[yY]705\b'
+# The names themselves stay out of the repository: one Perl regular expression per line, joined with |.
+PRIVATE_FILE=${PUBLIC_SCAN_PRIVATE:-$(git -C "$REPO" rev-parse --git-common-dir 2>/dev/null | sed "s|^[^/]|$REPO/&|")/info/public-scan-private}
+PRIVATE_RE=""
+if [ -r "$PRIVATE_FILE" ]; then
+	PRIVATE_RE=$(grep -v -e '^#' -e '^$' "$PRIVATE_FILE" | paste -sd '|')
+fi
 
 # The lookahead leaves out i2ctransfer message arguments, <r|w><count>@0x<address>.
 POSITION_RE='\b(?![rw][0-9]+@)[A-Za-z_][A-Za-z0-9_.]*@0x[0-9A-Fa-f]+|\bRVA\b|\bblob:[0-9]+|파일 오프셋'
@@ -125,7 +129,9 @@ scan_file() { # scan_file FILE REL (REL: path relative to the scanned root, for 
 		grep -qiP "$HOMEPATH_OK" <<<"$tok" || hit homepath "$f" "$n" "$tok"
 	done < <(grep -anoP "$HOMEPATH_RE" "$f")
 
-	while IFS=: read -r n text; do hit private "$f" "$n" "$text"; done < <(grep -anP "$PRIVATE_RE" "$f")
+	if [ -n "$PRIVATE_RE" ]; then
+		while IFS=: read -r n text; do hit private "$f" "$n" "$text"; done < <(grep -anP "$PRIVATE_RE" "$f")
+	fi
 	while IFS=: read -r n text; do hit position "$f" "$n" "$text"; done < <(grep -anP "$POSITION_RE" "$f")
 }
 

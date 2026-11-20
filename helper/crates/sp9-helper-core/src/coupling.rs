@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(f.count("unpair"), 1);
     }
 
-    /// Review item 3: what can fail without the pen fails before the bond is dropped.
+    /// What can fail without the pen fails before the bond is dropped.
     #[test]
     fn checks_come_before_the_unpair() {
         let mut f = Fake::new();
@@ -632,7 +632,7 @@ mod tests {
         );
     }
 
-    /// Review item 4: only a link dropped for a failed encryption says a bond is dead. A
+    /// Only a link dropped for a failed encryption says a bond is dead. A
     /// failed pairing (ours, bluetoothd's) says nothing about it.
     #[test]
     fn only_a_failed_encryption_is_evidence() {

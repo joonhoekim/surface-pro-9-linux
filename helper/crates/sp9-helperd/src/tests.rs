@@ -360,7 +360,7 @@ fn couple_request_reaches_the_thread_state() {
     assert_eq!(c.status().state, crate::couple::STATE_IDLE);
     assert!(c.request(false));
     assert_eq!(c.status().state, crate::couple::STATE_WAITING);
-    // Review item 12: the thread enters a coupling and takes the request with it in one step;
+    // The thread enters a coupling and takes the request with it in one step;
     // while it runs nothing is queued, and the state is not overwritten
     assert_eq!(c.begin(), Some(false));
     assert_eq!(c.status().state, crate::couple::STATE_COUPLING);
