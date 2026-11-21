@@ -1,0 +1,38 @@
+﻿[HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\PrecisionTouchPad]
+AAPNonCurtainBaseWidth = 2571
+AAPNonCurtainTop = 1000
+SuperCurtainLeft = 700
+SuperCurtainRight = 700
+SuperCurtainTop = 200
+AAPDisabled = 0
+HorizontalOffset = 0
+RightClickZoneHeight = 0
+RightClickZoneWidth = 0
+SpaceBarOffset = 1000
+
+[HKCU:\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad]
+AAPThreshold = 2
+EnableEdgy = 1
+LeaveOnWithMouse = 1
+PanEnabled = 1
+RightClickZoneEnabled = 1
+ScrollDirection = 0
+TapsEnabled = 1
+TwoFingerTapEnabled = 1
+ZoomEnabled = 1
+CursorSpeed = 10
+TapAndDrag = 1
+
+[HKCU:\Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad\Status]
+Enabled = 1
+
+[HKLM:\SYSTEM\CurrentControlSet\Services\SurfaceService]
+PlatformKipSupported = 1
+SamHibernateNotificationEnabled = 1
+Type = 32
+Start = 2
+ErrorControl = 1
+ObjectName = LocalSystem
+TimeForceSync = 1
+DefaultSettingsUpdated = 1
+

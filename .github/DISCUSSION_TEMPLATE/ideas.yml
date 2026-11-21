@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What should the kernel patches, the NixOS module, the platform files, the helper or the documentation do, and why?
+    validations:
+      required: true
+  - type: textarea
+    id: windows
+    attributes:
+      label: What Windows does
+      description: Optional. If Windows does this on the device, what you know of how (driver, setting, measurement)

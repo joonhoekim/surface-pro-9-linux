@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 15:03:12 +0900
+Subject: [PATCH] libcamera: sensor: Add control delays for ov5693 and ov13858
+ and the ov13858 black level
+
+Without delays in the sensor properties the defaults apply: two frames
+for the exposure, one for the gain. Measured on a Surface Pro 9 (IPU6)
+by writing a control after the start of a frame and looking for the
+first frame that shows it, both sensors take two frames for the exposure
+and for the analogue gain. A gain assumed to arrive one frame early has
+the AGC regulate on statistics of frames it attributes the wrong gain
+to.
+
+The OV13858 delivers 64 at 10 bits with the exposure at its minimum.
+---
+ src/ipa/libipa/camera_sensor_helper.cpp           |  2 ++
+ src/libcamera/sensor/camera_sensor_properties.cpp | 14 ++++++++++++--
+ 2 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index 359040ec..8c84d99e 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -882,6 +882,8 @@ class CameraSensorHelperOv13858 : public CameraSensorHelper
+ public:
+ 	CameraSensorHelperOv13858()
+ 	{
++		/* Measured: 64 at 10 bits with the exposure at its minimum. */
++		blackLevel_ = 4096;
+ 		gain_ = AnalogueGainLinear{ 1, 0, 0, 128 };
+ 	}
+ };
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index 20cfd0bc..da61b7d7 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -493,7 +493,12 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				 * Rolling Bar".
+ 				 */
+ 			},
+-			.sensorDelays = { },
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
+ 		} },
+ 		{ "ov64a40", {
+ 			.unitCellSize = { 1008, 1008 },
+@@ -569,7 +574,12 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				{ controls::draft::TestPatternModeOff, 0 },
+ 				{ controls::draft::TestPatternModeColorBars, 1 },
+ 			},
+-			.sensorDelays = { },
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
+ 		} },
+ 		{ "vd55g1", {
+ 			.unitCellSize = { 2160, 2160 },

@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 15:03:25 +0900
+Subject: [PATCH] ipa: softisp: Add tuning files for ov5693 and ov13858
+
+Measured on a Surface Pro 9 (IPU6, front OV5693, rear OV13858 with a
+dw9800k lens driver): the analogue gain ranges the sensors follow, and
+the lens positions between which the image changes. The lower-bound
+constraint is the default one with a lower target, so that an
+overexposed frame is brought down in fewer steps.
+
+The flicker period is that of 60 Hz mains.
+---
+ src/ipa/softisp/data/meson.build  |  2 ++
+ src/ipa/softisp/data/ov13858.yaml | 28 ++++++++++++++++++++++++++++
+ src/ipa/softisp/data/ov5693.yaml  | 25 +++++++++++++++++++++++++
+ 3 files changed, 55 insertions(+)
+ create mode 100644 src/ipa/softisp/data/ov13858.yaml
+ create mode 100644 src/ipa/softisp/data/ov5693.yaml
+
+diff --git a/src/ipa/softisp/data/meson.build b/src/ipa/softisp/data/meson.build
+index fd9aa0fa..c775edd6 100644
+--- a/src/ipa/softisp/data/meson.build
++++ b/src/ipa/softisp/data/meson.build
+@@ -1,6 +1,8 @@
+ # SPDX-License-Identifier: CC0-1.0
+ 
+ conf_files = files([
++    'ov13858.yaml',
++    'ov5693.yaml',
+     'uncalibrated.yaml',
+ ])
+ 
+diff --git a/src/ipa/softisp/data/ov13858.yaml b/src/ipa/softisp/data/ov13858.yaml
+new file mode 100644
+index 00000000..761ac6b5
+--- /dev/null
++++ b/src/ipa/softisp/data/ov13858.yaml
+@@ -0,0 +1,28 @@
++# SPDX-License-Identifier: CC0-1.0
++%YAML 1.1
++---
++version: 1
++algorithms:
++  - BlackLevel:
++  - Awb:
++  - Adjust:
++  - Af:
++      # dw9800k on a Surface Pro 9: the image changes between 400 and 800.
++      lensRange: [400, 800]
++  - Agc:
++      # The sensor follows the gain register from 1x to 15.5x (measured on a
++      # Surface Pro 9: higher register values wrap to lower gains).
++      minAnalogueGain: 1.0
++      maxAnalogueGain: 15.5
++      # Without this the default applies: the brightest 2% at 0.5 or more,
++      # which also means that an overexposed frame is brought down by no more
++      # than half per step.
++      AeConstraintMode:
++        Normal:
++          lower:
++            qLo: 0.98
++            qHi: 1.0
++            yTarget: 0.4
++      # Mains flicker period in microseconds: 8333 for 60 Hz, 10000 for 50 Hz.
++      flickerPeriod: 8333
++...
+diff --git a/src/ipa/softisp/data/ov5693.yaml b/src/ipa/softisp/data/ov5693.yaml
+new file mode 100644
+index 00000000..7c77b499
+--- /dev/null
++++ b/src/ipa/softisp/data/ov5693.yaml
+@@ -0,0 +1,25 @@
++# SPDX-License-Identifier: CC0-1.0
++%YAML 1.1
++---
++version: 1
++algorithms:
++  - BlackLevel:
++  - Awb:
++  - Adjust:
++  - Agc:
++      # The sensor follows the gain register from 1x to 62x (measured on a
++      # Surface Pro 9: below 1x it attenuates, above 62x it falls back to 32x).
++      minAnalogueGain: 1.0
++      maxAnalogueGain: 62.0
++      # Without this the default applies: the brightest 2% at 0.5 or more,
++      # which also means that an overexposed frame is brought down by no more
++      # than half per step.
++      AeConstraintMode:
++        Normal:
++          lower:
++            qLo: 0.98
++            qHi: 1.0
++            yTarget: 0.4
++      # Mains flicker period in microseconds: 8333 for 60 Hz, 10000 for 50 Hz.
++      flickerPeriod: 8333
++...

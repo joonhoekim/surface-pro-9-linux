@@ -1,0 +1,200 @@
+Decode the pressure of an MPP v2 pen from its tone and its digital bits (Mpp2PressureDecode)
+
+iptsd interpolates the position of the pressure tone between the first and the last of six rows
+and reports it as 0 to 1. The pen steps the tone through 256 levels by dividing a clock
+(22054884 Hz / (945 + level)), which is not linear in frequency and does not begin at the first
+row, and it sends the force a second time: six bits in the rows 7 to 15 of the pressure window,
+the lower four bits of the level and two more below them. All bits zero means no force, also
+while the tone is still there.
+
+Measured on the Surface Pro 9 with the Slim Pen 2 against what Windows makes of the same windows:
+the interpolated value is higher by a constant 203 of 4096 (median), about 1.8 times the value at
+light force, and it reports force for one more frame at the end of 81 .. 89 % of the strokes.
+
+With [DFT] Mpp2PressureDecode the level is computed from the frequency of the tone and corrected
+by the four digital bits, and the two lowest bits are appended (10 bits). The bits are only used
+when each of the three row pairs has one clearly stronger row (more than PressureBitMinMag and
+twice the other one), otherwise the window has no force. Result: the same value as Windows in
+82 % of the windows with force, lower by 4 .. 28 of 4096 in the rest (an on/off bit that is read
+as off here), never force where Windows has none. The eraser keeps the interpolation. Off by
+default.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 2d7fcf9..d121921 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -101,6 +101,8 @@ public:
+ 	f64 dft_zero_force_stroke_level = 0;
+ 	f64 dft_zero_force_lockout_pressure = 0;
+ 	usize dft_zero_force_lockout_samples = 50;
++	bool dft_mpp2_pressure_decode = false;
++	usize dft_pressure_bit_min_mag = 3000;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index b8baab5..2706aaf 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -15,6 +15,7 @@
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
++#include <cstring>
+ #include <optional>
+ #include <utility>
+ 
+@@ -1100,14 +1101,13 @@ private:
+ 		if (dft.x.size() < ipts::protocol::dft::PRESSURE_ROWS)
+ 			return;
+ 
+-		const f64 p =
+-			1 - this->interpolate_frequency(dft, ipts::protocol::dft::PRESSURE_ROWS);
++		const f64 p = this->measure_pressure(dft);
++
++		m_measured_pressure = p > 0 ? std::clamp(p, 0.0, 1.0) : 0;
+ 
+ 		if (m_config.dft_force_tone_contact) {
+ 			// The contact is decided in the position windows (see update_contact),
+ 			// which also report the pressure that is measured here.
+-			m_measured_pressure = p > 0 ? std::clamp(p, 0.0, 1.0) : 0;
+-
+ 			m_recent_pressure[0] = m_recent_pressure[1];
+ 			m_recent_pressure[1] = m_recent_pressure[2];
+ 			m_recent_pressure[2] = m_measured_pressure;
+@@ -1148,6 +1148,122 @@ private:
+ 		}
+ 	}
+ 
++	/*!
++	 * Measures the pressure in a pressure window.
++	 *
++	 * @param[in] dft The DFT window (with type == Type::Pressure)
++	 * @return The pressure in the range 0 to 1, 0 or less (or NaN) without force.
++	 */
++	[[nodiscard]] f64 measure_pressure(const ipts::samples::DftWindow &dft) const
++	{
++		constexpr u8 rows = ipts::protocol::dft::PRESSURE_ROWS;
++
++		const f64 pos = this->interpolate_frequency(dft, rows);
++
++		// The eraser end keeps the interpolated tone: what it sends next to the tone
++		// was not measured.
++		if (!m_config.dft_mpp2_pressure_decode || m_stylus.rubber || dft.x.size() < 16 ||
++		    dft.y.size() < 16)
++			return 1 - pos;
++
++		/*
++		 * An MPP v2 pen sends its force twice. The frequency of the pressure tone
++		 * steps through 256 levels, and next to it the pen sends six bits: the lower
++		 * four bits of that level and two more below them (10 bits in total), three
++		 * bits as a tone in one of two rows each, three as a tone that is on or off.
++		 * All bits zero means no force, also while the tone is still there: the tone
++		 * outlasts the force by a frame.
++		 *
++		 * Measured on the Surface Pro 9 with the Slim Pen 2: interpolating the tone
++		 * alone reads about twice the combined value at light force (the lowest level
++		 * is not at the row of the lowest frequency), and the interpolated level is
++		 * within 7 of the true one in more than 99 % of the windows, which is what
++		 * the four digital bits need to correct it.
++		 */
++		const auto mag = [&](const usize row) -> f64 {
++			return casts::to<f64>(dft.x[row].magnitude) +
++			       casts::to<f64>(dft.y[row].magnitude);
++		};
++
++		std::array<bool, 6> bits {};
++		f64 strength = 0;
++
++		for (u8 i = 0; i < 3; i++) {
++			const f64 first = mag(7 + (2 * i));
++			const f64 second = mag(8 + (2 * i));
++
++			const f64 high = std::max(first, second);
++			const f64 low = std::min(first, second);
++
++			// Without a clean tone in each pair the pen is too far, or the
++			// window is disturbed.
++			if (high <= casts::to<f64>(m_config.dft_pressure_bit_min_mag) ||
++			    high <= 2 * low)
++				return 0;
++
++			bits.at(i) = second > first;
++			strength += high / 3;
++		}
++
++		for (u8 i = 0; i < 3; i++)
++			bits.at(3 + i) = mag(13 + i) > strength / 4;
++
++		const u32 nibble = (bits[0] ? 8U : 0U) | (bits[1] ? 4U : 0U) | (bits[2] ? 2U : 0U) |
++		                   (bits[3] ? 1U : 0U);
++
++		if (nibble == 0 && !bits[4] && !bits[5])
++			return 0;
++
++		if (std::isnan(pos))
++			return 0;
++
++		// The frequency of every row is sent with it, as a floating point number.
++		f32 low = 0;
++		f32 high = 0;
++
++		std::memcpy(&low, &dft.x[0].frequency, sizeof(low));
++		std::memcpy(&high, &dft.x[rows - 1].frequency, sizeof(high));
++
++		const f64 first = casts::to<f64>(low);
++		const f64 last = casts::to<f64>(high);
++
++		const f64 frequency = first + (pos * (last - first));
++
++		if (frequency <= 0)
++			return 0;
++
++		// The pen derives the tone from a clock that it divides by 945 + level.
++		const f64 analog =
++			std::clamp(std::floor((22054884.0 / frequency) - 945 + 0.5), 1.0, 256.0);
++
++		auto level = casts::to<i32>(analog);
++
++		if (level == 256) {
++			if (nibble == 15 && bits[4] && bits[5])
++				return 1;
++
++			level = 255;
++		}
++
++		// The level closest to the analog one whose lower four bits are the digital ones.
++		i32 combined = (level & ~15) | casts::to<i32>(nibble);
++
++		if (combined - level >= 8)
++			combined -= 16;
++		else if (combined - level < -7)
++			combined += 16;
++
++		if (combined < 0)
++			combined += 16;
++
++		if (combined > 255)
++			combined -= 16;
++
++		const i32 value = (combined * 4) + (bits[4] ? 2 : 0) + (bits[5] ? 1 : 0);
++
++		return casts::to<f64>(value) / 1024;
++	}
++
+ 	/*!
+ 	 * Reads the force tone of a position window.
+ 	 *
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 32858a6..9be3b52 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -224,6 +224,8 @@ private:
+ 		this->get(ini, "DFT", "ZeroForceStrokeLevel", m_config.dft_zero_force_stroke_level);
+ 		this->get(ini, "DFT", "ZeroForceLockoutPressure", m_config.dft_zero_force_lockout_pressure);
+ 		this->get(ini, "DFT", "ZeroForceLockoutSamples", m_config.dft_zero_force_lockout_samples);
++		this->get(ini, "DFT", "Mpp2PressureDecode", m_config.dft_mpp2_pressure_decode);
++		this->get(ini, "DFT", "PressureBitMinMag", m_config.dft_pressure_bit_min_mag);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);

@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Report-only release check (Arch): whether the repositories have newer sp9 packages. No root code
+# runs here: a dynamic user with no privileges, which can write only its state and cache
+# directories. sp9-helperd reads the notice; installing stays with pacman -Syu.
+[Unit]
+Description=Check for newer Surface Pro 9 packages (report only)
+Documentation=https://github.com/joonhoekim/surface-pro-9-linux/blob/main/docs/install-arch.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sp9-helper/sp9-update-check
+DynamicUser=yes
+StateDirectory=sp9-update-check
+CacheDirectory=sp9-update-check
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

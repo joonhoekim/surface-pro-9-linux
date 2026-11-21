@@ -1,0 +1,14 @@
+﻿
+
+Name                          : 12th Gen Intel(R) Core(TM) i5-1235U
+Manufacturer                  : GenuineIntel
+NumberOfCores                 : 10
+NumberOfLogicalProcessors     : 12
+MaxClockSpeed                 : 2500
+L2CacheSize                   : 6656
+L3CacheSize                   : 12288
+VirtualizationFirmwareEnabled : False
+
+
+
+

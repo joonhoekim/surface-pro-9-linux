@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# sp9-platform: /etc/mkinitcpio.conf.d/sp9-platform.conf puts pinctrl_tigerlake into the
+# initramfs; rebuild the presets when it changes. mkinitcpio's own hooks only watch kernels and
+# its install hooks. Systems without mkinitcpio (dracut, booster) skip this.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = etc/mkinitcpio.conf.d/sp9-platform.conf
+
+[Action]
+Description = Rebuilding the initramfs for the Surface Pro 9 platform files...
+When = PostTransaction
+Exec = /bin/sh -c 'command -v mkinitcpio >/dev/null 2>&1 || exit 0; mkinitcpio -P'

@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Tue, 17 Nov 2026 00:09:17 +0900
+Subject: [PATCH] media: i2c: dw9719: Power up on the first focus write, not on
+ open
+
+On the Microsoft Surface Pro 9 the rear OV13858 keeps its regulators
+(avdd, pwr1) and its 19.2 MHz clock enabled for the whole desktop
+session although nothing streams: the sensor was runtime active for
+5211 s of 5226 s of uptime, while the front sensor, which has no VCM,
+is suspended whenever it is idle.
+
+The VCM is what holds it. The driver takes a runtime PM reference in
+its open handler and drops it on close, and libcamera opens the lens
+sub-device of every camera it lists and keeps it open, so with
+WirePlumber running the node is open from login to logout. The VCM has
+no supply of its own here ("vdd" is the dummy regulator); it is fed
+from the sensor's rails, for which the ipu-bridge makes the sensor a
+runtime PM supplier of the VCM. A resumed VCM therefore resumes the
+sensor: both devices show a usage count of 1 with no stream running.
+The other VCM drivers (dw9714, dw9768, ak7375, dw9807) take the same
+reference on open; it is the supplier link that turns it into a
+powered sensor.
+
+Only count the file handles on open. Power the lens when a focus
+position is written, and keep that reference until the last handle is
+closed, so that a position that was set is held as before. Opening the
+node and reading the control no longer cost power, and a session in
+which nothing sets the focus leaves the VCM, and with it the sensor,
+suspended.
+
+Mark the control V4L2_CTRL_FLAG_EXECUTE_ON_WRITE: after a power down
+the lens has left the position the control still shows, and writing
+that same value again must reach the driver to power it up.
+
+As the power up is now caused by a write, the position of the lens
+equals the control value whenever the driver has powered it. Before,
+a DW9800K powered up by open stayed at its reset position of 512 while
+the control read 0. A lens nobody wrote to is left as the chip comes
+out of reset when the sensor's rails are on, without the SAC setup.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/media/i2c/dw9719.c | 64 ++++++++++++++++++++++++++++++--------
+ 1 file changed, 51 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/media/i2c/dw9719.c b/drivers/media/i2c/dw9719.c
+index 440888507..a1726f7e4 100644
+--- a/drivers/media/i2c/dw9719.c
++++ b/drivers/media/i2c/dw9719.c
+@@ -10,6 +10,7 @@
+ 
+ #include <linux/delay.h>
+ #include <linux/i2c.h>
++#include <linux/mutex.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/types.h>
+@@ -91,6 +92,10 @@ struct dw9719_device {
+ 	u32 sac_mode;
+ 	u32 vcm_freq;
+ 
++	/* Both protected by the control handler lock */
++	unsigned int open_count;
++	bool powered;
++
+ 	struct dw9719_v4l2_ctrls {
+ 		struct v4l2_ctrl_handler handler;
+ 		struct v4l2_ctrl *focus;
+@@ -241,21 +246,27 @@ static int dw9719_set_ctrl(struct v4l2_ctrl *ctrl)
+ 						    ctrls.handler);
+ 	int ret;
+ 
+-	/* Only apply changes to the controls if the device is powered up */
+-	if (!pm_runtime_get_if_in_use(dw9719->dev))
++	if (ctrl->id != V4L2_CID_FOCUS_ABSOLUTE)
++		return -EINVAL;
++
++	/* Without a file handle there is no close to drop the reference in */
++	if (!dw9719->open_count)
+ 		return 0;
+ 
+-	switch (ctrl->id) {
+-	case V4L2_CID_FOCUS_ABSOLUTE:
+-		ret = dw9719_t_focus_abs(dw9719, ctrl->val);
+-		break;
+-	default:
+-		ret = -EINVAL;
+-	}
++	/*
++	 * The lens is powered by the first focus position written, not by
++	 * open, and stays powered until the last close. Resuming moves it to
++	 * the new position in steps.
++	 */
++	if (!dw9719->powered) {
++		ret = pm_runtime_resume_and_get(dw9719->dev);
++		if (ret)
++			return ret;
+ 
+-	pm_runtime_put(dw9719->dev);
++		dw9719->powered = true;
++	}
+ 
+-	return ret;
++	return dw9719_t_focus_abs(dw9719, ctrl->val);
+ }
+ 
+ static const struct v4l2_ctrl_ops dw9719_ctrl_ops = {
+@@ -309,14 +320,34 @@ err_power_down:
+ 	return ret;
+ }
+ 
++/*
++ * Open does not power the lens. Where the VCM is fed from the rails of its
++ * sensor (the ipu-bridge makes the sensor a runtime PM supplier of the VCM),
++ * a reference held by an open file handle keeps the sensor's regulators and
++ * clock on for as long as user space keeps the lens node open, which
++ * libcamera does for every camera it lists, streaming or not.
++ */
+ static int dw9719_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
+ {
+-	return pm_runtime_resume_and_get(sd->dev);
++	struct dw9719_device *dw9719 = to_dw9719_device(sd);
++
++	mutex_lock(dw9719->ctrls.handler.lock);
++	dw9719->open_count++;
++	mutex_unlock(dw9719->ctrls.handler.lock);
++
++	return 0;
+ }
+ 
+ static int dw9719_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
+ {
+-	pm_runtime_put_autosuspend(sd->dev);
++	struct dw9719_device *dw9719 = to_dw9719_device(sd);
++
++	mutex_lock(dw9719->ctrls.handler.lock);
++	if (!--dw9719->open_count && dw9719->powered) {
++		dw9719->powered = false;
++		pm_runtime_put_autosuspend(sd->dev);
++	}
++	mutex_unlock(dw9719->ctrls.handler.lock);
+ 
+ 	return 0;
+ }
+@@ -343,6 +374,13 @@ static int dw9719_init_controls(struct dw9719_device *dw9719)
+ 		goto err_free_handler;
+ 	}
+ 
++	/*
++	 * A write of the value the control already has must reach the driver
++	 * too: after a power down the lens is no longer at that position, and
++	 * the write is what powers it up again.
++	 */
++	dw9719->ctrls.focus->flags |= V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
++
+ 	dw9719->sd.ctrl_handler = &dw9719->ctrls.handler;
+ 	return 0;
+ 

@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Maintainer: Joonhoe Kim <26rote@gmail.com>
+#
+# sp9-dkms and sp9-dkms-bluetooth for linux-surface's Arch kernel. The sources are the trees that
+# `dkms/gen.sh tree` writes for the arch-* targets, packed by dkms/pkg/build-arch.sh as
+# sp9-dkms-trees-<version>.tar.gz next to this file; build-arch.sh also sets pkgver.
+pkgbase=sp9-dkms
+pkgname=(sp9-dkms sp9-dkms-bluetooth)
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Surface Pro 9 kernel patches as DKMS modules for the linux-surface kernel'
+arch=(any)
+url='https://github.com/joonhoekim/surface-pro-9-linux'
+license=(GPL-2.0-only MIT)
+_dkmsver=${_dkmsver:-$pkgver}
+source=("sp9-dkms-trees-$_dkmsver.tar.gz")
+sha256sums=(SKIP)
+
+_install_tree() { # TREE NAME
+  local d="$pkgdir/usr/src/$2-$_dkmsver"
+  install -d "$d"
+  cp -a --no-preserve=ownership "$srcdir/$1/." "$d/"
+  chmod 0755 "$d/select-variant"
+}
+
+package_sp9-dkms() {
+  pkgdesc='Surface Pro 9 kernel patches as DKMS modules for the linux-surface kernel (cameras, USB-C, charger, SAM, Type Cover, touch)'
+  depends=(dkms linux-surface-headers)
+  _install_tree sp9 sp9
+  install -Dm0755 "$srcdir/sp9-dkms-status" "$pkgdir/usr/bin/sp9-dkms-status"
+}
+
+package_sp9-dkms-bluetooth() {
+  pkgdesc='Surface Pro 9 Bluetooth patches (pen cover coupling, re-bond reconnection) as a DKMS bluetooth.ko, built only from the exact source of each supported linux-surface release; other releases keep the stock module'
+  depends=(dkms linux-surface-headers)
+  optdepends=('sp9-dkms: the other Surface Pro 9 kernel patches')
+  _install_tree sp9-bluetooth sp9-bluetooth
+  install -Dm0755 "$srcdir/sp9-dkms-status" "$pkgdir/usr/bin/sp9-dkms-bluetooth-status"
+}

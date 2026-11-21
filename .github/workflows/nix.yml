@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Nix: evaluate the flake (module with every option on, kernel derivation included) and build
+# the pen tools and the device helper. The kernel itself is not built here: it takes hours on a hosted runner and the
+# NixOS host builds the same derivation anyway.
+name: Nix
+
+on:
+  push:
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'kernel/**'
+      - 'userspace/**'
+      - 'helper/**'
+      - 'tools/linux/post-install-check.sh'
+      - 'tools/sdc-blob.py'
+      - '.github/workflows/nix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eval:
+    name: Flake check (eval), pen tools, helper
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Flake check (no build)
+        run: nix flake check --no-build --print-build-logs
+
+      - name: Build pen tools
+        run: nix build .#surface-pen-tools --print-build-logs
+
+      - name: Build the device helper
+        run: nix build .#sp9-helper --print-build-logs

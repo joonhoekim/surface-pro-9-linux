@@ -1,0 +1,27 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# sp9-update-check -- note whether pacman's repositories have newer sp9 packages. Report only:
+# nothing is installed. Run by sp9-update-check.service as a dynamic, unprivileged user;
+# checkupdates (pacman-contrib) syncs a private copy of the sync databases into the cache
+# directory and leaves pacman's own databases alone, so this is no partial upgrade.
+# sp9-helperd shows the notice ($STATE_DIRECTORY/notice) as ReleaseNotice (sp9-ctl packages).
+set -u
+: "${STATE_DIRECTORY:?run by sp9-update-check.service}" "${CACHE_DIRECTORY:?}"
+out=$(CHECKUPDATES_DB="$CACHE_DIRECTORY/db" checkupdates 2>&1)
+rc=$?
+case $rc in
+0)
+	ours=$(printf '%s\n' "$out" | grep -E '^sp9(-[a-z0-9-]+)? ' | tr '\n' ';' | sed 's/;$//; s/;/; /g')
+	if [ -n "$ours" ]; then
+		echo "updates available ($ours): sudo pacman -Syu" > "$STATE_DIRECTORY/notice"
+	else
+		: > "$STATE_DIRECTORY/notice"
+	fi
+	;;
+2) : > "$STATE_DIRECTORY/notice" ;; # no updates at all
+*)
+	echo "sp9-update-check: checkupdates failed ($rc): $out" >&2
+	exit 1
+	;;
+esac

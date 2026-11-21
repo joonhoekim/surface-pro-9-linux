@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+#
+# Installed by sp9-libcamera (experimental). PipeWire looks up a SPA plugin in each directory of
+# SPA_PLUGIN_DIR in turn and loads the first file that opens, so the libcamera plugin of
+# sp9-libcamera (built against its patched libcamera 0.8.0) is used instead of the distribution's;
+# every other plugin is found in the distribution's directory. WirePlumber enumerates the cameras
+# with this plugin and PipeWire runs their nodes with it, so both services carry this drop-in.
+#
+# To turn it off for one user without uninstalling the package:
+#   mkdir -p ~/.config/systemd/user/pipewire.service.d ~/.config/systemd/user/wireplumber.service.d
+#   ln -s /dev/null ~/.config/systemd/user/pipewire.service.d/sp9-libcamera.conf
+#   ln -s /dev/null ~/.config/systemd/user/wireplumber.service.d/sp9-libcamera.conf
+#   systemctl --user daemon-reload && systemctl --user restart pipewire wireplumber
+[Service]
+Environment=SPA_PLUGIN_DIR=/usr/lib/sp9-libcamera/spa-0.2:@DISTRO_SPA_PLUGIN_DIR@

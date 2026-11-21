@@ -1,0 +1,48 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# sp9-dkms-status [KERNELRELEASE...] -- read-only: for each installed kernel (or the ones named),
+# say whether sp9-dkms and sp9-dkms-bluetooth have a source variant for it, what dkms built, and
+# which file modprobe would load for each module. Default: every directory in /lib/modules.
+set -u
+# dkms and modinfo live in /usr/sbin on Debian, which a normal user's PATH lacks there.
+PATH=$PATH:/usr/sbin:/sbin
+src=/usr/src
+[ $# -gt 0 ] || set -- $(ls /lib/modules 2>/dev/null)
+running=$(uname -r)
+
+pkgdirs() { # NAME: newest /usr/src/NAME-VERSION
+	ls -d "$src/$1"-[0-9]* 2>/dev/null | sort -V | tail -n 1
+}
+
+for k in "$@"; do
+	tag=""; [ "$k" = "$running" ] && tag=" (running)"
+	echo "kernel $k$tag"
+	for name in sp9 sp9-bluetooth; do
+		d=$(pkgdirs "$name")
+		if [ -z "$d" ]; then
+			echo "  $name: not installed"
+			continue
+		fi
+		ver=${d##*/"$name"-}
+		v=$(awk -v k="$k" '!/^#/ && $1 == k { print $2 " (" $3 ")" }' "$d/kernels")
+		if [ -z "$v" ]; then
+			if [ "$name" = sp9-bluetooth ]; then
+				echo "  $name $ver: NOT INSTALLED for this kernel: the package carries no bluetooth source of exactly $k, so the stock bluetooth.ko is used (no LE legacy OOB pairing, patch 0023; no resolving list fix, 0024). An update of this package adds the release once it is generated"
+			else
+				echo "  $name $ver: no source variant for this kernel: the stock modules are used. An update of this package adds the release once it is generated and checked"
+			fi
+			continue
+		fi
+		st=$(dkms status -m "$name" -v "$ver" -k "$k" 2>/dev/null | head -n 1)
+		echo "  $name $ver: variant $v; dkms: ${st:-not built}"
+		for m in $(sed -n 's/^BUILT_MODULE_NAME\[[0-9]*\]="\(.*\)"/\1/p' "$d/dkms.conf"); do
+			f=$(modinfo -k "$k" -n "$m" 2>/dev/null || echo "not found")
+			case $f in
+			*/updates/dkms/*) s=ok ;;
+			*) s="stock module" ;;
+			esac
+			echo "    $m: $s: $f"
+		done
+	done
+done

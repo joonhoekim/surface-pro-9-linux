@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# The daemon writes its settings, reports and the iptsd drop-in at run time; they are not
+# conffiles, so purge removes them here.
+set -e
+if [ "$1" = purge ]; then
+	rm -f /etc/sp9/helper.toml /etc/sp9/helper.toml.bad /etc/iptsd.d/zz-sp9-helper.conf
+	rmdir /etc/sp9 2>/dev/null || true
+	rm -rf /var/lib/sp9
+fi
+#DEBHELPER#
+exit 0

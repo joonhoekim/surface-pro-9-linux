@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Maintainer: Joonhoe Kim <26rote@gmail.com>
+#
+# Split package of surface-pro-9-linux for Arch Linux, built from the release source tarball
+# (packaging/source-tarball.sh: the git tree plus the vendored Rust crates, so build() runs
+# offline). packaging/build-arch.sh sets pkgver and _srcver from packaging/version.sh and, for a
+# release, the checksum; the release attaches that filled-in copy, which is also what an AUR
+# package would take. File lists: packaging/stage.sh.
+
+pkgbase=sp9-linux
+pkgname=(sp9 sp9-helper sp9-settings sp9-digitizerd sp9-platform sp9-cmdline sp9-keyring)
+pkgver=0.0.0
+_srcver=0.0.0
+pkgrel=1
+pkgdesc='Surface Pro 9 (Intel) support on top of linux-surface'
+arch=(x86_64)
+url='https://github.com/joonhoekim/surface-pro-9-linux'
+license=(GPL-3.0-or-later MIT)
+# iio-sensor-proxy and polkit: namcap wants the split packages' dependencies here too
+makedepends=(cargo gtk4 libadwaita pkgconf gnupg iio-sensor-proxy polkit)
+# the binaries come out of cargo stripped (profile.release strip = true)
+options=(!debug !lto)
+source=("https://github.com/joonhoekim/surface-pro-9-linux/releases/download/v$_srcver/sp9-linux-$_srcver.tar.xz")
+sha256sums=('SKIP')
+
+_stage() { # component
+	"$srcdir/sp9-linux-$_srcver/packaging/stage.sh" --layout arch --component "$1" \
+		--build "$srcdir/sp9-linux-$_srcver/helper/target/release" "$pkgdir"
+}
+
+prepare() {
+	cd "sp9-linux-$_srcver/helper"
+	export CARGO_HOME="$srcdir/cargo-home"
+	cargo fetch --locked --offline
+}
+
+build() {
+	cd "sp9-linux-$_srcver/helper"
+	export CARGO_HOME="$srcdir/cargo-home" CARGO_NET_OFFLINE=true
+	# --version: the release version, plus git describe for a development build
+	SP9_GIT_DESCRIBE=$(cat ../DESCRIBE 2>/dev/null || true)
+	export SP9_GIT_DESCRIBE
+	cargo build --release --locked --offline --workspace
+}
+
+check() {
+	cd "sp9-linux-$_srcver/helper"
+	export CARGO_HOME="$srcdir/cargo-home" CARGO_NET_OFFLINE=true
+	cargo test --release --locked --offline --workspace
+}
+
+package_sp9() {
+	pkgdesc='Surface Pro 9 (Intel) support on top of linux-surface (metapackage)'
+	arch=(any)
+	license=(MIT)
+	# the touch and pen daemon: sp9-digitizerd, as helper/install.sh chooses by default; for
+	# linux-surface's iptsd instead, install the other packages without this one
+	depends=("sp9-platform=$pkgver-$pkgrel" "sp9-helper>=$pkgver" sp9-digitizerd)
+	optdepends=(
+		'sp9-settings: settings app'
+		'sp9-dkms: kernel modules of this project for the linux-surface kernel'
+		'sp9-dkms-bluetooth: Bluetooth core with the pen cover coupling patches'
+		'sp9-cmdline: the recommended kernel command line'
+		'sp9-libcamera: patched libcamera for the cameras (experimental)'
+	)
+	install -Dm644 "$srcdir/sp9-linux-$_srcver/LICENSES/MIT.txt" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_sp9-helper() {
+	pkgdesc='Surface Pro 9 (Intel) device helper: sp9-helperd (D-Bus service) and sp9-ctl'
+	license=(GPL-3.0-or-later)
+	depends=(gcc-libs glibc dbus polkit python bash systemd)
+	optdepends=(
+		'sp9-settings: settings app'
+		'pacman-contrib: sp9-update-check.timer, the optional release notice'
+		'fakeroot: sp9-update-check.timer, the optional release notice'
+		'pciutils: diagnostics'
+		'usbutils: diagnostics'
+		'alsa-utils: diagnostics'
+		'evtest: diagnostics'
+		'i2c-tools: diagnostics'
+		'libinput-tools: diagnostics'
+		'lm_sensors: diagnostics'
+		'v4l-utils: diagnostics'
+	)
+	_stage helper
+}
+
+package_sp9-settings() {
+	pkgdesc='Surface Pro 9 (Intel) settings app (GTK 4, libadwaita) for sp9-helperd'
+	license=(GPL-3.0-or-later)
+	depends=(sp9-helper gtk4 libadwaita glib2 cairo pango gdk-pixbuf2 graphene gcc-libs glibc hicolor-icon-theme)
+	_stage settings
+}
+
+package_sp9-digitizerd() {
+	pkgdesc='Surface Pro 9 (Intel) touch and pen daemon (instead of iptsd)'
+	license=(GPL-3.0-or-later)
+	depends=(gcc-libs glibc dbus)
+	conflicts=(iptsd)
+	_stage digitizerd
+}
+
+package_sp9-platform() {
+	pkgdesc='Surface Pro 9 (Intel) platform files: udev, libinput, PipeWire, WirePlumber, initramfs'
+	arch=(any)
+	license=(MIT)
+	depends=(iio-sensor-proxy)
+	optdepends=(
+		'pipewire: speaker protection filter chain, echo-cancelled microphone'
+		'wireplumber: speaker and microphone rules'
+		'swh-plugins: limiter of the speaker filter chain'
+	)
+	backup=(etc/mkinitcpio.conf.d/sp9-platform.conf)
+	_stage platform
+	install -Dm644 "$srcdir/sp9-linux-$_srcver/LICENSES/MIT.txt" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_sp9-cmdline() {
+	pkgdesc='Surface Pro 9 (Intel) kernel command line (for unified kernel images; other boot loaders: see install message)'
+	arch=(any)
+	license=(MIT)
+	backup=(etc/cmdline.d/sp9-platform.conf)
+	install=sp9-cmdline.install
+	_stage cmdline
+	install -Dm644 "$srcdir/sp9-linux-$_srcver/LICENSES/MIT.txt" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_sp9-keyring() {
+	pkgdesc='OpenPGP key of the surface-pro-9-linux pacman repository'
+	arch=(any)
+	license=(MIT)
+	install=sp9-keyring.install
+	_stage keyring
+	install -Dm644 "$srcdir/sp9-linux-$_srcver/LICENSES/MIT.txt" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,282 @@
+\\?\hid#target_kip&category_hid&col01#4&<0991>&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 0991 TLC FF05:0001 report bytes in 35 out 35 feat 0
+  link[0] FF05:0001 parent 0 type 1
+  In 13
+    val  link 0 FF05:0020 8x2 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..15 (byte 1.0)
+    val  link 0 FF05:0021 8x32 log -127..127 phys 0..0 unit 0 exp 0 main 002 var abs  bit 16..271 (byte 3.0)
+  Out 13
+    val  link 0 FF05:0022 8x2 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..15 (byte 1.0)
+    val  link 0 FF05:0023 8x32 log -127..127 phys 0..0 unit 0 exp 0 main 002 var abs  bit 16..271 (byte 3.0)
+
+\\?\hid#target_kip&category_hid&col01#4&<09AF>&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09AF TLC 0001:0002 report bytes in 4 out 0 feat 0
+  link[0] 0001:0002 parent 0 type 1
+  link[1] 0001:0001 parent 0 type 0
+  In 2
+    btn  link 1 0009:0001-0002 count 1 main 002 var abs  bit 0..0 (byte 1.0) / bit 1..1 (byte 1.1)
+    val  link 1 0001:0031 8x1 log -127..127 phys 0..0 unit 0 exp 0 main 006 var rel  bit 16..23 (byte 3.0)
+    val  link 1 0001:0030 8x1 log -127..127 phys 0..0 unit 0 exp 0 main 006 var rel  bit 8..15 (byte 2.0)
+
+\\?\hid#target_kip&category_hid&col01#4&<09AE>&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\kbd
+  VID 045E PID 09AE TLC 0001:0006 report bytes in 12 out 2 feat 7
+  link[0] 0001:0006 parent 0 type 1
+  link[1] 000C:02C0 parent 0 type 2
+  In 1
+    btn  link 0 0007:00E0-00E7 count 1 main 002 var abs  bit 0..0 (byte 1.0) / bit 7..7 (byte 1.7)
+    btn  link 0 0007:0000-0091 count 1 main 000 array abs  array index, first slot bit 8..15 (byte 2.0)
+  Out 1
+    btn  link 0 0008:0001-0003 count 1 main 002 var abs  bit 0..0 (byte 1.0) / bit 2..2 (byte 1.2)
+  Feat 1
+    val  link 1 000C:02C1-02C6 8x1 log 0..255 phys 0..0 unit 0 exp 0 main 003 var abs  bit 0..7 (byte 1.0) / bit 40..47 (byte 6.0)
+
+\\?\hid#target_kip&category_hid&col01#4&<09B0>&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}\kbd
+  VID 045E PID 09B0 TLC 0001:0006 report bytes in 3 out 0 feat 0
+  link[0] 0001:0006 parent 0 type 1
+  In 92
+    btn  link 0 0007:00E0-00E7 count 1 main 002 var abs  bit 0..0 (byte 1.0) / bit 7..7 (byte 1.7)
+    btn  link 0 0007:006D-006F count 1 main 002 var abs  bit 8..8 (byte 2.0) / bit 10..10 (byte 2.2)
+
+\\?\hid#target_kip&category_hid&col02#4&<0991>&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 0991 TLC FF0B:0101 report bytes in 61 out 61 feat 61
+  link[0] FF0B:0101 parent 0 type 1
+  In 32
+    val  link 0 FF0B:0060 8x60 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..479 (byte 1.0)
+  In 33
+    val  link 0 FF0B:0063 8x60 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..479 (byte 1.0)
+  In 34
+    val  link 0 FF0B:0066-0069 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  In 35
+    val  link 0 FF0B:0072-0075 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  In 36
+    val  link 0 FF0B:007E-0081 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  In 37
+    val  link 0 FF0B:008A-008D 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  In 38
+    val  link 0 FF0B:0096-0099 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  In 39
+    val  link 0 FF0B:00A2-00A5 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  In 40
+    val  link 0 FF0B:00AE-00B1 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  In 41
+    val  link 0 FF0B:00BA-00BD 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Out 12
+    val  link 0 FF0B:0000 8x1 log 1..127 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..7 (byte 1.0)
+  Out 32
+    val  link 0 FF0B:0061 8x60 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..479 (byte 1.0)
+  Out 33
+    val  link 0 FF0B:0064 8x60 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..479 (byte 1.0)
+  Out 34
+    val  link 0 FF0B:006A-006D 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Out 35
+    val  link 0 FF0B:0076-0079 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Out 36
+    val  link 0 FF0B:0082-0085 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Out 37
+    val  link 0 FF0B:008E-0091 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Out 38
+    val  link 0 FF0B:009A-009D 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Out 39
+    val  link 0 FF0B:00A6-00A9 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Out 40
+    val  link 0 FF0B:00B2-00B5 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Out 41
+    val  link 0 FF0B:00BE-00C1 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Feat 32
+    val  link 0 FF0B:0062 8x60 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..479 (byte 1.0)
+  Feat 33
+    val  link 0 FF0B:0065 8x60 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..479 (byte 1.0)
+  Feat 34
+    val  link 0 FF0B:006E-0071 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Feat 35
+    val  link 0 FF0B:007A-007D 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Feat 36
+    val  link 0 FF0B:0086-0089 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Feat 37
+    val  link 0 FF0B:0092-0095 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Feat 38
+    val  link 0 FF0B:009E-00A1 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Feat 39
+    val  link 0 FF0B:00AA-00AD 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Feat 40
+    val  link 0 FF0B:00B6-00B9 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+  Feat 41
+    val  link 0 FF0B:00C2-00C5 32x1 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..31 (byte 1.0) / bit 96..127 (byte 13.0)
+
+\\?\hid#target_kip&category_hid&col02#4&<09AF>&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09AF TLC 000D:0005 report bytes in 30 out 0 feat 34
+  link[0] 000D:0005 parent 0 type 1
+  link[1] 000D:0022 parent 0 type 2
+  link[2] 000D:0022 parent 0 type 2
+  link[3] 000D:0022 parent 0 type 2
+  link[4] 000D:0022 parent 0 type 2
+  link[5] 000D:0022 parent 0 type 2
+  In 4
+    btn  link 1 000D:0042 count 1 main 002 var abs  bit 1..1 (byte 1.1)
+    btn  link 1 000D:0047 count 1 main 002 var abs  bit 0..0 (byte 1.0)
+    btn  link 2 000D:0042 count 1 main 002 var abs  bit 41..41 (byte 6.1)
+    btn  link 2 000D:0047 count 1 main 002 var abs  bit 40..40 (byte 6.0)
+    btn  link 3 000D:0042 count 1 main 002 var abs  bit 81..81 (byte 11.1)
+    btn  link 3 000D:0047 count 1 main 002 var abs  bit 80..80 (byte 11.0)
+    btn  link 4 000D:0042 count 1 main 002 var abs  bit 121..121 (byte 16.1)
+    btn  link 4 000D:0047 count 1 main 002 var abs  bit 120..120 (byte 16.0)
+    btn  link 5 000D:0042 count 1 main 002 var abs  bit 161..161 (byte 21.1)
+    btn  link 5 000D:0047 count 1 main 002 var abs  bit 160..160 (byte 21.0)
+    btn  link 0 0009:0001 count 1 main 002 var abs  bit 224..224 (byte 29.0)
+    val  link 1 000D:0051 3x1 log 0..5 phys 0..0 unit 0 exp 0 main 002 var abs  bit 2..4 (byte 1.2)
+    val  link 1 0001:0030 16x1 log 0..1924 phys 0..962 unit 11 exp 14 main 002 var abs  bit 8..23 (byte 2.0)
+    val  link 1 0001:0031 16x1 log 0..1049 phys 0..524 unit 11 exp 14 main 002 var abs  bit 24..39 (byte 4.0)
+    val  link 2 000D:0051 3x1 log 0..5 phys 0..0 unit 0 exp 0 main 002 var abs  bit 42..44 (byte 6.2)
+    val  link 2 0001:0030 16x1 log 0..1924 phys 0..962 unit 11 exp 14 main 002 var abs  bit 48..63 (byte 7.0)
+    val  link 2 0001:0031 16x1 log 0..1049 phys 0..524 unit 11 exp 14 main 002 var abs  bit 64..79 (byte 9.0)
+    val  link 3 000D:0051 3x1 log 0..5 phys 0..0 unit 0 exp 0 main 002 var abs  bit 82..84 (byte 11.2)
+    val  link 3 0001:0030 16x1 log 0..1924 phys 0..962 unit 11 exp 14 main 002 var abs  bit 88..103 (byte 12.0)
+    val  link 3 0001:0031 16x1 log 0..1049 phys 0..524 unit 11 exp 14 main 002 var abs  bit 104..119 (byte 14.0)
+    val  link 4 000D:0051 3x1 log 0..5 phys 0..0 unit 0 exp 0 main 002 var abs  bit 122..124 (byte 16.2)
+    val  link 4 0001:0030 16x1 log 0..1924 phys 0..962 unit 11 exp 14 main 002 var abs  bit 128..143 (byte 17.0)
+    val  link 4 0001:0031 16x1 log 0..1049 phys 0..524 unit 11 exp 14 main 002 var abs  bit 144..159 (byte 19.0)
+    val  link 5 000D:0051 3x1 log 0..5 phys 0..0 unit 0 exp 0 main 002 var abs  bit 162..164 (byte 21.2)
+    val  link 5 0001:0030 16x1 log 0..1924 phys 0..962 unit 11 exp 14 main 002 var abs  bit 168..183 (byte 22.0)
+    val  link 5 0001:0031 16x1 log 0..1049 phys 0..524 unit 11 exp 14 main 002 var abs  bit 184..199 (byte 24.0)
+    val  link 0 000D:0056 16x1 log 0..65535 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 200..215 (byte 26.0)
+    val  link 0 000D:0054 8x1 log 0..127 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 216..223 (byte 28.0)
+  Feat 4
+    val  link 0 000D:0059 4x1 log 0..15 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 4..7 (byte 1.4)
+    val  link 0 000D:0055 4x1 log 0..15 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..3 (byte 1.0)
+  Feat 5
+    val  link 0 FF00:00C6 8x1 log 0..8 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..7 (byte 1.0)
+    val  link 0 FF00:00C7 8x32 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 8..263 (byte 2.0)
+  Feat 6
+    val  link 0 000D:0060 4x1 log 0..1 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..3 (byte 1.0)
+
+\\?\hid#target_kip&category_hid&col02#4&<09AE>&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09AE TLC 0001:0080 report bytes in 2 out 0 feat 0
+  link[0] 0001:0080 parent 0 type 1
+  In 91
+    btn  link 0 0001:0099 count 1 main 002 var abs  bit 2..2 (byte 1.2)
+    btn  link 0 0001:0098 count 1 main 002 var abs  bit 1..1 (byte 1.1)
+    btn  link 0 0001:0097 count 1 main 002 var abs  bit 0..0 (byte 1.0)
+
+\\?\hid#target_kip&category_hid&col02#4&<09B0>&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09B0 TLC FFF4:000A report bytes in 9 out 0 feat 0
+  link[0] FFF4:000A parent 0 type 1
+  link[1] FFF4:000B parent 0 type 2
+  In 20
+    btn  link 1 FFF4:0008 count 1 main 002 var abs  bit 48..48 (byte 7.0)
+    btn  link 1 FFF4:000D count 1 main 002 var abs  bit 49..49 (byte 7.1)
+    btn  link 1 FFF4:000E count 1 main 002 var abs  bit 50..50 (byte 7.2)
+    val  link 1 FFF4:0002 8x6 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..47 (byte 1.0)
+    val  link 1 FFF4:000C 8x1 log 0..100 phys 0..0 unit 0 exp 0 main 002 var abs  bit 56..63 (byte 8.0)
+
+\\?\hid#target_kip&category_hid&col03#4&<0991>&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 0991 TLC FF05:0004 report bytes in 261 out 261 feat 0
+  link[0] FF05:0004 parent 0 type 1
+  In 14
+    val  link 0 FF05:0031 32x4 log 0..-1 phys 0..0 unit 0 exp 0 main 003 var abs  bit 0..127 (byte 1.0)
+    val  link 0 FF05:0030 32x4 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 128..255 (byte 17.0)
+    val  link 0 FF05:0032 32x57 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 256..2079 (byte 33.0)
+  Out 14
+    val  link 0 FF05:0031 32x4 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..127 (byte 1.0)
+    val  link 0 FF05:0030 32x4 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 128..255 (byte 17.0)
+    val  link 0 FF05:0032 32x57 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 256..2079 (byte 33.0)
+
+\\?\hid#target_kip&category_hid&col03#4&<09AF>&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09AF TLC 000D:000E report bytes in 0 out 0 feat 2
+  link[0] 000D:000E parent 0 type 1
+  link[1] 000D:0022 parent 0 type 2
+  link[2] 000D:0022 parent 0 type 0
+  Feat 7
+    val  link 1 000D:0052 8x1 log 0..10 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..7 (byte 1.0)
+  Feat 8
+    btn  link 2 000D:0058 count 1 main 002 var abs  bit 1..1 (byte 1.1)
+    btn  link 2 000D:0057 count 1 main 002 var abs  bit 0..0 (byte 1.0)
+
+\\?\hid#target_kip&category_hid&col03#4&<09AE>&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09AE TLC 000C:0001 report bytes in 3 out 0 feat 0
+  link[0] 000C:0001 parent 0 type 1
+  In 3
+    btn  link 0 000C:0000-03FF count 1 main 000 array abs  array index, first slot bit 0..9 (byte 1.0)
+
+\\?\hid#target_kip&category_hid&col03#4&<09B0>&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09B0 TLC FFF4:0001 report bytes in 12 out 28 feat 8
+  link[0] FFF4:0001 parent 0 type 1
+  link[1] FFF4:0007 parent 0 type 2
+  link[2] FFF4:0005 parent 0 type 2
+  link[3] FFF4:0006 parent 0 type 2
+  link[4] FFF4:0013 parent 0 type 2
+  link[5] FFF4:0015 parent 0 type 2
+  link[6] FFF4:0016 parent 0 type 2
+  In 84
+    btn  link 1 FFF4:0008 count 1 main 002 var abs  bit 80..80 (byte 11.0)
+    val  link 1 FF0F:0050 8x4 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..31 (byte 1.0)
+    val  link 1 FFF4:0002 8x6 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 32..79 (byte 5.0)
+  In 110
+    btn  link 4 FFF4:0008 count 1 main 002 var abs  bit 80..80 (byte 11.0)
+    btn  link 4 FFF4:0011 count 1 main 002 var abs  bit 81..81 (byte 11.1)
+    btn  link 4 FFF4:0012 count 1 main 002 var abs  bit 82..82 (byte 11.2)
+    val  link 4 FF0F:0050 8x4 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..31 (byte 1.0)
+    val  link 4 FFF4:0002 8x6 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 32..79 (byte 5.0)
+  Out 85
+    btn  link 2 FFF4:0008 count 1 main 002 var abs  bit 80..80 (byte 11.0)
+    val  link 2 FF0F:0050 8x4 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..31 (byte 1.0)
+    val  link 2 FFF4:0002 8x6 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 32..79 (byte 5.0)
+    val  link 2 FFF4:0004 8x8 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 88..151 (byte 12.0)
+  Out 111
+    btn  link 5 FFF4:0008 count 1 main 002 var abs  bit 80..80 (byte 11.0)
+    val  link 5 FF0F:0050 8x4 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..31 (byte 1.0)
+    val  link 5 FFF4:0002 8x6 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 32..79 (byte 5.0)
+    val  link 5 FFF4:0014 8x16 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 88..215 (byte 12.0)
+  Feat 86
+    btn  link 3 FFF4:0009 count 1 main 002 var abs  bit 48..48 (byte 7.0)
+    val  link 3 FFF4:0003 8x6 log 0..-1 phys 0..0 unit 0 exp 0 main 102 var abs  bit 0..47 (byte 1.0)
+  Feat 112
+    btn  link 6 FFF4:0010 count 1 main 002 var abs  bit 0..0 (byte 1.0)
+    btn  link 6 FFF4:0022 count 1 main 002 var abs  bit 1..1 (byte 1.1)
+  Feat 115
+    val  link 0 FFF4:0021 8x2 log 0..-1 phys 0..0 unit 0 exp 0 main 002 var abs  bit 0..15 (byte 1.0)
+
+\\?\hid#target_kip&category_hid&col04#4&<09AF>&0&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09AF TLC FF07:0001 report bytes in 39 out 21 feat 2
+  link[0] FF07:0001 parent 0 type 1
+  In 9
+    val  link 0 FF07:0005 8x38 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..303 (byte 1.0)
+  In 10
+    val  link 0 FF07:0004 8x38 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..303 (byte 1.0)
+  Out 9
+    val  link 0 FF07:0003 8x20 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..159 (byte 1.0)
+  Out 10
+    val  link 0 FF07:0002 8x20 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..159 (byte 1.0)
+  Feat 9
+    val  link 0 FF07:0006 8x1 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..7 (byte 1.0)
+  Feat 11
+    val  link 0 FF07:0007 8x1 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..7 (byte 1.0)
+
+\\?\hid#target_kip&category_hid&col04#4&<09AE>&0&0003#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09AE TLC 0001:0013 report bytes in 2 out 0 feat 0
+  link[0] 0001:0013 parent 0 type 1
+  In 94
+    btn  link 0 0001:00E1 count 1 main 002 var abs  bit 0..0 (byte 1.0)
+
+\\?\hid#target_kip&category_hid&col05#4&<09AF>&0&0004#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09AF TLC FF05:0004 report bytes in 60 out 60 feat 0
+  link[0] FF05:0004 parent 0 type 1
+  In 14
+    val  link 0 FF05:0031 8x1 log 0..255 phys 0..65535 unit 1001 exp 12 main 003 var abs  bit 0..7 (byte 1.0)
+    val  link 0 FF05:0030 8x1 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 8..15 (byte 2.0)
+    val  link 0 FF05:0032 8x57 log 0..255 phys 0..65535 unit 1001 exp 12 main 102 var abs  bit 16..471 (byte 3.0)
+  Out 14
+    val  link 0 FF05:0031 8x1 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 0..7 (byte 1.0)
+    val  link 0 FF05:0030 8x1 log 0..255 phys 0..65535 unit 1001 exp 12 main 002 var abs  bit 8..15 (byte 2.0)
+    val  link 0 FF05:0032 8x57 log 0..255 phys 0..65535 unit 1001 exp 12 main 102 var abs  bit 16..471 (byte 3.0)
+
+\\?\hid#target_kip&category_hid&col05#4&<09AE>&0&0004#{4d1e55b2-f16f-11cf-88cb-001111000030}
+  VID 045E PID 09AE TLC 000C:0007 report bytes in 2 out 2 feat 5
+  link[0] 000C:0007 parent 0 type 1
+  In 213
+    btn  link 0 000C:0515 count 1 main 006 var rel  bit 0..0 (byte 1.0)
+  Out 213
+    val  link 0 000C:007B 8x1 log 0..12 phys 0..0 unit 10000E1 exp 4 main 002 var abs  bit 0..7 (byte 1.0)
+  Feat 213
+    val  link 0 000C:0517 8x4 log 0..12 phys 0..0 unit 10000E1 exp 4 main 003 var abs  bit 0..31 (byte 1.0)
+  Feat 214
+    val  link 0 000C:007B 8x1 log 0..12 phys 0..0 unit 10000E1 exp 4 main 003 var abs  bit 0..7 (byte 1.0)
+

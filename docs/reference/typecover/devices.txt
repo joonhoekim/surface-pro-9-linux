@@ -1,0 +1,21 @@
+﻿{2DEDC554-A829-42AB-90E9-E4E4B4772981}\TARGET_KIP&CATEGORY_HID\3&348FBC8&0&SHP_DEVICE_00000001_<cover>	HIDClass	Surface Hid Mini Driver	service=mshidkmdf upper= lower=SurfaceHidMini inf=oem99.inf ver=3.98.5.0
+{2DEDC554-A829-42AB-90E9-E4E4B4772981}\TARGET_KIP&CATEGORY_HID\3&348FBC8&0&SHP_DEVICE_00000002_<cover>	HIDClass	Surface Hid Mini Driver	service=mshidkmdf upper= lower=SurfaceHidMini inf=oem99.inf ver=3.98.5.0
+{2DEDC554-A829-42AB-90E9-E4E4B4772981}\TARGET_KIP&CATEGORY_HID\3&348FBC8&0&SHP_DEVICE_00000003_<cover>	HIDClass	Surface Hid Mini Driver	service=mshidkmdf upper= lower=SurfaceHidMini inf=oem99.inf ver=3.98.5.0
+{2DEDC554-A829-42AB-90E9-E4E4B4772981}\TARGET_KIP&CATEGORY_HID\3&348FBC8&0&SHP_DEVICE_00000005_<cover>	HIDClass	Surface Hid Mini Driver	service=mshidkmdf upper= lower=SurfaceHidMini inf=oem99.inf ver=3.98.5.0
+ACPI\MSHW0153\2&DABA3FF&0	System	Surface Hot Plug - KIP	service=SurfaceHotPlug upper= lower= inf=oem48.inf ver=3.206.1.0
+HID\TARGET_KIP&CATEGORY_HID&COL01\4&<0991>&0&0000	HIDClass	Surface HID Color	service= upper= lower= inf=input.inf ver=10.0.26100.9974
+HID\TARGET_KIP&CATEGORY_HID&COL01\4&<09AF>&0&0000	Mouse	Surface HID Mouse	service=mouhid upper= lower= inf=msmouse.inf ver=10.0.26100.9974
+HID\TARGET_KIP&CATEGORY_HID&COL01\4&<09AE>&0&0000	Keyboard	Surface HID Keyboard	service=kbdhid upper= lower= inf=keyboard.inf ver=10.0.26100.9818
+HID\TARGET_KIP&CATEGORY_HID&COL01\4&<09B0>&0&0000	Keyboard	Surface HID Keyboard	service=kbdhid upper= lower= inf=keyboard.inf ver=10.0.26100.9818
+HID\TARGET_KIP&CATEGORY_HID&COL02\4&<0991>&0&0001	Firmware	Surface Type Cover v7 Firmware Update	service=WUDFRd upper= lower= inf=oem80.inf ver=5.65.139.0
+HID\TARGET_KIP&CATEGORY_HID&COL02\4&<09AF>&0&0001	HIDClass	Surface HID Touchpad	service= upper= lower= inf=input.inf ver=10.0.26100.9974
+HID\TARGET_KIP&CATEGORY_HID&COL02\4&<09AE>&0&0001	HIDClass	Surface HID System Controller	service= upper= lower= inf=input.inf ver=10.0.26100.9974
+HID\TARGET_KIP&CATEGORY_HID&COL02\4&<09B0>&0&0001	HIDClass	Surface HID Pen Bluetooth OOB Coupling	service= upper= lower= inf=input.inf ver=10.0.26100.9974
+HID\TARGET_KIP&CATEGORY_HID&COL03\4&<0991>&0&0002	HIDClass	Surface HID USP Encapsulation	service= upper= lower= inf=input.inf ver=10.0.26100.9974
+HID\TARGET_KIP&CATEGORY_HID&COL03\4&<09AF>&0&0002	HIDClass	Surface HID Digitizer Device Configuration	service=MTConfig upper= lower= inf=mtconfig.inf ver=10.0.26100.1150
+HID\TARGET_KIP&CATEGORY_HID&COL03\4&<09AE>&0&0002	HIDClass	Surface HID Consumer Control Device	service= upper= lower= inf=hidserv.inf ver=10.0.26100.1
+HID\TARGET_KIP&CATEGORY_HID&COL03\4&<09B0>&0&0002	HIDClass	Surface Pen BLE LC Adaptation Driver	service=SurfacePenBleLcAddrAdaptationDriver upper= lower= inf=oem105.inf ver=3.55.3.0
+HID\TARGET_KIP&CATEGORY_HID&COL04\4&<09AF>&0&0003	HIDClass	Surface Navigation Accessory	service= upper= lower= inf=input.inf ver=10.0.26100.9974
+HID\TARGET_KIP&CATEGORY_HID&COL04\4&<09AE>&0&0003	HIDClass	HID-compliant device	service= upper= lower= inf=input.inf ver=10.0.26100.9974
+HID\TARGET_KIP&CATEGORY_HID&COL05\4&<09AF>&0&0004	HIDClass	Surface HID USP Encapsulation	service= upper= lower= inf=input.inf ver=10.0.26100.9974
+HID\TARGET_KIP&CATEGORY_HID&COL05\4&<09AE>&0&0004	HIDClass	HID-compliant device	service= upper= lower= inf=input.inf ver=10.0.26100.9974

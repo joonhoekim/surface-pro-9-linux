@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# select-variant KERNELRELEASE -- dkms PRE_BUILD step of sp9-dkms and sp9-dkms-bluetooth: copy the
+# module directories of the source variant generated for exactly this kernel release (./kernels)
+# into the build directory. dkms.conf's BUILD_EXCLUSIVE_KERNEL already limits the build to these
+# releases; this refuses any other one as well.
+set -eu
+k=${1:?kernel release}
+v=$(awk -v k="$k" '!/^#/ && $1 == k { print $2 }' kernels)
+if [ -z "$v" ] || [ ! -d "variants/$v" ]; then
+	echo "select-variant: no source variant for kernel $k (see kernels)" >&2
+	exit 1
+fi
+cp -R "variants/$v/." .
+echo "select-variant: kernel $k, source variant $v"

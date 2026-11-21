@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Labels of the repository; tools/labels-sync.sh creates or updates them. Columns: name, colour, description (tab-separated).
+bug	d73a4a	Something does not work as documented
+regression	b60205	Worked with an earlier commit or kernel
+test result	0e8a16	A run of a test from docs/test-plan.md
+documentation	0075ca	Improvements or additions to documentation
+enhancement	a2eeef	New feature or request
+needs-info	fbca04	Waiting for logs, values or details from the reporter
+upstream	5319e7	The fix belongs in linux-surface, the upstream kernel, iptsd, libcamera or a distribution
+security	b60205	Security hardening that is not a vulnerability report
+duplicate	cfd3d7	This issue or pull request already exists
+invalid	e4e669	This does not seem right
+wontfix	ffffff	This will not be worked on
+good first issue	7057ff	Good for newcomers
+help wanted	008672	Extra attention is needed
+area: kernel	c5def5	Kernel patches, config, linux-surface base
+area: nixos	c5def5	NixOS module and packages
+area: platform	c5def5	Platform files and installer for other distributions
+area: helper	c5def5	sp9-helperd, sp9-ctl, settings app
+area: pen and touch	c5def5	Digitizer, sp9-digitizerd, iptsd patches, Slim Pen 2
+area: camera	c5def5	Cameras, libcamera patches
+area: audio	c5def5	Speakers, microphones, filter chain
+area: display	c5def5	Panel, PSR, refresh rates, colour
+area: power	c5def5	Suspend, battery, charging, thermal, fan
+area: connectivity	c5def5	Wi-Fi, Bluetooth, USB-C
+area: research	c5def5	The Windows baseline and the gap documents
+area: site	c5def5	The website in site/

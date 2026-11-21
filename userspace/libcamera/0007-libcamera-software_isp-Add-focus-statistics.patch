@@ -1,0 +1,271 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 15:03:12 +0900
+Subject: [PATCH] libcamera: software_isp: Add focus statistics
+
+Add a contrast figure for a contrast detection autofocus to the software
+ISP statistics: the squared difference between neighbouring pairs of
+green pixels of one Bayer site, horizontally and vertically, summed over
+the central half of the image, together with the sum of the green
+values so that the contrast can be taken relative to the brightness.
+The pairs make it a band-pass around a period of eight pixels, which
+still responds away from the focus and stays above the pixel noise.
+
+The figure is gathered from the mapped input frame on the frames that
+have statistics, for unpacked 8, 10 and 12 bit Bayer formats. Other
+formats report no samples.
+---
+ .../internal/software_isp/swisp_stats.h       |  17 +++
+ .../internal/software_isp/swstats_cpu.h       |   4 +
+ src/libcamera/software_isp/debayer_cpu.cpp    |   6 +
+ src/libcamera/software_isp/debayer_egl.cpp    |   5 +
+ src/libcamera/software_isp/swstats_cpu.cpp    | 103 ++++++++++++++++++
+ 5 files changed, 135 insertions(+)
+
+diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
+index 65d826f6..f3228d54 100644
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -56,6 +56,23 @@ struct SwIspStats {
+ 	 * \brief A histogram of luminance values of all the sampled pixels
+ 	 */
+ 	Histogram yHistogram;
++	/**
++	 * \brief Sum of the squared green contrast samples in the focus window
++	 *
++	 * A contrast sample is the difference between two neighbouring pairs
++	 * of green pixels, horizontally and vertically, scaled to 8 bits. Zero
++	 * samples mean that the input format has no focus statistics.
++	 */
++	uint64_t focusContrast;
++	/**
++	 * \brief Sum of the green values, scaled to 8 bits, that go with the
++	 *        contrast samples
++	 */
++	uint64_t focusLuma;
++	/**
++	 * \brief Number of contrast samples in \a focusContrast
++	 */
++	uint64_t focusSamples;
+ };
+ 
+ } /* namespace libcamera */
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index 55187092..9e5aa205 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -57,6 +57,8 @@ public:
+ 	void startFrame(uint32_t frame);
+ 	void finishFrame(uint32_t frame, uint32_t bufferId);
+ 	void processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuffer &input);
++	void setFocusWindow(const Rectangle &window);
++	void processFocus(uint32_t frame, MappedFrameBuffer &input);
+ 
+ 	void processLine0(uint32_t frame, unsigned int y, const uint8_t *src[], unsigned int statsBufferIndex = 0)
+ 	{
+@@ -114,6 +116,8 @@ private:
+ 	unsigned int ySkipMask_;
+ 
+ 	Rectangle window_;
++	Rectangle focusWindow_;
++	unsigned int focusBytesPerPixel_;
+ 
+ 	Size patternSize_;
+ 
+diff --git a/src/libcamera/software_isp/debayer_cpu.cpp b/src/libcamera/software_isp/debayer_cpu.cpp
+index 91867baa..edac6213 100644
+--- a/src/libcamera/software_isp/debayer_cpu.cpp
++++ b/src/libcamera/software_isp/debayer_cpu.cpp
+@@ -697,6 +697,11 @@ int DebayerCpu::configure(const StreamConfiguration &inputCfg,
+ 	 */
+ 	stats_->setWindow(Rectangle(window_.size()));
+ 
++	/* Focus on the central half of the image. */
++	stats_->setFocusWindow(Rectangle(window_.x + window_.width / 4,
++					 window_.y + window_.height / 4,
++					 window_.width / 2, window_.height / 2));
++
+ 	unsigned int yStart = 0;
+ 	unsigned int linesPerThread = (window_.height / threads_.size()) &
+ 				      ~(inputConfig_.patternSize.height - 1);
+@@ -1100,6 +1105,7 @@ void DebayerCpu::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
+ 	 *
+ 	 * \todo Pass real bufferId once stats buffer passing is changed.
+ 	 */
++	stats_->processFocus(frame, in);
+ 	stats_->finishFrame(frame, 0);
+ 	outputBufferReady.emit(output);
+ 	inputBufferReady.emit(input);
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index 0707de1d..d02ac923 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -362,6 +362,11 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
+ 	/* The statistics cover what the output shows. */
+ 	stats_->setWindow(window_);
+ 
++	/* Focus on the central half of the image. */
++	stats_->setFocusWindow(Rectangle(window_.x + window_.width / 4,
++					 window_.y + window_.height / 4,
++					 window_.width / 2, window_.height / 2));
++
+ 	inputBufferCount_ = inputCfg.bufferCount;
+ 	outputBufferCount_ = outputCfg.bufferCount;
+ 
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 51c6019b..09daa4bd 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -415,6 +415,9 @@ void SwStatsCpu::startFrame(uint32_t frame)
+ 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 		s.numPixels_ = 0;
+ 		s.yHistogram.fill(0);
++		s.focusContrast = 0;
++		s.focusLuma = 0;
++		s.focusSamples = 0;
+ 	}
+ }
+ 
+@@ -440,6 +443,11 @@ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
+ 				sharedStats_->yHistogram[j] += s.yHistogram[j];
+ 		}
+ 
++		/* Only the first buffer gathers focus statistics. */
++		sharedStats_->focusContrast = stats_[0].focusContrast >> (2 * sumShift_);
++		sharedStats_->focusLuma = stats_[0].focusLuma >> sumShift_;
++		sharedStats_->focusSamples = stats_[0].focusSamples;
++
+ 		sharedStats_->sum_ >>= sumShift_;
+ 	}
+ 
+@@ -494,6 +502,8 @@ int SwStatsCpu::configure(const StreamConfiguration &inputCfg, unsigned int stat
+ {
+ 	stride_ = inputCfg.stride;
+ 	stats_.resize(statsBufferCount);
++	focusBytesPerPixel_ = 0;
++	focusWindow_ = {};
+ 
+ 	BayerFormat bayerFormat =
+ 		BayerFormat::fromPixelFormat(inputCfg.pixelFormat);
+@@ -505,14 +515,17 @@ int SwStatsCpu::configure(const StreamConfiguration &inputCfg, unsigned int stat
+ 		case 8:
+ 			stats0_ = &SwStatsCpu::statsBGGR8Line0;
+ 			sumShift_ = 0;
++			focusBytesPerPixel_ = 1;
+ 			return 0;
+ 		case 10:
+ 			stats0_ = &SwStatsCpu::statsBGGR10Line0;
+ 			sumShift_ = 2;
++			focusBytesPerPixel_ = 2;
+ 			return 0;
+ 		case 12:
+ 			stats0_ = &SwStatsCpu::statsBGGR12Line0;
+ 			sumShift_ = 4;
++			focusBytesPerPixel_ = 2;
+ 			return 0;
+ 		}
+ 	}
+@@ -597,6 +610,95 @@ void SwStatsCpu::setWindow(const Rectangle &window)
+ 	window_.height &= ~(patternSize_.height - 1);
+ }
+ 
++/**
++ * \brief Specify the area over which to gather the focus statistics
++ * \param[in] window The area, in pixels of the input frame
++ *
++ * The focus statistics are gathered by processFocus() from the whole input
++ * frame, so unlike the window of setWindow() this one is always relative to
++ * the input frame. An empty window, the default after configure(), disables
++ * them.
++ */
++void SwStatsCpu::setFocusWindow(const Rectangle &window)
++{
++	focusWindow_ = window;
++
++	focusWindow_.x &= ~(patternSize_.width - 1);
++	focusWindow_.x += xShift_;
++	focusWindow_.y &= ~(patternSize_.height - 1);
++	focusWindow_.width = (focusWindow_.width > xShift_ ? focusWindow_.width - xShift_ : 0);
++}
++
++/**
++ * \brief Gather the focus statistics of a frame
++ * \param[in] frame The frame number
++ * \param[in] input The frame to process
++ *
++ * Accumulate a contrast figure over the focus window for a contrast
++ * detection autofocus. A sample is the difference between two neighbouring
++ * pairs of green pixels of the same Bayer site, taken horizontally and
++ * vertically: a band-pass that peaks at a period of eight pixels, low enough
++ * to respond away from the focus and to stay above the pixel noise. Only
++ * unpacked Bayer formats are supported, the others report no samples.
++ *
++ * This must be called between startFrame() and finishFrame(), or before
++ * processFrame() finishes the frame.
++ */
++void SwStatsCpu::processFocus(uint32_t frame, MappedFrameBuffer &input)
++{
++	if (frame % kStatPerNumFrames)
++		return;
++
++	if (!focusBytesPerPixel_ || focusWindow_.width < 16 || focusWindow_.height < 16)
++		return;
++
++	const uint8_t *data = input.planes()[0].data();
++	SwIspStats &stats = stats_[0];
++	uint64_t contrast = 0;
++	uint64_t luma = 0;
++	uint64_t samples = 0;
++
++	/*
++	 * With the window offset and the line swap of
++	 * setupStandardBayerOrder() the green pixels are at the odd columns
++	 * of the first line of each pair.
++	 */
++	const unsigned int yOffset = swapLines_ ? 1 : 0;
++
++	auto accumulate = [&](const auto *line, const auto *below) {
++		for (unsigned int x = 0; x + 8 <= focusWindow_.width; x += 4) {
++			int a = line[x + 1] + line[x + 3];
++			int h = a - (line[x + 5] + line[x + 7]);
++			int v = a - (below[x + 1] + below[x + 3]);
++
++			contrast += h * h + v * v;
++			luma += a;
++			samples += 2;
++		}
++	};
++
++	for (unsigned int y = 0; y + 6 <= focusWindow_.height; y += 4) {
++		const uint8_t *line = data + (focusWindow_.y + y + yOffset) * stride_ +
++				      focusWindow_.x * focusBytesPerPixel_;
++		const uint8_t *below = line + 4 * stride_;
++
++		if (focusBytesPerPixel_ == 1)
++			accumulate(line, below);
++		else
++			accumulate(reinterpret_cast<const uint16_t *>(line),
++				   reinterpret_cast<const uint16_t *>(below));
++	}
++
++	/*
++	 * A sample is the difference of two sums of two pixels: divide the
++	 * squares by four to get the contrast of pixel values. The luma sum
++	 * has one pair per two samples.
++	 */
++	stats.focusContrast = contrast / 4;
++	stats.focusLuma = luma;
++	stats.focusSamples = samples;
++}
++
+ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
+ {
+ 	const uint8_t *src = in.planes()[0].data();
+@@ -637,6 +739,7 @@ void SwStatsCpu::processFrame(uint32_t frame, uint32_t bufferId, MappedFrameBuff
+ 	bench_.startFrame();
+ 	startFrame(frame);
+ 	(this->*processFrame_)(input);
++	processFocus(frame, input);
+ 	finishFrame(frame, bufferId);
+ 	bench_.finishFrame();
+ }

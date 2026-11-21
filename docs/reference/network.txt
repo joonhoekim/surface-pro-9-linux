@@ -1,0 +1,11 @@
+﻿
+
+Name                 : Wi-Fi
+InterfaceDescription : Intel(R) Wi-Fi 6E AX211 160MHz
+DriverVersion        : 23.160.0.4
+DriverDate           : 2025-07-21
+DriverProvider       : Intel
+
+
+
+

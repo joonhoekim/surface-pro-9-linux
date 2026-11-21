@@ -1,0 +1,91 @@
+DKMS only: match the Surface Pro 9 UCSI device in the generic HID group
+
+Without patch 0007 (HID core, built into the kernel on Arch) the HID core
+puts the SAM HID device that carries the UCSI collection (0019:045E:005D)
+in HID_GROUP_GENERIC, so the HID_GROUP_SURFACE_UCSI entry never matches.
+Match that device by bus, group and ID instead; the entry for the group is
+kept for kernels that define it. hid-generic does not bind a device that
+another driver's table matches, and when this module is loaded after
+hid-generic has bound the device, the HID core reprobes it
+(__hid_bus_driver_added), so the device is handed over.
+
+A device on that ID without the UCSI data report is started the way
+hid-generic would start it instead of being left without a driver.
+
+--- a/drivers/usb/typec/ucsi/ucsi_surface_hid.c
++++ b/drivers/usb/typec/ucsi/ucsi_surface_hid.c
+@@ -358,8 +358,14 @@
+ 	if (ret)
+ 		return dev_err_probe(&hdev->dev, ret, "HID parse failed\n");
+ 
+-	if (!hdev->report_enum[HID_FEATURE_REPORT].report_id_hash[SURFACE_UCSI_REPORT_ID_DATA])
+-		return -ENODEV;
++	if (!hdev->report_enum[HID_FEATURE_REPORT].report_id_hash[SURFACE_UCSI_REPORT_ID_DATA]) {
++		/*
++		 * Not the UCSI collection. hid-generic yields every device this
++		 * driver's table matches, so do what it would do.
++		 */
++		hdev->quirks |= HID_QUIRK_INPUT_PER_APP;
++		return hid_hw_start(hdev, HID_CONNECT_DEFAULT);
++	}
+ 
+ 	ush = devm_kzalloc(&hdev->dev, sizeof(*ush), GFP_KERNEL);
+ 	if (!ush)
+@@ -420,6 +426,11 @@
+ {
+ 	struct surface_ucsi_hid *ush = hid_get_drvdata(hdev);
+ 
++	if (!ush) {
++		hid_hw_stop(hdev);
++		return;
++	}
++
+ 	ucsi_unregister(ush->ucsi);
+ 	cancel_work_sync(&ush->notify_work);
+ 	ucsi_destroy(ush->ucsi);
+@@ -436,6 +447,9 @@
+ 	struct surface_ucsi_hid *ush = hid_get_drvdata(hdev);
+ 	int ret;
+ 
++	if (!ush)
++		return 0;
++
+ 	ret = ucsi_suspend(ush->ucsi);
+ 	cancel_work_sync(&ush->notify_work);
+ 	return ret;
+@@ -445,6 +459,9 @@
+ {
+ 	struct surface_ucsi_hid *ush = hid_get_drvdata(hdev);
+ 
++	if (!ush)
++		return 0;
++
+ 	return ucsi_resume(ush->ucsi);
+ }
+ 
+@@ -452,13 +469,25 @@
+ {
+ 	struct surface_ucsi_hid *ush = hid_get_drvdata(hdev);
+ 
++	if (!ush)
++		return 0;
++
+ 	return ucsi_resume(ush->ucsi);
+ }
+ #endif
+ 
+ static const struct hid_device_id surface_ucsi_hid_table[] = {
++#ifdef HID_GROUP_SURFACE_UCSI
+ 	{ HID_DEVICE(HID_BUS_ANY, HID_GROUP_SURFACE_UCSI,
+ 		     USB_VENDOR_ID_MICROSOFT, HID_ANY_ID) },
++#endif
++	/*
++	 * Surface Pro 9 on a kernel without HID_GROUP_SURFACE_UCSI: the UCSI
++	 * collection is the generic-group SAM HID device 045E:005D (the sensor
++	 * hub on the same ID is in HID_GROUP_SENSOR_HUB).
++	 */
++	{ HID_DEVICE(BUS_HOST, HID_GROUP_GENERIC,
++		     USB_VENDOR_ID_MICROSOFT, 0x005d) },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(hid, surface_ucsi_hid_table);

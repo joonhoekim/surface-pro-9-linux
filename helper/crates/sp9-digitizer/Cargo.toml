@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Joonhoe Kim
+[package]
+name = "sp9-digitizer"
+description = "Touch and pen processing for the Surface Pro 9 (Intel) digitizer: frame parser, contact detection, pen pipeline (derived from iptsd)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

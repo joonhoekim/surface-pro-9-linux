@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Joonhoe Kim
+# One instance for the machine. The daemon finds the digitizer's hidraw node by its ID and waits
+# for it: the node goes away at every suspend and comes back under another number, and the
+# daemon (with its input devices) stays. So this is neither bound to a device unit nor started
+# by a udev rule; Restart= is for failures only.
+[Unit]
+Description=Surface Pro 9 touch and pen daemon
+Wants=dbus.socket
+After=dbus.socket
+
+[Service]
+Type=simple
+ExecStart=@BINDIR@/sp9-digitizerd
+Restart=on-failure
+RestartSec=2
+
+# It needs the hidraw node, /dev/uinput, the system bus and its configuration files
+# (/etc/sp9/digitizer.toml, /etc/iptsd.d/zz-sp9-helper.conf), read-only.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+DevicePolicy=closed
+DeviceAllow=/dev/uinput rw
+DeviceAllow=char-hidraw rw
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

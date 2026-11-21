@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# /etc/default/grub.d/sp9-platform.cfg takes effect when grub.cfg is generated again.
+set -e
+if [ "$1" = configure ] && command -v update-grub > /dev/null && [ -e /boot/grub/grub.cfg ]; then
+	update-grub || echo "sp9-cmdline: update-grub failed; run it yourself" >&2
+fi
+#DEBHELPER#
+exit 0

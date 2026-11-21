@@ -1,0 +1,2 @@
+# pinctrl_tigerlake in the initramfs: initramfs-tools and dracut rebuild on this trigger
+activate-noawait update-initramfs

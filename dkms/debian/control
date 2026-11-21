@@ -1,0 +1,52 @@
+Source: sp9-dkms
+Section: kernel
+Priority: optional
+Maintainer: Joonhoe Kim <26rote@gmail.com>
+Build-Depends: debhelper-compat (= 13), dh-dkms
+Standards-Version: 4.7.0
+Homepage: https://github.com/joonhoekim/surface-pro-9-linux
+Rules-Requires-Root: no
+
+Package: sp9-dkms
+Architecture: all
+Depends: dkms (>= 3.0), linux-headers-surface, kmod, libelf1t64 | libelf1, ${misc:Depends}
+Recommends: mokutil
+Description: Surface Pro 9 kernel patches as DKMS modules for the linux-surface kernel
+ Rebuilds eleven modules of the linux-surface kernel with the kernel patches of
+ surface-pro-9-linux and installs them to /lib/modules/<release>/updates/dkms,
+ where they take precedence over the stock ones: front and rear cameras
+ (ipu-bridge, ov5693, ov13858, dw9719, intel_skl_int3472_discrete), USB-C
+ (ucsi_surface_hid, new) and the charger (surface_charger), SAM RTC node and
+ fan floor (surface_aggregator_registry, surface_platform_profile), Type Cover
+ keys and backlight (hid-surface) and touch (ithc).
+ .
+ Each module is generated from the exact source of each supported
+ linux-surface release, so no stable or linux-surface fix of that release is
+ replaced by an older copy. For a kernel release the package has no source
+ for, nothing is built and the stock modules stay in use; sp9-dkms-status
+ says which kernels are covered. With Secure Boot, dkms signs the modules with
+ its own key, which has to be enrolled once with mokutil.
+ .
+ The display patch (PSR2 quirk) and the Bluetooth patches are not part of this
+ package; Bluetooth is in sp9-dkms-bluetooth.
+
+Package: sp9-dkms-bluetooth
+Architecture: all
+Depends: dkms (>= 3.0), linux-headers-surface, kmod, libelf1t64 | libelf1, ${misc:Depends}
+Recommends: sp9-dkms
+Description: Surface Pro 9 Bluetooth patches as a DKMS bluetooth.ko for linux-surface
+ Rebuilds the whole Bluetooth core module (bluetooth.ko) with two patches: LE
+ legacy pairing with out-of-band data, which the Slim Pen 2 uses when it is
+ bonded in the Type Cover's pen slot, and replacing a controller resolving
+ list entry when a device is bonded again, without which a re-bonded pen does
+ not reconnect until the adapter is restarted.
+ .
+ Trade-off: bluetooth.ko is large, security-relevant and fixed often in stable
+ releases. To never hide those fixes, the module is built only from the
+ net/bluetooth source of exactly the running kernel release, which this
+ package carries for each supported linux-surface release. For any other
+ release nothing is built and the stock bluetooth.ko is used (sp9-dkms-status
+ says so), so after a kernel update the pen features are missing until this
+ package is updated. While installed, every Bluetooth device on the system
+ uses this rebuilt module. Skip this package if you do not need the pen's
+ cover coupling.

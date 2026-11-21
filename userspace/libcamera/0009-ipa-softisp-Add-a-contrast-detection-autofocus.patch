@@ -1,0 +1,560 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 15:03:25 +0900
+Subject: [PATCH] ipa: softisp: Add a contrast detection autofocus
+
+Add an Af algorithm to the software ISP IPA module. It uses the focus
+statistics: a coarse scan through the lens range from the far end,
+stopped once the contrast has clearly passed its peak, a fine scan
+between the neighbours of the peak, and the interpolated maximum as the
+result. A scan whose contrast varies by less than a quarter found
+nothing to focus on and leaves the lens at the default position.
+
+The lens moves right after a frame with statistics, so it has the three
+frames in between to settle. In continuous mode the scan runs once the
+exposure has settled after the start, and again when the contrast of the
+focused scene has differed from its reference for four statistics frames
+in a row.
+
+Controls: AfMode (manual, auto, continuous), AfTrigger and LensPosition;
+metadata: AfMode, AfState, LensPosition and FocusFoM. The mapping from
+dioptres to lens driver positions is linear between two positions given
+in the tuning data. The algorithm is inert when the camera has no lens.
+---
+ src/ipa/softisp/algorithms/af.cpp      | 415 +++++++++++++++++++++++++
+ src/ipa/softisp/algorithms/af.h        |  91 ++++++
+ src/ipa/softisp/algorithms/meson.build |   1 +
+ 3 files changed, 507 insertions(+)
+ create mode 100644 src/ipa/softisp/algorithms/af.cpp
+ create mode 100644 src/ipa/softisp/algorithms/af.h
+
+diff --git a/src/ipa/softisp/algorithms/af.cpp b/src/ipa/softisp/algorithms/af.cpp
+new file mode 100644
+index 00000000..fdeacbea
+--- /dev/null
++++ b/src/ipa/softisp/algorithms/af.cpp
+@@ -0,0 +1,415 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Contrast detection autofocus
++ */
++
++#include "af.h"
++
++#include <algorithm>
++#include <cmath>
++
++#include <linux/v4l2-controls.h>
++
++#include <libcamera/base/log.h>
++
++#include <libcamera/control_ids.h>
++
++/**
++ * \file af.h
++ * \brief Contrast detection autofocus for the software ISP
++ *
++ * The software ISP statistics carry a contrast figure of the centre of the
++ * image for every frame that has statistics. This algorithm moves the lens
++ * through its range in coarse steps from the far end, stops once the contrast
++ * has clearly passed its peak, scans the neighbourhood of the peak in fine
++ * steps and settles on the interpolated maximum. In continuous mode it scans
++ * at the start and again when the contrast of the focused scene has changed
++ * for a while, at most once in two seconds. The lens moves right after a statistics frame, so it has the
++ * frames until the next statistics to settle.
++ *
++ * The algorithm is only active when the camera has a focus lens. Tuning data:
++ *
++ * - lensRange: lens driver positions for the far and the near end of the
++ *   focus range. The far end stands for 0 dioptres. Default: the limits of
++ *   the lens driver's control.
++ * - maxDioptres: the dioptres the near end stands for. Default 10.
++ * - defaultPosition: position in dioptres used before the first scan, when a
++ *   scan finds nothing to focus on, and as default of LensPosition. Default 1.
++ * - coarseStep, fineStep: scan steps in lens driver units. Defaults: an
++ *   eighth and a thirty-second of the range.
++ * - mode: "continuous" (default), "auto" or "manual": the mode a camera
++ *   starts in when the application does not set AfMode.
++ */
++
++namespace libcamera {
++
++namespace ipa::softisp::algorithms {
++
++LOG_DEFINE_CATEGORY(IPASoftIspAf)
++
++namespace {
++
++/* A scan with less contrast variation than this found nothing to focus on. */
++constexpr double kMinPeakRatio = 1.25;
++
++/* The coarse scan stops when the contrast is below this share of the peak... */
++constexpr double kPastPeakRatio = 0.6;
++/* ...this many steps after it. */
++constexpr unsigned int kPastPeakSteps = 2;
++
++/* Continuous mode scans again after the contrast has differed by this share... */
++constexpr double kChangeRatio = 0.35;
++/* ...for this many statistics frames in a row. */
++constexpr unsigned int kChangeCount = 4;
++
++/* ...and not before this many statistics frames (two seconds) after a scan. */
++constexpr unsigned int kRescanHoldoff = 15;
++
++/* Number of statistics frames averaged for the reference contrast. */
++constexpr unsigned int kReferenceCount = 2;
++
++/* The exposure counts as settled when it changes by less than this share. */
++constexpr double kExposureStable = 0.1;
++
++} /* namespace */
++
++int Af::init(IPAContext &context, const ValueNode &tuningData)
++{
++	const auto &lens = context.lensControls.find(V4L2_CID_FOCUS_ABSOLUTE);
++	if (lens == context.lensControls.end()) {
++		LOG(IPASoftIspAf, Info) << "No focus lens, autofocus disabled";
++		return 0;
++	}
++
++	const int32_t lensMin = lens->second.min().get<int32_t>();
++	const int32_t lensMax = lens->second.max().get<int32_t>();
++
++	auto range = tuningData["lensRange"].get<std::vector<int32_t>>();
++	if (range && range->size() == 2) {
++		far_ = std::clamp((*range)[0], lensMin, lensMax);
++		near_ = std::clamp((*range)[1], lensMin, lensMax);
++	} else {
++		far_ = lensMin;
++		near_ = lensMax;
++	}
++
++	if (far_ == near_) {
++		LOG(IPASoftIspAf, Error) << "Empty lens range";
++		return -EINVAL;
++	}
++
++	const int32_t span = std::abs(near_ - far_);
++	maxDioptres_ = tuningData["maxDioptres"].get<float>().value_or(10.0f);
++	defaultDioptres_ = std::clamp(tuningData["defaultPosition"].get<float>().value_or(1.0f),
++				      0.0f, maxDioptres_);
++	coarseStep_ = std::clamp(tuningData["coarseStep"].get<int32_t>().value_or(span / 8), 1, span);
++	fineStep_ = std::clamp(tuningData["fineStep"].get<int32_t>().value_or(span / 32), 1, coarseStep_);
++
++	const std::string mode = tuningData["mode"].get<std::string>().value_or("continuous");
++	if (mode == "manual")
++		defaultMode_ = controls::AfModeManual;
++	else if (mode == "auto")
++		defaultMode_ = controls::AfModeAuto;
++	else
++		defaultMode_ = controls::AfModeContinuous;
++
++	available_ = true;
++
++	context.ctrlMap[&controls::AfMode] =
++		ControlInfo(controls::AfModeValues, static_cast<int32_t>(defaultMode_));
++	context.ctrlMap[&controls::AfTrigger] = ControlInfo(controls::AfTriggerValues);
++	context.ctrlMap[&controls::LensPosition] =
++		ControlInfo(0.0f, maxDioptres_, defaultDioptres_);
++
++	LOG(IPASoftIspAf, Info)
++		<< "Lens range " << far_ << " (far) to " << near_ << " (near, "
++		<< maxDioptres_ << " dioptres), steps " << coarseStep_ << " and "
++		<< fineStep_;
++
++	return 0;
++}
++
++int Af::configure([[maybe_unused]] IPAContext &context,
++		  [[maybe_unused]] const IPAConfigInfo &configInfo)
++{
++	if (!available_)
++		return 0;
++
++	mode_ = defaultMode_;
++	state_ = controls::AfStateIdle;
++	scan_ = Scan::None;
++	position_ = fromDioptres(defaultDioptres_);
++	positionWritten_ = false;
++	triggered_ = false;
++	scanned_ = false;
++	points_.clear();
++	reference_ = 0.0;
++	referenceCount_ = 0;
++	changeCount_ = 0;
++	statsCount_ = 0;
++	lastExposure_ = 0.0;
++	contrast_ = 0.0;
++
++	return 0;
++}
++
++int32_t Af::fromDioptres(float dioptres) const
++{
++	float share = std::clamp(dioptres / maxDioptres_, 0.0f, 1.0f);
++
++	return far_ + std::lround((near_ - far_) * share);
++}
++
++float Af::toDioptres(int32_t position) const
++{
++	return maxDioptres_ * (position - far_) / (near_ - far_);
++}
++
++void Af::moveTo(IPAContext &context, int32_t position)
++{
++	position_ = std::clamp(position, std::min(far_, near_), std::max(far_, near_));
++	context.activeState.af.lensPosition = position_;
++	positionWritten_ = true;
++}
++
++void Af::startScan(IPAContext &context)
++{
++	LOG(IPASoftIspAf, Debug) << "Scan from " << far_;
++
++	points_.clear();
++	scan_ = Scan::Coarse;
++	state_ = controls::AfStateScanning;
++	triggered_ = false;
++	moveTo(context, far_);
++}
++
++void Af::endScan(IPAContext &context, int32_t position, controls::AfStateEnum state)
++{
++	scan_ = Scan::None;
++	state_ = state;
++	scanned_ = true;
++	points_.clear();
++	referenceCount_ = 0;
++	reference_ = 0.0;
++	changeCount_ = 0;
++	statsCount_ = 0;
++	moveTo(context, position);
++}
++
++void Af::finishCoarse(IPAContext &context)
++{
++	const auto [lowest, best] =
++		std::minmax_element(points_.begin(), points_.end(),
++				    [](const Point &a, const Point &b) {
++					    return a.contrast < b.contrast;
++				    });
++
++	if (best->contrast < lowest->contrast * kMinPeakRatio) {
++		LOG(IPASoftIspAf, Debug)
++			<< "Nothing to focus on: contrast " << lowest->contrast
++			<< " to " << best->contrast;
++		endScan(context, fromDioptres(defaultDioptres_), controls::AfStateFailed);
++		return;
++	}
++
++	/* Scan between the neighbours of the coarse peak. */
++	const int32_t direction = near_ > far_ ? 1 : -1;
++	const int32_t lo = std::min(far_, near_);
++	const int32_t hi = std::max(far_, near_);
++	const int32_t start = std::clamp(best->position - direction * (coarseStep_ - fineStep_), lo, hi);
++
++	fineEnd_ = std::clamp(best->position + direction * (coarseStep_ - fineStep_), lo, hi);
++
++	LOG(IPASoftIspAf, Debug)
++		<< "Coarse peak at " << best->position << " (" << best->contrast
++		<< "), fine scan " << start << " to " << fineEnd_;
++
++	points_.clear();
++	scan_ = Scan::Fine;
++	moveTo(context, start);
++}
++
++void Af::finishFine(IPAContext &context)
++{
++	const auto best = std::max_element(points_.begin(), points_.end(),
++					   [](const Point &a, const Point &b) {
++						   return a.contrast < b.contrast;
++					   });
++	double position = best->position;
++
++	/* Fit a parabola through the peak and its neighbours. */
++	if (best != points_.begin() && std::next(best) != points_.end()) {
++		const Point &a = *std::prev(best);
++		const Point &c = *std::next(best);
++		double denominator = a.contrast - 2 * best->contrast + c.contrast;
++
++		if (denominator < 0)
++			position += 0.5 * (a.contrast - c.contrast) / denominator *
++				    (c.position - best->position);
++	}
++
++	LOG(IPASoftIspAf, Debug)
++		<< "Focused at " << position << " (" << best->contrast << ")";
++
++	endScan(context, std::lround(position), controls::AfStateFocused);
++}
++
++void Af::queueRequest(typename Module::Context &context,
++		      [[maybe_unused]] const uint32_t frame,
++		      [[maybe_unused]] typename Module::FrameContext &frameContext,
++		      const ControlList &controls)
++{
++	if (!available_)
++		return;
++
++	const auto &mode = controls.get(controls::AfMode);
++	if (mode && *mode != mode_) {
++		mode_ = static_cast<controls::AfModeEnum>(*mode);
++		scan_ = Scan::None;
++		points_.clear();
++		triggered_ = false;
++		scanned_ = false;
++		if (state_ == controls::AfStateScanning)
++			state_ = controls::AfStateIdle;
++		if (mode_ == controls::AfModeManual)
++			state_ = controls::AfStateIdle;
++
++		LOG(IPASoftIspAf, Debug) << "Mode " << mode_;
++	}
++
++	const auto &trigger = controls.get(controls::AfTrigger);
++	if (trigger && mode_ == controls::AfModeAuto) {
++		if (*trigger == controls::AfTriggerStart) {
++			triggered_ = true;
++		} else {
++			triggered_ = false;
++			if (scan_ != Scan::None) {
++				scan_ = Scan::None;
++				points_.clear();
++				state_ = controls::AfStateIdle;
++			}
++		}
++	}
++
++	const auto &lensPosition = controls.get(controls::LensPosition);
++	if (lensPosition && mode_ == controls::AfModeManual)
++		moveTo(context, fromDioptres(*lensPosition));
++}
++
++void Af::process(IPAContext &context, [[maybe_unused]] const uint32_t frame,
++		 IPAFrameContext &frameContext, const SwIspStats *stats,
++		 ControlList &metadata)
++{
++	if (!available_)
++		return;
++
++	/* Put the lens where the session starts from. */
++	if (!positionWritten_)
++		moveTo(context, position_);
++
++	if (stats->valid && stats->focusSamples) {
++		/*
++		 * Contrast relative to the brightness, so that the exposure
++		 * changes little of it. Two contrast samples share one pair
++		 * of green pixels in the luma sum.
++		 */
++		double luma = static_cast<double>(stats->focusLuma) / stats->focusSamples -
++			      context.activeState.blc.level;
++		luma = std::max(luma, 1.0);
++		contrast_ = static_cast<double>(stats->focusContrast) /
++			    stats->focusSamples / (luma * luma);
++
++		double exposure = frameContext.sensor.exposure * frameContext.sensor.gain;
++		bool exposureStable = lastExposure_ > 0 &&
++				      std::abs(exposure - lastExposure_) <
++				      kExposureStable * lastExposure_;
++		lastExposure_ = exposure;
++		statsCount_++;
++
++		switch (scan_) {
++		case Scan::None:
++			if (mode_ == controls::AfModeAuto) {
++				if (triggered_)
++					startScan(context);
++				break;
++			}
++
++			if (mode_ != controls::AfModeContinuous)
++				break;
++
++			if (!scanned_) {
++				/* Let the exposure settle on a new scene first. */
++				if (exposureStable && statsCount_ >= 2)
++					startScan(context);
++				break;
++			}
++
++			if (referenceCount_ < kReferenceCount) {
++				reference_ += contrast_ / kReferenceCount;
++				referenceCount_++;
++				break;
++			}
++
++			if (std::abs(contrast_ - reference_) > kChangeRatio * reference_)
++				changeCount_++;
++			else
++				changeCount_ = 0;
++
++			if (changeCount_ >= kChangeCount && exposureStable &&
++			    statsCount_ >= kRescanHoldoff)
++				startScan(context);
++			break;
++
++		case Scan::Coarse: {
++			points_.push_back({ position_, contrast_ });
++
++			const auto best = std::max_element(points_.begin(), points_.end(),
++							   [](const Point &a, const Point &b) {
++								   return a.contrast < b.contrast;
++							   });
++			bool pastPeak = std::distance(best, points_.end()) > kPastPeakSteps &&
++					contrast_ < best->contrast * kPastPeakRatio;
++
++			if (pastPeak || position_ == near_) {
++				finishCoarse(context);
++				break;
++			}
++
++			const int32_t direction = near_ > far_ ? 1 : -1;
++			int32_t next = position_ + direction * coarseStep_;
++			if ((near_ - next) * direction < 0)
++				next = near_;
++			moveTo(context, next);
++			break;
++		}
++
++		case Scan::Fine: {
++			points_.push_back({ position_, contrast_ });
++
++			if (position_ == fineEnd_) {
++				finishFine(context);
++				break;
++			}
++
++			const int32_t direction = near_ > far_ ? 1 : -1;
++			int32_t next = position_ + direction * fineStep_;
++			if ((fineEnd_ - next) * direction < 0)
++				next = fineEnd_;
++			moveTo(context, next);
++			break;
++		}
++		}
++	}
++
++	metadata.set(controls::AfMode, mode_);
++	metadata.set(controls::AfState, state_);
++	metadata.set(controls::LensPosition, toDioptres(position_));
++	/* Parts per million: the contrast of a sharp scene is about a percent. */
++	metadata.set(controls::FocusFoM, static_cast<int32_t>(std::min(contrast_ * 1e6, 2e9)));
++}
++
++REGISTER_IPA_ALGORITHM(Af, "Af")
++
++} /* namespace ipa::softisp::algorithms */
++
++} /* namespace libcamera */
+diff --git a/src/ipa/softisp/algorithms/af.h b/src/ipa/softisp/algorithms/af.h
+new file mode 100644
+index 00000000..b4ec5438
+--- /dev/null
++++ b/src/ipa/softisp/algorithms/af.h
+@@ -0,0 +1,91 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Contrast detection autofocus
++ */
++
++#pragma once
++
++#include <optional>
++#include <stdint.h>
++#include <vector>
++
++#include <libcamera/control_ids.h>
++
++#include "algorithm.h"
++
++namespace libcamera {
++
++namespace ipa::softisp::algorithms {
++
++class Af : public Algorithm
++{
++public:
++	Af() = default;
++	~Af() = default;
++
++	int init(IPAContext &context, const ValueNode &tuningData) override;
++	int configure(IPAContext &context,
++		      const IPAConfigInfo &configInfo) override;
++	void queueRequest(typename Module::Context &context,
++			  const uint32_t frame,
++			  typename Module::FrameContext &frameContext,
++			  const ControlList &controls) override;
++	void process(IPAContext &context, const uint32_t frame,
++		     IPAFrameContext &frameContext,
++		     const SwIspStats *stats,
++		     ControlList &metadata) override;
++
++private:
++	enum class Scan {
++		None,
++		Coarse,
++		Fine,
++	};
++
++	struct Point {
++		int32_t position;
++		double contrast;
++	};
++
++	int32_t fromDioptres(float dioptres) const;
++	float toDioptres(int32_t position) const;
++	void moveTo(IPAContext &context, int32_t position);
++	void startScan(IPAContext &context);
++	void finishCoarse(IPAContext &context);
++	void finishFine(IPAContext &context);
++	void endScan(IPAContext &context, int32_t position, controls::AfStateEnum state);
++
++	bool available_ = false;
++
++	/* Tuning: lens driver positions and what they mean. */
++	int32_t far_;
++	int32_t near_;
++	float maxDioptres_;
++	float defaultDioptres_;
++	int32_t coarseStep_;
++	int32_t fineStep_;
++	controls::AfModeEnum defaultMode_;
++
++	/* State of the streaming session. */
++	controls::AfModeEnum mode_;
++	controls::AfStateEnum state_;
++	Scan scan_;
++	int32_t position_;
++	bool positionWritten_;
++	bool triggered_;
++	bool scanned_;
++	std::vector<Point> points_;
++	int32_t fineEnd_;
++
++	/* Scene change detection in continuous mode. */
++	double reference_;
++	unsigned int referenceCount_;
++	unsigned int changeCount_;
++	unsigned int statsCount_;
++	double lastExposure_;
++	double contrast_;
++};
++
++} /* namespace ipa::softisp::algorithms */
++
++} /* namespace libcamera */
+diff --git a/src/ipa/softisp/algorithms/meson.build b/src/ipa/softisp/algorithms/meson.build
+index d98f4b1f..7d107711 100644
+--- a/src/ipa/softisp/algorithms/meson.build
++++ b/src/ipa/softisp/algorithms/meson.build
+@@ -2,6 +2,7 @@
+ 
+ softisp_ipa_algorithms = files([
+     'adjust.cpp',
++    'af.cpp',
+     'awb.cpp',
+     'agc.cpp',
+     'blc.cpp',

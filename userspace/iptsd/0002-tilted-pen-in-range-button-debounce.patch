@@ -1,0 +1,70 @@
+Keep a tilted DFT pen in range, and no button from the first frame in range
+
+The position of a DFT pen was rejected when a neighbour of the strongest antenna was in antiphase
+with it; with the Slim Pen 2 held at a strong tilt that is so for most frames (63 % in a capture
+on the Surface Pro 9), so the pen kept dropping out of range. Such a neighbour now counts as no
+signal on that side.
+
+Each time the pen came back into range, the button state of the first frame was taken from the
+phase of a signal far too weak to have one, before the MPP v2 binary window had decided: a
+one-frame press of the barrel button (or a one-frame eraser). The magnitude based decision now
+needs two frames in a row.
+
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index 3f42ed9..1fcca14 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -41,6 +41,10 @@ private:
+ 	// This is used instead of the button threshold detection.
+ 	std::optional<bool> m_mppv2_button_or_eraser = std::nullopt;
+ 
++	// What the magnitude based button detection saw in the previous frame.
++	bool m_button_candidate = false;
++	bool m_rubber_candidate = false;
++
+ 	// Boolean to track whether the pen is in contact according to mpp v2.
+ 	// This is used to override the contact state in the pressure frame handling.
+ 	std::optional<bool> m_mppv2_in_contact = std::nullopt;
+@@ -243,6 +247,20 @@ private:
+ 			rubber = val > 0;
+ 		}
+ 
++		// Without a decision from the binary window the phase of a weak signal is
++		// all there is, and it is noise in the first frame after the pen came into
++		// range: a state counts once two frames in a row agree on it.
++		if (!m_mppv2_button_or_eraser.has_value()) {
++			const bool button_now = button;
++			const bool rubber_now = rubber;
++
++			button = button_now && m_button_candidate;
++			rubber = rubber_now && m_rubber_candidate;
++
++			m_button_candidate = button_now;
++			m_rubber_candidate = rubber_now;
++		}
++
+ 		m_stylus.button = button;
+ 		m_stylus.rubber = rubber;
+ 	}
+@@ -438,6 +456,12 @@ private:
+ 			(sin * row.real.at(maxi + 1)) + (cos * row.imag.at(maxi + 1)),
+ 		};
+ 
++		// A neighbour that is in antiphase with the peak (a strongly tilted pen: the
++		// signal of the barrel leaks in on that side) is as good as no signal there.
++		// Without this the pen would drop out of range for as long as it is held so.
++		x[0] = std::max(x[0], 1.0);
++		x[2] = std::max(x[2], 1.0);
++
+ 		// convert the amplitudes into something we can fit a parabola to
+ 		for (u8 i = 0; i < 3; i++)
+ 			x.at(i) = std::pow(x.at(i), m_config.dft_position_exp);
+@@ -570,6 +594,8 @@ private:
+ 
+ 		m_mppv2_in_contact = std::nullopt;
+ 		m_mppv2_button_or_eraser = std::nullopt;
++		m_button_candidate = false;
++		m_rubber_candidate = false;
+ 
+ 		m_tip_energy = std::nullopt;
+ 		m_zero_force_contact = false;

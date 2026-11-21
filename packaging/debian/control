@@ -1,0 +1,143 @@
+Source: sp9-linux
+Section: misc
+Priority: optional
+Maintainer: Joonhoe Kim <26rote@gmail.com>
+Rules-Requires-Root: no
+Standards-Version: 4.7.0
+Homepage: https://github.com/joonhoekim/surface-pro-9-linux
+Vcs-Git: https://github.com/joonhoekim/surface-pro-9-linux.git
+Vcs-Browser: https://github.com/joonhoekim/surface-pro-9-linux
+Build-Depends:
+ debhelper-compat (= 13),
+ cargo (>= 1.89) | cargo-web (>= 1.89) | cargo-1.97,
+ rustc (>= 1.89) | rustc-web (>= 1.89) | rustc-1.97,
+ pkgconf | pkg-config,
+ libgtk-4-dev (>= 4.12),
+ libadwaita-1-dev (>= 1.5),
+ libdbus-1-dev,
+ python3:any,
+ gpg <!nokeyring>,
+
+Package: sp9
+Architecture: all
+Depends:
+ sp9-platform (= ${binary:Version}),
+ sp9-helper (>= ${binary:Version}),
+ sp9-digitizerd,
+ ${misc:Depends},
+Recommends:
+ sp9-settings,
+ sp9-dkms,
+ sp9-cmdline,
+Suggests:
+ sp9-dkms-bluetooth,
+ sp9-libcamera,
+Description: Surface Pro 9 (Intel) support on top of linux-surface
+ Installs the pieces that make the Microsoft Surface Pro 9 with an Intel CPU
+ (SKU Surface_Pro_9_2038) work on top of the linux-surface kernel: the
+ platform files, the device helper and the touch and pen daemon sp9-digitizerd,
+ which replaces linux-surface's iptsd. It recommends the kernel modules of this
+ project (sp9-dkms), the settings app and the kernel command line. This is a
+ metapackage: it holds no files of its own. To keep iptsd, install the other
+ sp9 packages without this one.
+
+Package: sp9-helper
+Architecture: amd64
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ dbus-system-bus | dbus,
+ polkitd,
+ python3,
+Recommends:
+ kmod,
+ pciutils,
+ usbutils,
+Suggests:
+ sp9-settings,
+ alsa-utils,
+ alsa-tools,
+ evtest,
+ i2c-tools,
+ libinput-tools,
+ lm-sensors,
+ v4l-utils,
+Description: Surface Pro 9 (Intel) device helper (sp9-helperd, sp9-ctl)
+ sp9-helperd is a system D-Bus service for the device-specific controls of
+ the Surface Pro 9 with an Intel CPU: performance profiles with the Windows
+ power limits, battery health and smart charging, panel self refresh policy,
+ the panel colour profile, the Type Cover backlight, touch and pen settings,
+ pen haptics and coupling, and a diagnostics export. Changes are authorized
+ by polkit. sp9-ctl is its command-line client. The service starts only on
+ this model (SMBIOS SKU Surface_Pro_9_2038). It reports the installed package
+ versions and the state of the sp9-dkms kernel modules; it never downloads or
+ installs anything itself.
+
+Package: sp9-settings
+Architecture: amd64
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ sp9-helper,
+Description: Surface Pro 9 (Intel) settings app
+ A GTK 4 and libadwaita front-end for sp9-helperd: performance profiles,
+ battery and smart charging, panel self refresh, Type Cover backlight, touch
+ sensitivity, pen haptics and the diagnostics export.
+
+Package: sp9-digitizerd
+Architecture: amd64
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ dbus-system-bus | dbus,
+Conflicts:
+ iptsd,
+Description: Surface Pro 9 (Intel) touch and pen daemon
+ sp9-digitizerd turns the raw data of the Surface Pro 9 digitizer (HID
+ 045E:0C52) into a touchscreen and a stylus through uinput. It is a port of
+ iptsd with this project's pen processing, keeps its input devices across
+ suspend and takes setting changes from sp9-helperd over D-Bus without a
+ restart. It replaces iptsd: both read the same device, so only one of them
+ can be installed.
+
+Package: sp9-platform
+Architecture: all
+Depends:
+ ${misc:Depends},
+ iio-sensor-proxy,
+Recommends:
+ pipewire (>= 1.0),
+ wireplumber (>= 0.5),
+ swh-plugins,
+Description: Surface Pro 9 (Intel) platform files
+ Configuration files the Surface Pro 9 with an Intel CPU needs whatever the
+ desktop: the iptsd preset and the libinput quirk for the pen's tip threshold,
+ PSR1 only on the panel through i915 debugfs (no tainting kernel parameter),
+ the udev rule that makes the accelerometer report at rest (for automatic
+ rotation through iio-sensor-proxy), pinctrl_tigerlake in the initramfs (power
+ and volume buttons), and the PipeWire and WirePlumber configuration for the
+ speakers (protection filter chain, raw sink at 100 %), the microphones and an
+ echo-cancelled microphone source.
+
+Package: sp9-cmdline
+Architecture: all
+Depends:
+ ${misc:Depends},
+Enhances:
+ grub2-common,
+Description: Surface Pro 9 (Intel) kernel command line
+ Adds the kernel parameters this project recommends for the Surface Pro 9 on
+ the linux-surface kernel to GRUB through /etc/default/grub.d and runs
+ update-grub. Removing the package removes them again. Other boot loaders: the
+ parameters are in /usr/share/sp9-platform/cmdline.
+
+Package: sp9-archive-keyring
+Architecture: all
+Build-Profiles: <!nokeyring>
+Multi-Arch: foreign
+Depends:
+ ${misc:Depends},
+Description: OpenPGP key of the surface-pro-9-linux package repository
+ The public key that signs the apt repository of surface-pro-9-linux, in
+ /usr/share/keyrings/sp9-archive-keyring.gpg, for the Signed-By field of its
+ sources entry. Updates of this package carry new or rotated keys.

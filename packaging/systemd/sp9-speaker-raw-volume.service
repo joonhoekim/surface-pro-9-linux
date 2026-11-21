@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# The raw speaker sink at 100 % after every WirePlumber start; the "Speakers" filter sink in front
+# of it is the volume control (userspace/platform/README.md, "Speaker processing"). Wanted by
+# wireplumber.service through a link the package ships; `systemctl --user mask` turns it off.
+[Unit]
+Description=Raw speaker sink at 100 % (the Speakers filter sink is the volume control)
+After=wireplumber.service
+ConditionFirmware=smbios-field(product_sku = Surface_Pro_9_2038)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/lib/sp9-platform/sp9-speaker-raw-volume

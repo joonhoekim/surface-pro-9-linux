@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+set -e
+case $1 in
+remove | purge)
+	# on remove the conffile stays (and takes effect) until purge; after purge it is gone
+	if [ "$1" = purge ] || [ ! -e /etc/default/grub.d/sp9-platform.cfg ]; then
+		if command -v update-grub > /dev/null && [ -e /boot/grub/grub.cfg ]; then
+			update-grub || echo "sp9-cmdline: update-grub failed; run it yourself" >&2
+		fi
+	fi
+	;;
+esac
+#DEBHELPER#
+exit 0

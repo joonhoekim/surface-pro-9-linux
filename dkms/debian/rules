@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Built by dkms/pkg/build-deb.sh, which puts the generated trees in sp9/ and sp9-bluetooth/ and
+# writes debian/changelog with the version.
+
+VERSION := $(shell dpkg-parsechangelog -SVersion)
+
+%:
+	dh $@ --with dkms
+
+override_dh_auto_build override_dh_auto_install override_dh_auto_clean override_dh_auto_test:
+
+override_dh_install:
+	for p in sp9:sp9-dkms sp9-bluetooth:sp9-dkms-bluetooth; do \
+	    tree=$${p%%:*}; pkg=$${p#*:}; \
+	    d=debian/$$pkg/usr/src/$$tree-$(VERSION); \
+	    mkdir -p $$d && cp -a $$tree/. $$d/ && chmod 0755 $$d/select-variant; \
+	    install -D -m 0755 sp9-dkms-status debian/$$pkg/usr/bin/sp9-dkms-status-$$tree; \
+	done
+	# One status command, in sp9-dkms; the bluetooth package carries its own copy under another name.
+	mv debian/sp9-dkms/usr/bin/sp9-dkms-status-sp9 debian/sp9-dkms/usr/bin/sp9-dkms-status
+	mv debian/sp9-dkms-bluetooth/usr/bin/sp9-dkms-status-sp9-bluetooth debian/sp9-dkms-bluetooth/usr/bin/sp9-dkms-bluetooth-status
+
+override_dh_dkms:
+	dh_dkms -psp9-dkms -- sp9/dkms.conf
+	dh_dkms -psp9-dkms-bluetooth -- sp9-bluetooth/dkms.conf

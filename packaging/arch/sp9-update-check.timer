@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Off unless enabled: systemctl enable --now sp9-update-check.timer
+[Unit]
+Description=Daily check for newer Surface Pro 9 packages (report only)
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=6h
+Persistent=yes
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+Source: sp9-libcamera
+Section: video
+Priority: optional
+Maintainer: Joonhoe Kim <26rote@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ meson (>= 1.0.1),
+ ninja-build,
+ pkgconf,
+ python3-jinja2,
+ python3-ply,
+ python3-yaml,
+ openssl,
+ libgnutls28-dev,
+ libyaml-dev,
+ libudev-dev,
+ libegl-dev,
+ libgles-dev,
+ libevent-dev,
+ patchelf,
+Rules-Requires-Root: no
+Standards-Version: 4.7.2
+Homepage: https://libcamera.org
+
+Package: sp9-libcamera
+Architecture: amd64
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ libspa-0.2-modules (>= ${sp9:PipeWireMin}),
+ libspa-0.2-modules (<< ${sp9:PipeWireNext}),
+Recommends: wireplumber (>= 0.5)
+Description: patched libcamera 0.8.0 for the Surface Pro 9 cameras (experimental)
+ libcamera 0.8.0 with the patches the two cameras of the Microsoft Surface Pro 9
+ (Intel) need from the simple pipeline handler and its software ISP: no purple
+ lines from the GPU debayer, metering over the visible image, stable exposure
+ with the real sensor gain ranges, contrast detection autofocus for the rear
+ camera, and a lens that is powered only while the camera streams.
+ .
+ It is installed in its own prefix, /usr/lib/sp9-libcamera, beside the
+ distribution's libcamera, together with a build of PipeWire's libcamera SPA
+ plugin (from PipeWire ${sp9:PipeWireVersion}) against it. Drop-ins for the
+ pipewire and wireplumber user services put that plugin ahead of the
+ distribution's, so PipeWire clients use the patched libcamera. Other
+ libcamera users (GStreamer libcamerasrc, the distribution's cam) keep the
+ distribution's libcamera. The package replaces no file.
+ .
+ The plugin must match the installed PipeWire release series; after a
+ PipeWire upgrade to another series this package needs a rebuild.

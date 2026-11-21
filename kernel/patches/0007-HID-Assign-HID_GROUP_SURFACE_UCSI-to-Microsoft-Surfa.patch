@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jairo Valdivia <valdiviaprado.ing@gmail.com>
+Date: Mon, 2 Nov 2026 08:46:50 -0700
+Subject: [PATCH] HID: Assign HID_GROUP_SURFACE_UCSI to Microsoft Surface UCSI
+ collections
+
+Microsoft Surface devices whose System Aggregator Module (SSAM) exposes
+a USB Type-C UCSI Platform Policy Manager over HID advertise a vendor
+application collection (Usage Page 0xFF00, Usage 0xF900; matched on
+Windows by SurfaceUcmUcsiHidClient.inf via HID\VID_045E&UP:FF00_U:F900).
+
+Because multiple unrelated SSAM HID functions can share the same VID:PID
+(for example, Surface Book 3 Base 045E:09A6 exposes both UCSI PPM
+collection 0xFF00:0xF900 and CFU firmware update collection 0xFF0B:0x0101),
+and hid-generic yields devices based solely on hid_device_id table matches
+without consulting .match(), assign HID_GROUP_SURFACE_UCSI during report
+descriptor scanning so a dedicated UCSI HID transport driver can bind
+cleanly across all Surface models without disturbing sibling collections.
+
+Signed-off-by: Jairo Valdivia <valdiviaprado.ing@gmail.com>
+Patchset: surface-ucsi-hid
+Link: https://github.com/linux-surface/kernel/pull/184
+---
+ drivers/hid/hid-core.c | 8 ++++++++
+ include/linux/hid.h    | 1 +
+ 2 files changed, 9 insertions(+)
+
+diff --git a/drivers/hid/hid-core.c b/drivers/hid/hid-core.c
+index a71ddaa81..fbccf905f 100644
+--- a/drivers/hid/hid-core.c
++++ b/drivers/hid/hid-core.c
+@@ -888,6 +888,14 @@ static void hid_scan_collection(struct hid_parser *parser, unsigned type)
+ 					(HID_UP_GOOGLEVENDOR | 0x0001))
+ 				parser->device->group =
+ 					HID_GROUP_VIVALDI;
++
++	if (hid->vendor == USB_VENDOR_ID_MICROSOFT &&
++	    type == HID_COLLECTION_APPLICATION &&
++	    (parser->global.usage_page << 16) == HID_UP_MSVENDOR)
++		for (i = 0; i < parser->local.usage_index; i++)
++			if (parser->local.usage[i] ==
++					(HID_UP_MSVENDOR | 0xf900))
++				hid->group = HID_GROUP_SURFACE_UCSI;
+ }
+ 
+ static int hid_scan_main(struct hid_parser *parser, struct hid_item *item)
+diff --git a/include/linux/hid.h b/include/linux/hid.h
+index 8d17b7416..a257e8e82 100644
+--- a/include/linux/hid.h
++++ b/include/linux/hid.h
+@@ -441,6 +441,7 @@ struct hid_item {
+ #define HID_GROUP_STEAM				0x0103
+ #define HID_GROUP_LOGITECH_27MHZ_DEVICE		0x0104
+ #define HID_GROUP_VIVALDI			0x0105
++#define HID_GROUP_SURFACE_UCSI			0x0106
+ 
+ /*
+  * HID protocol status

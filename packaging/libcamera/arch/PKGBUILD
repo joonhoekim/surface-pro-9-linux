@@ -1,0 +1,143 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+#
+# Maintainer: Joonhoe Kim <26rote@gmail.com>
+#
+# sp9-libcamera (experimental): libcamera 0.8.0 with the Surface Pro 9 patches of
+# userspace/libcamera/ in /usr/lib/sp9-libcamera, and PipeWire's libcamera SPA plugin, built from
+# the upstream tag of Arch's current pipewire package, against it. build-arch.sh copies the patches
+# and the files of packaging/libcamera/ next to this file and checks that _pwver is the installed
+# pipewire; bump _pwver and its checksum (updpkgsums) when Arch moves to another PipeWire release.
+
+pkgname=sp9-libcamera
+_lcver=0.8.0
+_lccommit=df8e348d64b4932a0676256ed24f0da3ee9438bc
+_pwver=1.6.11
+_pwseries=${_pwver%.*}
+_pwnext=${_pwseries%%.*}.$(( ${_pwseries#*.} + 1 ))
+pkgver=${_lcver}_sp9.${SP9_ARCH_VERSION:-0}
+pkgrel=1
+pkgdesc='Patched libcamera 0.8.0 and PipeWire libcamera plugin for the Surface Pro 9 cameras (experimental)'
+arch=('x86_64')
+url='https://libcamera.org'
+license=('LGPL-2.1-or-later' 'GPL-2.0-or-later' 'BSD-2-Clause' 'CC0-1.0' 'MIT')
+_prefix=/usr/lib/sp9-libcamera
+# The plugin is built from PipeWire $_pwver and runs inside PipeWire and WirePlumber without
+# linking libpipewire: the package needs that release series (namcap cannot see this).
+depends=(
+  'libstdc++' 'libgcc' 'glibc' 'gnutls' 'libyaml' 'systemd-libs' 'libglvnd' 'libevent'
+  "pipewire>=1:${_pwver}" "pipewire<1:${_pwnext}"
+)
+optdepends=('wireplumber: the session manager whose camera monitor uses the plugin')
+makedepends=('git' 'meson' 'ninja' 'openssl' 'python-jinja' 'python-ply' 'python-yaml' 'patchelf')
+# The IPA module is signed at install time and the signature covers the whole file: makepkg's strip
+# would invalidate it. package() strips and signs again itself.
+options=('!strip' '!debug')
+_patches=(
+  0001-Revert-libcamera-pipeline-simple-Prefer-CSI2-packed-.patch
+  0002-libcamera-software_isp-debayer_egl-Debayer-pixel-for.patch
+  0003-libcamera-sensor-Add-control-delays-for-ov5693-and-o.patch
+  0004-libipa-agc-Take-analogue-gain-limits-and-a-flicker-p.patch
+  0005-ipa-softisp-agc-Fix-the-luminance-estimate-of-dark-f.patch
+  0006-libcamera-software_isp-swstats_cpu-Keep-the-histogra.patch
+  0007-libcamera-software_isp-Add-focus-statistics.patch
+  0008-libcamera-software_isp-Let-the-IPA-move-the-focus-le.patch
+  0009-ipa-softisp-Add-a-contrast-detection-autofocus.patch
+  0010-ipa-softisp-Add-tuning-files-for-ov5693-and-ov13858.patch
+)
+source=(
+  "libcamera::git+https://git.libcamera.org/libcamera/libcamera.git#tag=v${_lcver}"
+  "pipewire::git+https://gitlab.freedesktop.org/pipewire/pipewire.git#tag=${_pwver}"
+  'sp9-libcamera.conf.in'
+  'pipewire-libcamera-0.8.sh'
+  "${_patches[@]}"
+)
+# Files from the repository are not pinned here (SKIP); the two upstream trees are.
+sha256sums=(
+  'ad371d863611616c2c53834675cd3d74eca416dbf786d0ea48d4b5e07bbfed11'
+  'f2d1450cd6b649a3a1d8ba523fee3b8e41baa95b169eb51fae1f6b54ccaa2fac'
+  'SKIP'
+  'SKIP'
+  'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+)
+
+prepare() {
+  cd libcamera
+  local got
+  got=$(git rev-parse HEAD)
+  [[ $got == "$_lccommit" ]] || { echo "libcamera v${_lcver} is $got, expected $_lccommit" >&2; return 1; }
+  local p
+  for p in "${_patches[@]}"; do
+    patch -Np1 -i "$srcdir/$p"
+  done
+  cd "$srcdir"
+  sh pipewire-libcamera-0.8.sh pipewire
+}
+
+build() {
+  local common=(--buildtype=plain --wrap-mode=nodownload --auto-features=disabled)
+  # The ELF files that use libcamera find it in its own prefix (RUNPATH). The staging directory is not
+  # recorded in the plugin (assertion strings of libcamera's headers).
+  export LDFLAGS="$LDFLAGS -Wl,-rpath,${_prefix}/lib"
+  export CFLAGS="$CFLAGS -ffile-prefix-map=$srcdir/stage=" CXXFLAGS="$CXXFLAGS -ffile-prefix-map=$srcdir/stage="
+
+  arch-meson libcamera build-libcamera "${common[@]}" \
+    --prefix="${_prefix}" --libdir=lib --libexecdir=libexec --bindir=bin --datadir=share \
+    --sysconfdir=/etc/sp9-libcamera \
+    -Dpipelines=simple,uvcvideo -Dipas=softisp \
+    -Dsoftisp-gpu=enabled -Dudev=enabled -Dcam=enabled \
+    -Dtest=false -Ddocumentation=disabled -Dgstreamer=disabled -Dqcam=disabled \
+    -Dlc-compliance=disabled -Dpycamera=disabled -Dv4l2=disabled -Dtracing=disabled
+  meson compile -C build-libcamera
+  rm -rf stage
+  DESTDIR="$srcdir/stage" meson install -C build-libcamera --no-rebuild
+
+  # The plugin is compiled against the staged libcamera; only its target is built.
+  PKG_CONFIG_PATH="$srcdir/stage${_prefix}/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$srcdir/stage" \
+    arch-meson pipewire build-pipewire "${common[@]}" \
+      -Dlibcamera=enabled -Ddbus=disabled -Dflatpak=disabled -Dexamples=disabled -Dtests=disabled -Dpipewire-jack=disabled -Dpipewire-v4l2=disabled -Dsession-managers=[] -Dlegacy-rtkit=false
+  ninja -C build-pipewire spa/plugins/libcamera/libspa-libcamera.so
+}
+
+package() {
+  local dest="$pkgdir${_prefix}" s="$srcdir/stage${_prefix}"
+  install -d "$dest/lib"
+  cp -a "$s/bin" "$s/libexec" "$s/share" "$dest/"
+  cp -a "$s/lib/libcamera" "$s"/lib/libcamera*.so.* "$dest/lib/"
+  # It runs the cam of PATH (the distribution's) and would report on the wrong libcamera.
+  rm -f "$dest/bin/libcamera-bug-report"
+  install -Dm0755 build-pipewire/spa/plugins/libcamera/libspa-libcamera.so \
+    "$dest/spa-0.2/libcamera/libspa-libcamera.so"
+  # The build tree's RUNPATH of the plugin is replaced by the installed prefix.
+  patchelf --set-rpath "${_prefix}/lib" "$dest/spa-0.2/libcamera/libspa-libcamera.so"
+  # libcamera takes a RUNPATH on itself for "not installed" and would then also search IPA modules
+  # and tuning files relative to the build tree. Its users need both libraries directly and find
+  # them through their own RUNPATH.
+  patchelf --remove-rpath "$dest/lib/libcamera.so.${_lcver}" "$dest/lib/libcamera-base.so.${_lcver}"
+
+  # Strip as makepkg would, then sign the IPA modules again with the build's key, whose public
+  # half is compiled into libcamera. An unsigned module would run isolated in the proxy process.
+  local f
+  while IFS= read -r -d '' f; do
+    # readelf as in makepkg's own strip step (file(1) is killed by its seccomp filter in fakeroot)
+    case $(LC_ALL=C readelf -h "$f" 2>/dev/null) in
+      *Type:*'DYN (Shared object file)'*) strip --strip-unneeded "$f" ;;
+      *Type:*'DYN (Position-Independent Executable file)'*|*Type:*'EXEC (Executable file)'*)
+        strip --strip-all "$f" ;;
+    esac
+  done < <(find "$dest" -type f -print0)
+  for f in "$dest"/lib/libcamera/ipa/*.so; do
+    sh libcamera/src/ipa/ipa-sign.sh build-libcamera/src/ipa-priv-key.pem "$f" "$f.sign"
+    build-libcamera/src/apps/ipa-verify/ipa_verify "$f"
+  done
+
+  local unit
+  for unit in pipewire wireplumber; do
+    install -d "$pkgdir/usr/lib/systemd/user/$unit.service.d"
+    sed 's|@DISTRO_SPA_PLUGIN_DIR@|/usr/lib/spa-0.2|' sp9-libcamera.conf.in \
+      > "$pkgdir/usr/lib/systemd/user/$unit.service.d/sp9-libcamera.conf"
+  done
+
+  install -Dm0644 libcamera/LICENSES/*.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
+  install -Dm0644 pipewire/COPYING "$pkgdir/usr/share/licenses/$pkgname/pipewire-COPYING"
+}

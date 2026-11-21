@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Started by 61-sp9-psr1.rules when the i915 card appears (also at the coldplug of every boot).
+[Unit]
+Description=Surface Pro 9: PSR1 only on the internal panel (i915 debugfs, no kernel parameter)
+Documentation=https://github.com/joonhoekim/surface-pro-9-linux/blob/main/userspace/platform/README.md
+ConditionPathExists=/sys/kernel/debug
+After=sys-kernel-debug.mount
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/sp9-platform/sp9-psr1

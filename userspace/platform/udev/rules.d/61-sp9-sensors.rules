@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Surface Pro 9: the accelerometer of the SAM sensor hub (HID over the Surface Aggregator).
+#
+# The hub sends an accelerometer report only when the reading moved by more than its change
+# sensitivity (0.05 g by default), and the SAM HID transport has no way to ask for an input
+# report. A buffer enabled while the device rests therefore stays empty, and a read of
+# in_accel_*_raw waits 5 s and returns 0. iio-sensor-proxy takes the empty buffer for a broken
+# one and falls back to those reads.
+#
+# Sensitivity 0 makes the hub report at its interval (8 Hz) for as long as something has the
+# sensor on (an enabled buffer, a read in progress); nothing is sent while it is off. The kernel
+# writes the value again after a system resume.
+#
+# Sorted before 80-iio-sensor-proxy.rules: the service that rule starts finds the value set.
+
+ACTION!="remove", SUBSYSTEM=="iio", KERNEL=="iio:device*", SUBSYSTEMS=="surface_aggregator", ATTR{name}=="accel_3d", ATTR{in_accel_hysteresis}="0"

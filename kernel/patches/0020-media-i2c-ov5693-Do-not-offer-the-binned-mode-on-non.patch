@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Tue, 17 Nov 2026 00:08:10 +0900
+Subject: [PATCH] media: i2c: ov5693: Do not offer the binned mode on
+ non-continuous clock links
+
+On IPU6 machines whose front camera is mounted upside down (Microsoft
+Surface Pro 7+, Pro 8, Pro 9) every request for 1280x720 or less returns
+no frames: libcamera picks the 1296x972 binned mode for it, each buffer
+comes back with the error flag set and the receiver logs "csi2-2 error:
+Frame sync error" for every frame. A video call at 720p gets nothing,
+while 1920x1080, which uses the full 2592x1944 readout, works.
+
+The binned readout itself is not what fails. On a Surface Pro 9 (IPU6,
+two lanes, non-continuous clock) raw capture of the binned mode gives
+
+  both flips off     20 of 20 buffers good, 57.3 fps
+  HFLIP only         all buffers in error (284 in 10 s)
+  VFLIP only         all buffers in error (284 in 10 s)
+  both flips on      all buffers in error (283 in 10 s)
+
+and the full readout with both flips on gives 20 of 20 good buffers at
+28.6 fps. In the failing cases frame starts still arrive at 57 Hz and one
+error buffer is returned for every two of them. The ipu-bridge reports a
+rotation of 180 degrees for these machines, so libcamera turns both flips
+on. Why the flipped binned readout upsets the receiver is not known.
+
+The driver cannot make the binned size depend on the flips: user space
+enumerates the frame sizes once with the flips cleared, and sets the
+flips only when it applies the format it chose from that list. So leave
+binning out of enum_frame_size and set_fmt altogether when the endpoint
+has a non-continuous clock, which is what the ipu-bridge requests for
+the IPU6. libcamera then finds 2592x1944 as the only sensor size and
+uses it for every stream size.
+
+What is given up on such links: the binned mode also for users who keep
+the flips off, where it works; its 57 fps, as the full readout tops out
+at 28.6 fps; and the lower readout, link and debayering load of a frame
+with a quarter of the pixels. With libcamera's software ISP a 1280x720
+stream becomes a centre crop of the full frame instead of a view of the
+whole binned frame, as that ISP crops and does not scale. Links with a
+continuous clock keep both sizes.
+
+Link: https://github.com/linux-surface/linux-surface/issues/2234
+Link: https://github.com/linux-surface/linux-surface/pull/2252
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/media/i2c/ov5693.c | 29 +++++++++++++++++++++++------
+ 1 file changed, 23 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5693.c b/drivers/media/i2c/ov5693.c
+index 37f24f4d6..47a72895b 100644
+--- a/drivers/media/i2c/ov5693.c
++++ b/drivers/media/i2c/ov5693.c
+@@ -771,6 +771,21 @@ static int ov5693_detect(struct ov5693_device *ov5693)
+ 
+ /* V4L2 Framework callbacks */
+ 
++/*
++ * On a CSI-2 link with a non-continuous clock the 2x2 binned readout only
++ * delivers frames while both flips are off. With either flip on the receiver
++ * reports a frame sync error for every frame and all buffers come back with
++ * the error flag set, where the full readout streams with any flip setting.
++ *
++ * The flips are controls set after the frame sizes were enumerated, and a
++ * sensor mounted upside down has both of them turned on by user space, so
++ * binning cannot follow them. Do not offer it on such a link at all.
++ */
++static unsigned int ov5693_max_binning(const struct ov5693_device *ov5693)
++{
++	return ov5693->clock_ncont ? 1 : 2;
++}
++
+ static unsigned int __ov5693_calc_vts(u32 height)
+ {
+ 	/*
+@@ -852,12 +867,13 @@ static int ov5693_set_fmt(struct v4l2_subdev *sd,
+ 
+ 	/*
+ 	 * We can only support setting either the dimensions of the crop rect
+-	 * or those dimensions binned (separately) by a factor of two.
++	 * or, where binning is usable, those dimensions binned (separately)
++	 * by a factor of two.
+ 	 */
+-	hratio = clamp_t(unsigned int,
+-			 DIV_ROUND_CLOSEST(crop->width, width), 1, 2);
+-	vratio = clamp_t(unsigned int,
+-			 DIV_ROUND_CLOSEST(crop->height, height), 1, 2);
++	hratio = clamp_t(unsigned int, DIV_ROUND_CLOSEST(crop->width, width),
++			 1, ov5693_max_binning(ov5693));
++	vratio = clamp_t(unsigned int, DIV_ROUND_CLOSEST(crop->height, height),
++			 1, ov5693_max_binning(ov5693));
+ 
+ 	fmt = __ov5693_get_pad_format(ov5693, state, format->pad,
+ 				      format->which);
+@@ -1063,7 +1079,8 @@ static int ov5693_enum_frame_size(struct v4l2_subdev *sd,
+ 	struct ov5693_device *ov5693 = to_ov5693_sensor(sd);
+ 	struct v4l2_rect *__crop;
+ 
+-	if (fse->index > 1 || fse->code != MEDIA_BUS_FMT_SBGGR10_1X10)
++	if (fse->index >= ov5693_max_binning(ov5693) ||
++	    fse->code != MEDIA_BUS_FMT_SBGGR10_1X10)
+ 		return -EINVAL;
+ 
+ 	__crop = __ov5693_get_pad_crop(ov5693, state, fse->pad, fse->which);

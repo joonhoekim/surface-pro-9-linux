@@ -1,0 +1,30 @@
+﻿
+Id                                           Class       Name                                                                     Service          
+--                                           -----       ----                                                                     -------          
+PCI\USB4_MS_CM                               USB         USB4(TM) Host Router (Microsoft)                                         Usb4HostRouter   
+PCI\VEN_144D&DEV_A80B&SUBSYS_A80B144D&REV_02 SCSIAdapter Standard NVM Express Controller                                          stornvme         
+PCI\VEN_8086&DEV_4601&SUBSYS_72708086&REV_04 System      Intel(R) Host Bridge/DRAM Registers - 4601                                                
+PCI\VEN_8086&DEV_461E&SUBSYS_72708086&REV_04 USB         Intel(R) USB 3.20 eXtensible Host Controller - 1.20 (Microsoft)          USBXHCI          
+PCI\VEN_8086&DEV_461F&SUBSYS_72708086&REV_04 System      Intel(R) TypeC PCIe - 461F                                               pci              
+PCI\VEN_8086&DEV_462F&SUBSYS_72708086&REV_04 System      Intel(R) TypeC PCIe - 462F                                               pci              
+PCI\VEN_8086&DEV_464D&SUBSYS_72708086&REV_04 System      Intel(R) PEG60 - 464D                                                    pci              
+PCI\VEN_8086&DEV_464F&SUBSYS_72708086&REV_04 System      Intel(R) GNA Scoring Accelerator module                                  IntelGNA         
+PCI\VEN_8086&DEV_465D&SUBSYS_72708086&REV_04 System      Intel(R) Imaging Signal Processor                                        iaisp64          
+PCI\VEN_8086&DEV_467D&SUBSYS_72708086&REV_01 System      Intel(R) Platform Monitoring Technology Driver                           IntelPMT         
+PCI\VEN_8086&DEV_46A8&SUBSYS_00631414&REV_0C Display     Intel(R) Iris(R) Xe Graphics                                             igfxn            
+PCI\VEN_8086&DEV_5182&SUBSYS_72708086&REV_01 System      Intel(R) LPC Controller - 5182                                           msisadrv         
+PCI\VEN_8086&DEV_51A4&SUBSYS_72708086&REV_01 System      Intel(R) SPI (flash) Controller - 51A4                                                    
+PCI\VEN_8086&DEV_51A8&SUBSYS_72708086&REV_01 System      Intel(R) Serial IO UART Host Controller - 51A8                           iaLPSS2_UART2_ADL
+PCI\VEN_8086&DEV_51C8&SUBSYS_72708086&REV_01 System      Intel® Smart Sound Technology BUS                                        IntcAudioBus     
+PCI\VEN_8086&DEV_51D0&SUBSYS_00641414&REV_01 HIDClass    Intel(R) Precise Touch and Stylus (Intel(R) PTS) - Base Driver - Port #1 IntelTHCBase     
+PCI\VEN_8086&DEV_51D8&SUBSYS_72708086&REV_01 System      Intel(R) Serial IO I2C Host Controller - 51D8                            iaLPSS2_I2C_ADL  
+PCI\VEN_8086&DEV_51E0&SUBSYS_72708086&REV_01 System      Intel(R) Management Engine Interface #1                                  MEIx64           
+PCI\VEN_8086&DEV_51E8&SUBSYS_72708086&REV_01 System      Intel(R) Serial IO I2C Host Controller - 51E8                            iaLPSS2_I2C_ADL  
+PCI\VEN_8086&DEV_51EA&SUBSYS_72708086&REV_01 System      Intel(R) Serial IO I2C Host Controller - 51EA                            iaLPSS2_I2C_ADL  
+PCI\VEN_8086&DEV_51EB&SUBSYS_72708086&REV_01 System      Intel(R) Serial IO I2C Host Controller - 51EB                            iaLPSS2_I2C_ADL  
+PCI\VEN_8086&DEV_51ED&SUBSYS_72708086&REV_01 USB         Intel(R) USB 3.10 eXtensible Host Controller - 1.20 (Microsoft)          USBXHCI          
+PCI\VEN_8086&DEV_51EF&SUBSYS_72708086&REV_01 System      Intel(R) Shared SRAM - 51EF                                                               
+PCI\VEN_8086&DEV_51F0&SUBSYS_00948086&REV_01 Net         Intel(R) Wi-Fi 6E AX211 160MHz                                           Netwtw14         
+
+
+

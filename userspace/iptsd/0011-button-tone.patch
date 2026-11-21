@@ -1,0 +1,93 @@
+Do not take other tones in the button window of a DFT pen for a button (ButtonToneRatio)
+
+Without a decision from the MPP v2 binary window the button state comes from the first row of
+the button window: a magnitude above ButtonMinMag counts as a pressed button or an eraser. The
+following rows of that window carry other tones of the pen, and what they leak into the first row
+passes that threshold. Measured on the Surface Pro 9 with the Slim Pen 2 (no button pressed):
+405 of 3529 button windows of one capture, 128 of 1636 of another and all 999 of a third (pen
+resting at 37 degrees). In every one of them the strongest of the rows 1 to 3 had more than 10
+times the magnitude of row 0, on both axes.
+
+With [DFT] ButtonToneRatio = N the first row is not a button while, on both axes, one of the
+rows 1 to 3 is more than N times stronger. With 3 none of these windows counts any more. The
+decision of the binary window and the two-frame debounce are unchanged. Off by default (0).
+
+Not tested with the button pressed: that a genuine button tone is not accompanied by much
+stronger tones in the next rows is an assumption, which is why both axes have to agree and the
+ratio is far below what was measured.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index c5bd539..e79d1ea 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -94,6 +94,7 @@ public:
+ 	f64 dft_hover_jitter_radius = 0;
+ 	usize dft_jitter_count = 6;
+ 	bool dft_ink_filter = false;
++	f64 dft_button_tone_ratio = 0;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index eb50cca..2882b1d 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -999,7 +999,8 @@ private:
+ 		// If mppv2 has decided on a button state use that, else use the magnitude decision.
+ 		if (m_mppv2_button_or_eraser.value_or(
+ 			    dft.x[0].magnitude > m_config.dft_button_min_mag &&
+-			    dft.y[0].magnitude > m_config.dft_button_min_mag)) {
++			    dft.y[0].magnitude > m_config.dft_button_min_mag &&
++			    this->is_button_tone(dft))) {
+ 			const i32 real = dft.x[0].real[ipts::protocol::dft::NUM_COMPONENTS / 2] +
+ 			                 dft.y[0].real[ipts::protocol::dft::NUM_COMPONENTS / 2];
+ 			const i32 imag = dft.x[0].imag[ipts::protocol::dft::NUM_COMPONENTS / 2] +
+@@ -1030,6 +1031,36 @@ private:
+ 		m_stylus.rubber = rubber;
+ 	}
+ 
++	/*!
++	 * Checks whether the signal in the button window looks like the tone of a button.
++	 *
++	 * The button (or eraser) tone is the first row of the window. The following rows
++	 * carry other tones of the pen, and what they leak into the first row passes the
++	 * magnitude threshold although no button is pressed: measured on the Surface Pro 9
++	 * with the Slim Pen 2, whenever that happened the strongest of the rows 1 to 3 had
++	 * more than 10 times the magnitude of row 0, on both axes. With ButtonToneRatio the
++	 * first row is not taken for a button while the other rows are that much stronger.
++	 *
++	 * @param[in] dft The DFT window (with type == Type::Button)
++	 * @return Whether the first row can be the tone of a button.
++	 */
++	[[nodiscard]] bool is_button_tone(const ipts::samples::DftWindow &dft) const
++	{
++		const f64 ratio = m_config.dft_button_tone_ratio;
++
++		if (ratio <= 0 || dft.x.size() < 4 || dft.y.size() < 4)
++			return true;
++
++		const auto others_x =
++			std::max({dft.x[1].magnitude, dft.x[2].magnitude, dft.x[3].magnitude});
++		const auto others_y =
++			std::max({dft.y[1].magnitude, dft.y[2].magnitude, dft.y[3].magnitude});
++
++		// Only when both axes agree, a real button must not get lost.
++		return casts::to<f64>(others_x) <= ratio * casts::to<f64>(dft.x[0].magnitude) ||
++		       casts::to<f64>(others_y) <= ratio * casts::to<f64>(dft.y[0].magnitude);
++	}
++
+ 	/*!
+ 	 * Calculates the current pressure of the stylus from a DFT window.
+ 	 *
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 3cf0fa6..5b7b629 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -217,6 +217,7 @@ private:
+ 		this->get(ini, "DFT", "HoverJitterRadius", m_config.dft_hover_jitter_radius);
+ 		this->get(ini, "DFT", "JitterCount", m_config.dft_jitter_count);
+ 		this->get(ini, "DFT", "InkFilter", m_config.dft_ink_filter);
++		this->get(ini, "DFT", "ButtonToneRatio", m_config.dft_button_tone_ratio);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);

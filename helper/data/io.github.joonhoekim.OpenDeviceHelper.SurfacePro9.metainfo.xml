@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Copyright (C) 2026 Joonhoe Kim -->
+<component type="desktop-application">
+  <id>io.github.joonhoekim.OpenDeviceHelper.SurfacePro9</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Surface Pro 9 Settings</name>
+  <name xml:lang="ko">Surface Pro 9 설정</name>
+  <summary>Device settings for the Microsoft Surface Pro 9 (Intel) on Linux</summary>
+  <summary xml:lang="ko">리눅스용 Microsoft Surface Pro 9(Intel) 기기 설정</summary>
+  <description>
+    <p>A front-end for the sp9-helperd service: performance profiles with power limits measured on Windows, an experimental
+    skin temperature guard and fan request, battery health and smart charging, the UEFI battery limit state, panel self
+    refresh per power source, an ICC profile from the panel's factory calibration, the Type Cover backlight, touch
+    sensitivity and touch-off while the screen is off, Slim Pen 2 haptics, and a diagnostics export.</p>
+    <p xml:lang="ko">sp9-helperd 서비스의 프런트엔드다. 윈도우에서 잰 전력 제한을 쓰는 성능 프로필, 실험적인 표면 온도 보호와 팬 요청,
+    배터리 건강 상태와 스마트 충전, UEFI 배터리 제한 상태, 전원별 PSR, 공장 보정값으로 만든 ICC 프로필, Type Cover 백라이트,
+    터치 감도와 화면 꺼짐 중 터치 무시, 슬림펜 2 햅틱, 진단 내보내기를 다룬다.</p>
+  </description>
+  <launchable type="desktop-id">io.github.joonhoekim.OpenDeviceHelper.SurfacePro9.desktop</launchable>
+  <url type="homepage">https://github.com/joonhoekim/surface-pro-9-linux</url>
+  <developer id="io.github.joonhoekim">
+    <name>Joonhoe Kim</name>
+  </developer>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>touch</control>
+    <control>keyboard</control>
+  </supports>
+  <content_rating type="oars-1.1"/>
+  <!-- <releases> is added with the first release, each <release> with its date (docs/releasing.md):
+       AppStream rejects a release without one. -->
+</component>

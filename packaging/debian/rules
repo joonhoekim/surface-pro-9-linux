@@ -1,0 +1,69 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Built from the release source tarball (packaging/source-tarball.sh), which carries the helper's
+# crates in helper/vendor: cargo runs offline. packaging/stage.sh installs each package's files.
+
+export DH_VERBOSE = 1
+export CARGO_HOME = $(CURDIR)/debian/cargo-home
+export CARGO_NET_OFFLINE = true
+export CARGO_TARGET_DIR = $(CURDIR)/debian/cargo-target
+export SOURCE_DATE_EPOCH
+# --version of the binaries: the release version, plus git describe for a development build
+export SP9_GIT_DESCRIBE = $(shell cat DESCRIBE 2>/dev/null)
+# Ubuntu 24.04 has Rust >= 1.89 only as versioned packages (cargo-1.97), outside PATH.
+RUSTBIN := $(lastword $(shell ls -d /usr/lib/rust-1.*/bin 2>/dev/null | sort -V))
+ifneq ($(RUSTBIN),)
+export PATH := $(RUSTBIN):$(PATH)
+endif
+export RUSTFLAGS = -C link-arg=-Wl,-z,relro,-z,now --remap-path-prefix=$(CURDIR)=/build/sp9-linux
+ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+export CARGO_BUILD_JOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+endif
+
+REL = $(CARGO_TARGET_DIR)/release
+STAGE = $(CURDIR)/packaging/stage.sh --layout deb --build $(REL)
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	cargo --version
+	rustc --version
+
+override_dh_auto_build:
+	cd helper && cargo build --release --locked --offline --workspace
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	cd helper && cargo test --release --locked --offline --workspace
+endif
+
+override_dh_auto_install:
+	$(STAGE) --component helper debian/sp9-helper
+	$(STAGE) --component settings debian/sp9-settings
+	$(STAGE) --component digitizerd debian/sp9-digitizerd
+	$(STAGE) --component platform debian/sp9-platform
+	$(STAGE) --component cmdline debian/sp9-cmdline
+ifeq (,$(filter nokeyring,$(DEB_BUILD_PROFILES)))
+	$(STAGE) --component keyring debian/sp9-archive-keyring
+endif
+
+override_dh_auto_clean:
+	rm -rf debian/cargo-home debian/cargo-target
+
+# dh_clean deletes *.orig files; the vendored crates' Cargo.toml.orig are checksummed by cargo.
+override_dh_clean:
+	dh_clean -Xhelper/vendor/
+
+# The daemon starts only on this model (ConditionFirmware), so enabling it everywhere is safe.
+# sp9-digitizerd is enabled and started too: installing it is the choice of daemon.
+override_dh_installsystemd:
+	dh_installsystemd -psp9-helper sp9-helperd.service
+	dh_installsystemd -psp9-digitizerd sp9-digitizerd.service
+
+# Rust binaries come out of cargo stripped (profile.release strip = true); dwz has nothing to do.
+override_dh_dwz:
+
+override_dh_installchangelogs:
+	dh_installchangelogs $(wildcard CHANGELOG.md)

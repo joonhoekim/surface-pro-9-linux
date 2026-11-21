@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Lintian tags that do not apply to these packages, one per line, with the reason above each.
+# The commands document themselves with --help; there are no manual pages yet.
+no-manual-page

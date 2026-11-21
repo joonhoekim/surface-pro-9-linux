@@ -1,0 +1,101 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+#
+# libcamera 0.8.0 with the Surface Pro 9 patches (debian/patches) in its own prefix, and the
+# libcamera SPA plugin of the distribution's PipeWire version (pipewire-src/) built against it.
+# build-deb.sh assembles the tree; the build does not use the network.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/default.mk
+
+PREFIX := /usr/lib/sp9-libcamera
+DISTRO_SPA_DIR := /usr/lib/$(DEB_HOST_MULTIARCH)/spa-0.2
+# The ELF files of the package that use libcamera find it in its own prefix (RUNPATH).
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,-rpath,$(PREFIX)/lib
+
+LC_BUILD := obj-libcamera
+PW_BUILD := obj-pipewire
+STAGE := $(CURDIR)/debian/stage
+PKG := $(CURDIR)/debian/sp9-libcamera
+
+# The version the plugin is built from: the package depends on that PipeWire release series.
+PW_VERSION := $(shell dpkg-parsechangelog -l pipewire-src/debian/changelog -S Version | sed 's/^[0-9]*://; s/-[^-]*$$//')
+PW_NEXT_MINOR := $(shell echo $(PW_VERSION) | awk -F. '{ printf "%d.%d", $$1, $$2 + 1 }')
+
+MESON_COMMON := --buildtype=plain --wrap-mode=nodownload --auto-features=disabled
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	meson setup $(LC_BUILD) $(MESON_COMMON) \
+		--prefix=$(PREFIX) --libdir=lib --libexecdir=libexec --bindir=bin --datadir=share \
+		--sysconfdir=/etc/sp9-libcamera \
+		-Dpipelines=simple,uvcvideo -Dipas=softisp \
+		-Dsoftisp-gpu=enabled -Dudev=enabled -Dcam=enabled \
+		-Dtest=false -Ddocumentation=disabled -Dgstreamer=disabled -Dqcam=disabled \
+		-Dlc-compliance=disabled -Dpycamera=disabled -Dv4l2=disabled -Dtracing=disabled
+	sh debian/pipewire-libcamera-0.8.sh pipewire-src
+
+override_dh_auto_build:
+	ninja -C $(LC_BUILD) -v
+	rm -rf $(STAGE)
+	DESTDIR=$(STAGE) meson install -C $(LC_BUILD) --no-rebuild
+	# The plugin is compiled against the staged libcamera; only its target is built.
+	PKG_CONFIG_PATH=$(STAGE)$(PREFIX)/lib/pkgconfig PKG_CONFIG_SYSROOT_DIR=$(STAGE) \
+	meson setup $(PW_BUILD) pipewire-src $(MESON_COMMON) \
+		--prefix=/usr -Dlibcamera=enabled -Ddbus=disabled -Dflatpak=disabled -Dexamples=disabled -Dtests=disabled -Dpipewire-jack=disabled -Dpipewire-v4l2=disabled -Dsession-managers=[] -Dlegacy-rtkit=false
+	ninja -C $(PW_BUILD) -v spa/plugins/libcamera/libspa-libcamera.so
+
+override_dh_auto_test:
+
+override_dh_auto_clean:
+	rm -rf $(LC_BUILD) $(PW_BUILD) $(STAGE)
+
+override_dh_auto_install:
+	mkdir -p $(PKG)$(PREFIX)
+	cp -a $(STAGE)$(PREFIX)/bin $(STAGE)$(PREFIX)/libexec $(STAGE)$(PREFIX)/share $(PKG)$(PREFIX)/
+	mkdir -p $(PKG)$(PREFIX)/lib
+	cp -a $(STAGE)$(PREFIX)/lib/libcamera $(PKG)$(PREFIX)/lib/
+	cp -a $(STAGE)$(PREFIX)/lib/libcamera*.so.* $(PKG)$(PREFIX)/lib/
+	# It runs the cam of PATH (the distribution's) and would report on the wrong libcamera.
+	rm -f $(PKG)$(PREFIX)/bin/libcamera-bug-report
+	install -D -m 0644 $(PW_BUILD)/spa/plugins/libcamera/libspa-libcamera.so \
+		$(PKG)$(PREFIX)/spa-0.2/libcamera/libspa-libcamera.so
+	# The build tree's RUNPATH of the plugin is replaced by the installed prefix.
+	patchelf --set-rpath $(PREFIX)/lib $(PKG)$(PREFIX)/spa-0.2/libcamera/libspa-libcamera.so
+	# libcamera takes a RUNPATH on itself for "not installed" and would then also search IPA modules
+	# and tuning files relative to the build tree. Its users need both libraries directly and
+	# find them through their own RUNPATH.
+	patchelf --remove-rpath $(PKG)$(PREFIX)/lib/libcamera.so.0.8.0 $(PKG)$(PREFIX)/lib/libcamera-base.so.0.8.0
+	for unit in pipewire wireplumber; do \
+		mkdir -p $(PKG)/usr/lib/systemd/user/$$unit.service.d; \
+		sed 's|@DISTRO_SPA_PLUGIN_DIR@|$(DISTRO_SPA_DIR)|' debian/sp9-libcamera.conf.in \
+			> $(PKG)/usr/lib/systemd/user/$$unit.service.d/sp9-libcamera.conf; \
+	done
+
+# No dwz multifile: the debug information is stripped and there is no -dbgsym package.
+override_dh_dwz:
+
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym
+	# Stripping changed the IPA modules: sign them again with the build's key, whose public half
+	# is compiled into libcamera. An unsigned module would run isolated in the proxy process.
+	for m in $(PKG)$(PREFIX)/lib/libcamera/ipa/*.so; do \
+		sh src/ipa/ipa-sign.sh $(LC_BUILD)/src/ipa-priv-key.pem $$m $$m.sign; \
+		$(LC_BUILD)/src/apps/ipa-verify/ipa_verify $$m || exit 1; \
+	done
+
+override_dh_makeshlibs:
+	# Private libraries: no shlibs file, no ldconfig trigger.
+	dh_makeshlibs --no-scripts -X$(PREFIX)
+
+override_dh_shlibdeps:
+	dh_shlibdeps -l$(PKG)$(PREFIX)/lib
+
+override_dh_gencontrol:
+	dh_gencontrol -- \
+		-Vsp9:PipeWireMin=$(PW_VERSION) -Vsp9:PipeWireNext=$(PW_NEXT_MINOR)~ \
+		-Vsp9:PipeWireVersion=$(PW_VERSION)

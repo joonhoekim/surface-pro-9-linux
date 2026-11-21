@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Joonhoe Kim
+[Desktop Entry]
+Type=Application
+Name=Surface Pro 9 Settings
+Name[ko]=Surface Pro 9 설정
+GenericName=Device settings
+GenericName[ko]=기기 설정
+Comment=Performance profiles and power limits, smart charging, panel self refresh, Type Cover backlight, touch and pen haptics
+Comment[ko]=성능 프로필과 전력 제한, 스마트 충전, PSR, Type Cover 백라이트, 터치와 펜 햅틱
+Exec=sp9-settings
+Icon=io.github.joonhoekim.OpenDeviceHelper.SurfacePro9
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=surface;battery;charging;performance;fan;psr;icc;keyboard;backlight;touch;pen;haptics;배터리;성능;펜;
+StartupNotify=true

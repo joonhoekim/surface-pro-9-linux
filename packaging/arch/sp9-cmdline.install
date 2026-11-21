@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+_note() {
+	echo "sp9-cmdline: /etc/cmdline.d/sp9-platform.conf has: $(cat usr/share/sp9-platform/cmdline)"
+	echo "  mkinitcpio puts it into unified kernel images; run 'mkinitcpio -P' to rebuild them."
+	echo "  With this file present mkinitcpio no longer falls back to /proc/cmdline: keep root= and your"
+	echo "  other parameters in /etc/kernel/cmdline or another /etc/cmdline.d/*.conf."
+	echo "  GRUB, systemd-boot entries and other boot loaders do not read it: add the parameters there"
+	echo "  yourself (GRUB: GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub, then grub-mkconfig)."
+}
+
+post_install() {
+	_note
+}
+
+post_upgrade() {
+	_note
+}
+
+post_remove() {
+	echo "sp9-cmdline: removed; rebuild unified kernel images (mkinitcpio -P) and remove the parameters"
+	echo "  you added to other boot loaders by hand."
+}

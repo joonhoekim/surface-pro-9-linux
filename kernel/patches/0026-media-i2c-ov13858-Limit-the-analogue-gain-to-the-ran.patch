@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 15:04:35 +0900
+Subject: [PATCH] media: i2c: ov13858: Limit the analogue gain to the range the
+ sensor follows
+
+The analogue gain control ranges from 0 to 0x1fff in steps of 1/128. On
+a Surface Pro 9 the sensor follows the register from 0x80 (1x) to 0x7c0
+(15.5x). 0x7c0 to 0x7ff give the same image, 0x800 and 0x1000 give that
+of 0x400, and 0x1fff that of 0x7ff: the bits above bit 10 add nothing.
+Below 0x80 the gain does not go under 1x and is not monotonic (0x40
+gives a brighter image than 0x80).
+
+An auto exposure loop that believes in a 64x maximum steps through
+values whose gain falls back by half, and cannot settle in dim light.
+
+Make the range 0x80 to 0x7c0.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/media/i2c/ov13858.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/i2c/ov13858.c b/drivers/media/i2c/ov13858.c
+index e23e8362c..772c9297f 100644
+--- a/drivers/media/i2c/ov13858.c
++++ b/drivers/media/i2c/ov13858.c
+@@ -63,8 +63,13 @@
+ 
+ /* Analog gain control */
+ #define OV13858_REG_ANALOG_GAIN		0x3508
+-#define OV13858_ANA_GAIN_MIN		0
+-#define OV13858_ANA_GAIN_MAX		0x1fff
++/*
++ * 1/128 steps. The sensor follows the value from 1x (0x80) to 15.5x (0x7c0).
++ * Values below 0x80 do not give less than 1x, and the bits above bit 10 do
++ * not add gain: 0x800 and 0x1000 give the gain of 0x400.
++ */
++#define OV13858_ANA_GAIN_MIN		0x80
++#define OV13858_ANA_GAIN_MAX		0x7c0
+ #define OV13858_ANA_GAIN_STEP		1
+ #define OV13858_ANA_GAIN_DEFAULT	0x80
+ 

@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# DKMS: follow linux-surface's kernel releases (read-only), regenerate the sp9-dkms and
+# sp9-dkms-bluetooth sources for every listed release and for new ones, build them against
+# linux-surface's real header packages in Debian/Ubuntu and Arch containers, build the packages
+# (dkms/ci/run.sh). Fails when a patch no longer applies, a file the package replaces changed since
+# review (dkms/lock.tsv), or a module does not build or install. New releases are not added by
+# this workflow: the summary lists their targets.tsv lines for a person to review and commit.
+# The packages are uploaded as the artifacts pkg-deb-all-sp9-dkms and pkg-arch-sp9-dkms, the names
+# the Packages workflow's publish job collects (pkg-*): it calls this workflow (workflow_call) as a
+# job and lists that job in publish.needs.
+name: DKMS
+
+on:
+  push:
+    paths:
+      - 'dkms/**'
+      - 'kernel/patches/**'
+      - 'helper/Cargo.toml'
+      - '.github/workflows/dkms.yml'
+  pull_request:
+    paths:
+      - 'dkms/**'
+      - 'kernel/patches/**'
+      - '.github/workflows/dkms.yml'
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # github.workflow tells a run of its own from one called by the Packages workflow for the same tag
+  group: dkms-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  dkms:
+    name: ${{ matrix.kind }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [debian, arch]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # git describe for the package version
+
+      - name: Generate, build and test
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTAINER: docker
+          SP9_DKMS_CACHE: ${{ runner.temp }}/sp9-dkms-cache
+        run: dkms/ci/run.sh ${{ matrix.kind }} "$RUNNER_TEMP/out"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### DKMS ${{ matrix.kind }}"
+            if [ -s "$RUNNER_TEMP/out/candidates.tsv" ]; then
+              echo "New linux-surface releases (review, then add to dkms/targets.tsv and run \`dkms/gen.sh lock TAG\` if asked):"
+              echo '```'; cat "$RUNNER_TEMP/out/candidates.tsv"; echo '```'
+            else
+              echo "No linux-surface release newer than dkms/targets.tsv."
+            fi
+            echo '```'; grep -h -E '^(ok|FAIL|====)' "$RUNNER_TEMP"/out/log/test-*.log 2>/dev/null | tail -n 80; echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.kind == 'debian' && 'pkg-deb-all-sp9-dkms' || 'pkg-arch-sp9-dkms' }}
+          path: ${{ runner.temp }}/out/packages/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: sp9-dkms-${{ matrix.kind }}-logs
+          path: |
+            ${{ runner.temp }}/out/log/
+            ${{ runner.temp }}/out/candidates.tsv
+            ${{ runner.temp }}/out/trees/listed/*/SOURCES

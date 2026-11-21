@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 15:04:34 +0900
+Subject: [PATCH] media: i2c: ov5693: Limit the analogue gain to the range the
+ sensor follows
+
+The analogue gain control ranges from 1 to 2047 in sixteenths. On a
+Surface Pro 9 the sensor follows the register from 16 (1x) to 992 (62x):
+the mean of a raw frame doubles with the value over that range. From 993
+on the image drops back to what 512 (32x) gives and stays there up to
+1023, and 1024 to 2047 repeat lower gains. Values below 16 attenuate,
+which keeps saturated pixels below white.
+
+An auto exposure loop that is told the gain reaches 127.9x raises it
+past 62x in dim light and gets a darker image for it, so it raises it
+further; libcamera's software ISP ends up at the maximum with a quarter
+of the brightness it could have, and oscillates on the way.
+
+Make the range 16 to 992.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/media/i2c/ov5693.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5693.c b/drivers/media/i2c/ov5693.c
+index 47a72895b..4f793476c 100644
+--- a/drivers/media/i2c/ov5693.c
++++ b/drivers/media/i2c/ov5693.c
+@@ -54,8 +54,13 @@
+ /* Analogue Gain */
+ #define OV5693_GAIN_CTRL_REG			CCI_REG16(0x350a)
+ #define OV5693_GAIN_CTRL_MASK			GENMASK(10, 0)
+-#define OV5693_GAIN_MIN				1
+-#define OV5693_GAIN_MAX				2047
++/*
++ * Sixteenths. The sensor follows the value from 1x (16) to 62x (992); below
++ * 16 it attenuates, and from 993 on the gain falls back to 32x and stops
++ * following the value.
++ */
++#define OV5693_GAIN_MIN				16
++#define OV5693_GAIN_MAX				992
+ #define OV5693_GAIN_DEF				16
+ #define OV5693_GAIN_STEP			1
+ 

@@ -1,0 +1,325 @@
+Contact of an MPP v2 pen from the force tone of every position window (ForceToneContact)
+
+iptsd decides the contact once per frame, in the pressure window: contact if there is a pressure
+tone, else the MPP v2 flag of the 0x07 window, else the signal strength (ZeroForceContact). The
+pressure tone outlasts the force by a frame, and the signal strength of a pen that is being
+lifted stays high for a while, so strokes end late and strokes that follow each other closely
+are joined. Measured on the Surface Pro 9 with the Slim Pen 2 against what Windows makes of the
+same frames: contact ends 10 to 22 ms later (median), and 1 to 7 strokes per 8 s of handwriting
+are missing because they were joined (12 strokes instead of 19 with a tilted pen).
+
+The pen sends a tone in one of two rows of every position window, depending on whether its tip
+switch is closed: rows 1 / 2 of the 0x06 window and rows 3 / 2 of the 0x07 and 0x08 windows.
+With [DFT] ForceToneContact the contact is decided at each of the 0x07 and 0x08 windows:
+
+ - Force: two windows in a row with the force tone, until two in a row without it.
+ - Without force the tip signal decides (ZeroForceContact, ZeroForceEnter, ZeroForceExit and
+   ZeroForceReference as before), but out of hover it has to stay above ZeroForceEnter for
+   ZeroForceStartSamples samples.
+ - ZeroForceStrokeLevel: a stroke that had force also ends when the tip signal falls below this
+   share of what it was while there was force (a lifted pen loses a few percent of its signal
+   long before it falls below ZeroForceExit).
+ - ZeroForceLockoutPressure: when the force ends and one of the last three pressure windows was
+   at or above this pressure, the pen was lifted on purpose: no zero force contact for
+   ZeroForceLockoutSamples samples.
+
+The eraser keeps the criterion of the pressure window. Off by default.
+
+With 8 samples, 0.85, 0.22 and 50 samples, replayed captures against Windows (strokes in 8 to
+12 s of handwriting, Windows / before / after): small light writing 53 / 47 / 50, normal 30 / 27
+/ 31 and 30 / 29 / 31, tilted pen 19 / 12 / 19, light 21 / 19 / 21. Stroke ends are within -5 ..
++2 ms (median; +10 .. +22 before), starts within 0 ms (0 .. -30 before). No contact while
+hovering at 5 mm. A pen resting on the glass without force is a steady contact.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index e79d1ea..2d7fcf9 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -95,6 +95,12 @@ public:
+ 	usize dft_jitter_count = 6;
+ 	bool dft_ink_filter = false;
+ 	f64 dft_button_tone_ratio = 0;
++	bool dft_force_tone_contact = false;
++	usize dft_force_tone_min_mag = 10000;
++	usize dft_zero_force_start_samples = 1;
++	f64 dft_zero_force_stroke_level = 0;
++	f64 dft_zero_force_lockout_pressure = 0;
++	usize dft_zero_force_lockout_samples = 50;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index 2882b1d..b8baab5 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -377,6 +377,27 @@ private:
+ 	// Whether the contact is currently derived from the signal strength alone.
+ 	bool m_zero_force_contact = false;
+ 
++	// Contact from the force tone of every position window (ForceToneContact): the
++	// debounced state of the tone, and for how many windows it was seen / not seen.
++	bool m_force = false;
++	usize m_force_on = 0;
++	usize m_force_off = 0;
++
++	// For how many samples in a row the tip signal was strong enough for a zero force
++	// contact to begin.
++	usize m_zero_force_above = 0;
++
++	// Average of the tip energy over the part of the stroke that had force.
++	std::optional<f64> m_stroke_energy = std::nullopt;
++
++	// For how many more samples there is no zero force contact after a firm stroke
++	// ended, and the pressure of the last three pressure windows (0 without force).
++	usize m_zero_force_lockout = 0;
++	std::array<f64, 3> m_recent_pressure {};
++
++	// The pressure measured in the last pressure window, 0 without force.
++	f64 m_measured_pressure = 0;
++
+ 	// How many samples the MPP v2 position windows produced since the last position
+ 	// window. Only counted with ExtraPositionWindows.
+ 	usize m_extra_samples = 0;
+@@ -436,6 +457,9 @@ public:
+ 			m_extra_samples = 0;
+ 			this->handle_position(dft);
+ 
++			if (m_config.dft_force_tone_contact && m_stylus.proximity)
++				this->update_force_tone(this->force_tone(dft, 2, 1));
++
+ 			/* While the MPP v2 position windows deliver the position (see
+ 			 * handle_extra_position), the position of this window is left
+ 			 * out: its tone is much weaker and, with a tilted pen, off by
+@@ -475,8 +499,13 @@ public:
+ 			break;
+ 		case ipts::protocol::dft::Type::PositionMPP_2:
+ 			this->handle_position_mpp_2(dft);
++			this->update_contact();
+ 			return this->handle_extra_position(dft);
+ 		case ipts::protocol::dft::Type::PositionMPP_2_Second:
++			if (m_config.dft_force_tone_contact) {
++				this->handle_position_mpp_2(dft);
++				this->update_contact();
++			}
+ 			return this->handle_extra_position(dft);
+ 		case ipts::protocol::dft::Type::BinaryMPP_2:
+ 			this->handle_dft_binary_mpp_2(dft);
+@@ -1074,6 +1103,21 @@ private:
+ 		const f64 p =
+ 			1 - this->interpolate_frequency(dft, ipts::protocol::dft::PRESSURE_ROWS);
+ 
++		if (m_config.dft_force_tone_contact) {
++			// The contact is decided in the position windows (see update_contact),
++			// which also report the pressure that is measured here.
++			m_measured_pressure = p > 0 ? std::clamp(p, 0.0, 1.0) : 0;
++
++			m_recent_pressure[0] = m_recent_pressure[1];
++			m_recent_pressure[1] = m_recent_pressure[2];
++			m_recent_pressure[2] = m_measured_pressure;
++
++			if (p > 0 && m_force && m_tip_energy.has_value())
++				this->learn_zero_force_reference(m_tip_energy.value());
++
++			return;
++		}
++
+ 		bool zero_force = false;
+ 
+ 		if (p > 0) {
+@@ -1104,6 +1148,163 @@ private:
+ 		}
+ 	}
+ 
++	/*!
++	 * Reads the force tone of a position window.
++	 *
++	 * An MPP v2 pen sends a tone in one of two rows of every position window, and which
++	 * one tells whether its tip switch is closed.
++	 *
++	 * @param[in] dft The DFT window.
++	 * @param[in] hover The row that carries the tone while the tip is not pressed.
++	 * @param[in] force The row that carries the tone while the tip is pressed.
++	 * @return Whether the pen reports force, or nothing if neither row has a signal.
++	 */
++	[[nodiscard]] std::optional<bool>
++	force_tone(const ipts::samples::DftWindow &dft, const usize hover, const usize force) const
++	{
++		if (dft.x.size() <= std::max(hover, force) ||
++		    dft.y.size() <= std::max(hover, force))
++			return std::nullopt;
++
++		const auto mag_hover = dft.x[hover].magnitude + dft.y[hover].magnitude;
++		const auto mag_force = dft.x[force].magnitude + dft.y[force].magnitude;
++
++		const auto threshold = 2 * m_config.dft_force_tone_min_mag;
++
++		if (mag_hover < threshold && mag_force < threshold)
++			return std::nullopt;
++
++		return mag_hover < mag_force;
++	}
++
++	/*!
++	 * Debounces the force tone: the pen counts as pressed once two windows in a row
++	 * say so, and as released after two windows in a row that do not.
++	 *
++	 * The force tone is in every position window (three per 15 ms frame), so this
++	 * follows the tip switch within 5 to 7 ms, where the pressure window alone needs
++	 * a frame and its analog tone outlasts the contact by another one.
++	 *
++	 * @param[in] tone The force tone of the current window, if it has one.
++	 */
++	void update_force_tone(const std::optional<bool> tone)
++	{
++		if (tone.value_or(false)) {
++			m_force_on++;
++			m_force_off = 0;
++		} else {
++			m_force_off++;
++
++			// A window without the tone does not interrupt a beginning contact.
++			if (tone.has_value())
++				m_force_on = 0;
++		}
++
++		if (!m_force && m_force_on >= 2) {
++			m_force = true;
++		} else if (m_force && m_force_off >= 2) {
++			m_force = false;
++
++			/*
++			 * A pen that is lifted from a firm stroke is still close to the
++			 * screen, with a tip signal nearly as strong as on the glass. It
++			 * was lifted on purpose: no zero force contact for a while.
++			 */
++			const f64 firm = m_config.dft_zero_force_lockout_pressure;
++			const f64 recent = std::max(
++				{m_recent_pressure[0], m_recent_pressure[1], m_recent_pressure[2]});
++
++			if (firm > 0 && recent >= firm)
++				m_zero_force_lockout = m_config.dft_zero_force_lockout_samples;
++		}
++	}
++
++	/*!
++	 * Decides whether the pen is in contact, from the force tone and the strength of
++	 * the tip signal of an MPP v2 position window (ForceToneContact).
++	 *
++	 * Without force the tip signal decides as in the pressure window handling, with
++	 * three additions that were tuned on captures of handwriting on the Surface Pro 9:
++	 * out of hover the signal has to stay above ZeroForceEnter for
++	 * ZeroForceStartSamples samples; a stroke that had force also ends when the signal
++	 * falls below ZeroForceStrokeLevel of what it was during the force; and after a
++	 * firm stroke (ZeroForceLockoutPressure) there is no zero force contact for
++	 * ZeroForceLockoutSamples samples.
++	 */
++	void update_contact()
++	{
++		if (!m_config.dft_force_tone_contact || !m_stylus.proximity)
++			return;
++
++		this->update_force_tone(m_mppv2_in_contact);
++
++		if (m_zero_force_lockout > 0)
++			m_zero_force_lockout--;
++
++		const usize start = std::max<usize>(m_config.dft_zero_force_start_samples, 1);
++
++		const bool usable = m_config.dft_zero_force_contact && !m_stylus.rubber &&
++		                    m_tip_energy.has_value() && m_zero_force_samples > 0 &&
++		                    m_zero_force_samples >= m_config.dft_zero_force_min_samples;
++
++		if (!usable) {
++			m_zero_force_contact = false;
++			m_zero_force_above = 0;
++		} else if (m_force) {
++			const f64 energy = m_tip_energy.value();
++
++			// The tip is on the glass: zero force contact may follow at once.
++			m_zero_force_contact = false;
++			m_zero_force_above = start;
++
++			m_stroke_energy = m_stroke_energy.value_or(energy) +
++			                  ((energy - m_stroke_energy.value_or(energy)) * 0.25);
++		} else if (m_zero_force_lockout > 0) {
++			m_zero_force_contact = false;
++			m_zero_force_above = 0;
++			m_stroke_energy = std::nullopt;
++		} else if (m_zero_force_contact || m_zero_force_above >= start) {
++			const f64 energy = m_tip_energy.value();
++			const f64 level = m_config.dft_zero_force_stroke_level;
++
++			const bool faded = level > 0 && m_stroke_energy.has_value() &&
++			                   energy < level * m_stroke_energy.value();
++
++			m_zero_force_contact =
++				energy >= m_config.dft_zero_force_exit * m_zero_force_reference &&
++				!faded;
++
++			if (!m_zero_force_contact) {
++				m_zero_force_above = 0;
++				m_stroke_energy = std::nullopt;
++			}
++		} else {
++			const f64 energy = m_tip_energy.value();
++
++			if (energy >= m_config.dft_zero_force_enter * m_zero_force_reference)
++				m_zero_force_above++;
++			else
++				m_zero_force_above = 0;
++
++			m_zero_force_contact = m_zero_force_above >= start;
++		}
++
++		m_stylus.contact = m_force || m_zero_force_contact;
++		m_stylus.pressure = 0;
++
++		// Whether the eraser end of a pen sends the force tone in the same rows is
++		// not known: its contact stays what the pressure window says.
++		if (m_stylus.rubber && m_measured_pressure > 0)
++			m_stylus.contact = true;
++
++		// Applications and libinput derive the tip state from the pressure,
++		// a contact without pressure would not draw.
++		if (m_stylus.contact) {
++			m_stylus.pressure =
++				std::max(m_measured_pressure, m_config.dft_contact_min_pressure);
++		}
++	}
++
+ 	/*!
+ 	 * Updates the tip signal level that is expected when the pen touches the screen.
+ 	 *
+@@ -1497,6 +1698,15 @@ private:
+ 		m_tip_energy = std::nullopt;
+ 		m_zero_force_contact = false;
+ 
++		m_force = false;
++		m_force_on = 0;
++		m_force_off = 0;
++		m_zero_force_above = 0;
++		m_stroke_energy = std::nullopt;
++		m_zero_force_lockout = 0;
++		m_recent_pressure = {};
++		m_measured_pressure = 0;
++
+ 		m_tilt_valid = false;
+ 		m_tilt_altitude_smoother.reset();
+ 		m_tilt_azimuth_smoother.reset();
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 5b7b629..32858a6 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -218,6 +218,12 @@ private:
+ 		this->get(ini, "DFT", "JitterCount", m_config.dft_jitter_count);
+ 		this->get(ini, "DFT", "InkFilter", m_config.dft_ink_filter);
+ 		this->get(ini, "DFT", "ButtonToneRatio", m_config.dft_button_tone_ratio);
++		this->get(ini, "DFT", "ForceToneContact", m_config.dft_force_tone_contact);
++		this->get(ini, "DFT", "ForceToneMinMag", m_config.dft_force_tone_min_mag);
++		this->get(ini, "DFT", "ZeroForceStartSamples", m_config.dft_zero_force_start_samples);
++		this->get(ini, "DFT", "ZeroForceStrokeLevel", m_config.dft_zero_force_stroke_level);
++		this->get(ini, "DFT", "ZeroForceLockoutPressure", m_config.dft_zero_force_lockout_pressure);
++		this->get(ini, "DFT", "ZeroForceLockoutSamples", m_config.dft_zero_force_lockout_samples);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);

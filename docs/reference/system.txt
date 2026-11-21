@@ -1,0 +1,15 @@
+﻿
+
+Manufacturer : Microsoft Corporation
+Model        : Surface Pro 9
+SKU          : Surface_Pro_9_2038
+Family       : Surface
+MemoryGiB    : 15.8
+UEFIVersion  : 24.103.143
+UEFIDate     : 2026-06-30
+OS           : Microsoft Windows 11 Home 10.0.26200 build 26200
+FirmwareType : UEFI
+
+
+
+

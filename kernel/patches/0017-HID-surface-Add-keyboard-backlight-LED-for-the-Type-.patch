@@ -1,0 +1,346 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Sun, 15 Nov 2026 18:05:10 -0800
+Subject: [PATCH] HID: surface: Add keyboard backlight LED for the Type Cover
+
+The Surface Pro 9 Type Cover keyboard (045E:09AE) has a consumer
+collection for the keyboard backlight:
+
+  Output  213: Keyboard Backlight Set Level (0x7b), 8 bits, 0..12
+  Feature 213: vendor usage 0x517, four 8-bit constants 0, 3, 6, 12,
+               the supported levels
+  Feature 214: Keyboard Backlight Set Level (0x7b), the current level
+  Input   213: vendor usage 0x515, one relative bit, sent when the
+               backlight key is pressed
+
+The backlight key is handled by the cover firmware. On Windows, every
+press moves Feature 214 through 0, 3, 6 and 12 without any request from
+the host, and the press is reported as usage 0x515. hid-input does not
+know that usage and maps it to KEY_UNKNOWN, and there is no way for
+userspace to see or set the level except through hidraw.
+
+Register a "surface::kbd_backlight" LED class device when the report
+descriptor has the 0x7b output and feature fields. The brightness is an
+index into the levels read from usage 0x517 at probe, or the raw level
+if that report is missing or not strictly increasing. Writes go through
+the output report, reads through the feature report. On a backlight key
+press, read the feature report again and report the level with
+led_classdev_notify_brightness_hw_changed(), so that UPower and desktops
+follow the firmware. The key itself is not mapped: forwarding it as
+KEY_KBDILLUMTOGGLE would make desktops change the level a second time.
+
+The LED is registered with LED_RETAIN_AT_SHUTDOWN so that unbinding
+the driver leaves the level to the firmware.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/hid/Kconfig       |   4 +-
+ drivers/hid/hid-surface.c | 238 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 241 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/hid/Kconfig b/drivers/hid/Kconfig
+index 033d3328f..8ff657a4c 100644
+--- a/drivers/hid/Kconfig
++++ b/drivers/hid/Kconfig
+@@ -1221,10 +1221,12 @@ config HID_SUNPLUS
+ config HID_SURFACE
+ 	tristate "Microsoft Surface"
+ 	depends on SURFACE_AGGREGATOR
++	depends on LEDS_CLASS
+ 	help
+ 	Say Y here to enable HID driver for Microsoft Surface integrated
+ 	keyboard and touchpad. This driver filters out erroneous BTN_0
+-	(FN key) events that can cause input focus issues.
++	(FN key) events that can cause input focus issues and exposes the
++	Type Cover keyboard backlight as an LED class device.
+ 
+ config HID_RMI
+ 	tristate "Synaptics RMI4 device support"
+diff --git a/drivers/hid/hid-surface.c b/drivers/hid/hid-surface.c
+index 5e4b6359a..b85896c66 100644
+--- a/drivers/hid/hid-surface.c
++++ b/drivers/hid/hid-surface.c
+@@ -8,7 +8,11 @@
+ #include <linux/device.h>
+ #include <linux/hid.h>
+ #include <linux/input.h>
++#include <linux/leds.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/slab.h>
++#include <linux/workqueue.h>
+ 
+ #include "hid-ids.h"
+ 
+@@ -16,6 +20,217 @@
+ #define SURFACE_USAGE_FN_LOCK		0x00010098
+ #define SURFACE_USAGE_FN_LOCK_INDICATOR	0x00010099
+ #define SURFACE_USAGE_CALL_MUTE_TOGGLE	0x000100e1
++#define SURFACE_USAGE_KBD_BL_LEVEL	0x000c007b
++#define SURFACE_USAGE_KBD_BL_KEY	0x000c0515
++#define SURFACE_USAGE_KBD_BL_LEVELS	0x000c0517
++
++#define SURFACE_KBD_BL_MAX_LEVELS	8
++
++struct surface_kbd_backlight {
++	struct hid_device *hdev;
++	struct led_classdev cdev;
++	struct hid_field *out;
++	struct hid_field *feature;
++	struct work_struct hw_changed_work;
++	struct mutex lock;	/* protects the output report field */
++	unsigned int nr_levels;
++	u8 levels[SURFACE_KBD_BL_MAX_LEVELS];
++};
++
++static struct hid_field *surface_find_field(struct hid_device *hdev,
++					    unsigned int type, u32 usage)
++{
++	struct hid_report *report;
++	struct hid_field *field;
++	unsigned int i, j;
++
++	list_for_each_entry(report, &hdev->report_enum[type].report_list, list) {
++		for (i = 0; i < report->maxfield; i++) {
++			field = report->field[i];
++			for (j = 0; j < field->maxusage; j++)
++				if (field->usage[j].hid == usage)
++					return field;
++		}
++	}
++
++	return NULL;
++}
++
++static int surface_get_feature(struct hid_device *hdev, struct hid_field *field,
++			       u32 *values, unsigned int count)
++{
++	struct hid_report *report = field->report;
++	u32 len = hid_report_len(report);
++	unsigned int i;
++	u8 *buf;
++	int ret;
++
++	buf = hid_alloc_report_buf(report, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	ret = hid_hw_raw_request(hdev, report->id, buf, len, HID_FEATURE_REPORT,
++				 HID_REQ_GET_REPORT);
++	if (ret < 0)
++		goto out;
++	if (ret < len || (report->id && buf[0] != report->id)) {
++		ret = -EPROTO;
++		goto out;
++	}
++
++	for (i = 0; i < count; i++)
++		values[i] = hid_field_extract(hdev, buf + !!report->id,
++					      field->report_offset +
++					      i * field->report_size,
++					      field->report_size);
++	ret = 0;
++out:
++	kfree(buf);
++	return ret;
++}
++
++static int surface_kbd_backlight_read(struct surface_kbd_backlight *kbd)
++{
++	unsigned int i;
++	u32 level;
++	int ret;
++
++	ret = surface_get_feature(kbd->hdev, kbd->feature, &level, 1);
++	if (ret)
++		return ret;
++
++	if (!kbd->nr_levels)
++		return min(level, kbd->cdev.max_brightness);
++
++	for (i = 0; i < kbd->nr_levels - 1; i++)
++		if (level <= kbd->levels[i])
++			break;
++
++	return i;
++}
++
++static enum led_brightness surface_kbd_backlight_get(struct led_classdev *cdev)
++{
++	struct surface_kbd_backlight *kbd =
++		container_of(cdev, struct surface_kbd_backlight, cdev);
++
++	return surface_kbd_backlight_read(kbd);
++}
++
++static int surface_kbd_backlight_set(struct led_classdev *cdev,
++				     enum led_brightness value)
++{
++	struct surface_kbd_backlight *kbd =
++		container_of(cdev, struct surface_kbd_backlight, cdev);
++	struct hid_report *report = kbd->out->report;
++	u8 *buf;
++	int ret;
++
++	buf = hid_alloc_report_buf(report, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	mutex_lock(&kbd->lock);
++	if (hid_set_field(kbd->out, 0,
++			  kbd->nr_levels ? kbd->levels[value] : value)) {
++		ret = -EINVAL;
++	} else {
++		hid_output_report(report, buf);
++		ret = hid_hw_raw_request(kbd->hdev, report->id, buf,
++					 hid_report_len(report),
++					 HID_OUTPUT_REPORT, HID_REQ_SET_REPORT);
++	}
++	mutex_unlock(&kbd->lock);
++
++	kfree(buf);
++	return ret < 0 ? ret : 0;
++}
++
++static void surface_kbd_backlight_hw_changed(struct work_struct *work)
++{
++	struct surface_kbd_backlight *kbd =
++		container_of(work, struct surface_kbd_backlight, hw_changed_work);
++	int ret;
++
++	ret = surface_kbd_backlight_read(kbd);
++	if (ret < 0) {
++		hid_warn(kbd->hdev, "failed to read keyboard backlight: %d\n", ret);
++		return;
++	}
++
++	led_classdev_notify_brightness_hw_changed(&kbd->cdev, ret);
++}
++
++static void surface_kbd_backlight_init_levels(struct surface_kbd_backlight *kbd)
++{
++	u32 values[SURFACE_KBD_BL_MAX_LEVELS];
++	struct hid_field *field;
++	unsigned int i, count;
++
++	field = surface_find_field(kbd->hdev, HID_FEATURE_REPORT,
++				   SURFACE_USAGE_KBD_BL_LEVELS);
++	if (!field)
++		return;
++
++	count = min_t(unsigned int, field->report_count,
++		      SURFACE_KBD_BL_MAX_LEVELS);
++	if (count < 2 || surface_get_feature(kbd->hdev, field, values, count))
++		return;
++
++	for (i = 0; i < count; i++) {
++		if (values[i] > kbd->out->logical_maximum ||
++		    (i && values[i] <= values[i - 1]))
++			return;
++	}
++
++	for (i = 0; i < count; i++)
++		kbd->levels[i] = values[i];
++	kbd->nr_levels = count;
++}
++
++static int surface_kbd_backlight_probe(struct hid_device *hdev)
++{
++	struct surface_kbd_backlight *kbd;
++	struct hid_field *out, *feature;
++	int ret;
++
++	out = surface_find_field(hdev, HID_OUTPUT_REPORT,
++				 SURFACE_USAGE_KBD_BL_LEVEL);
++	feature = surface_find_field(hdev, HID_FEATURE_REPORT,
++				     SURFACE_USAGE_KBD_BL_LEVEL);
++	if (!out || !feature || out->logical_minimum != 0 ||
++	    out->logical_maximum <= 0 || out->logical_maximum > U8_MAX)
++		return 0;
++
++	kbd = devm_kzalloc(&hdev->dev, sizeof(*kbd), GFP_KERNEL);
++	if (!kbd)
++		return -ENOMEM;
++
++	kbd->hdev = hdev;
++	kbd->out = out;
++	kbd->feature = feature;
++	INIT_WORK(&kbd->hw_changed_work, surface_kbd_backlight_hw_changed);
++
++	ret = devm_mutex_init(&hdev->dev, &kbd->lock);
++	if (ret)
++		return ret;
++
++	surface_kbd_backlight_init_levels(kbd);
++
++	kbd->cdev.name = "surface::kbd_backlight";
++	kbd->cdev.max_brightness = kbd->nr_levels ? kbd->nr_levels - 1 :
++						     out->logical_maximum;
++	kbd->cdev.brightness_get = surface_kbd_backlight_get;
++	kbd->cdev.brightness_set_blocking = surface_kbd_backlight_set;
++	kbd->cdev.flags = LED_BRIGHT_HW_CHANGED | LED_RETAIN_AT_SHUTDOWN;
++
++	ret = devm_led_classdev_register(&hdev->dev, &kbd->cdev);
++	if (ret)
++		return ret;
++
++	hid_set_drvdata(hdev, kbd);
++	return 0;
++}
+ 
+ /*
+  * The Surface Aggregator Module firmware incorrectly reports the FN key
+@@ -32,6 +247,7 @@ static int surface_input_mapping(struct hid_device *hdev, struct hid_input *hi,
+ 	case SURFACE_USAGE_FN_SHIFT:
+ 	case SURFACE_USAGE_FN_LOCK:
+ 	case SURFACE_USAGE_FN_LOCK_INDICATOR:
++	case SURFACE_USAGE_KBD_BL_KEY:
+ 		return -1;
+ 	case SURFACE_USAGE_CALL_MUTE_TOGGLE:
+ 		hid_map_usage_clear(hi, usage, bit, max, EV_KEY, KEY_MICMUTE);
+@@ -51,6 +267,14 @@ static int surface_input_mapping(struct hid_device *hdev, struct hid_input *hi,
+ static int surface_event(struct hid_device *hdev, struct hid_field *field,
+ 			  struct hid_usage *usage, __s32 value)
+ {
++	struct surface_kbd_backlight *kbd = hid_get_drvdata(hdev);
++
++	if (usage->hid == SURFACE_USAGE_KBD_BL_KEY) {
++		if (kbd && value)
++			schedule_work(&kbd->hw_changed_work);
++		return 1;
++	}
++
+ 	/*
+ 	 * The Surface Aggregator Module firmware reports the FN key as BTN_0
+ 	 * at runtime. This button can get stuck in pressed state, flooding
+@@ -79,9 +303,22 @@ static int surface_probe(struct hid_device *hdev, const struct hid_device_id *id
+ 		return ret;
+ 	}
+ 
++	ret = surface_kbd_backlight_probe(hdev);
++	if (ret)
++		hid_warn(hdev, "failed to register keyboard backlight: %d\n", ret);
++
+ 	return 0;
+ }
+ 
++static void surface_remove(struct hid_device *hdev)
++{
++	struct surface_kbd_backlight *kbd = hid_get_drvdata(hdev);
++
++	hid_hw_stop(hdev);
++	if (kbd)
++		cancel_work_sync(&kbd->hw_changed_work);
++}
++
+ static const struct hid_device_id surface_devices[] = {
+ 	{ HID_DEVICE(BUS_HOST, HID_GROUP_GENERIC,
+ 		     USB_VENDOR_ID_MICROSOFT, 0x09AE) },  /* Surface Keyboard */
+@@ -95,6 +332,7 @@ static struct hid_driver surface_driver = {
+ 	.name = "surface",
+ 	.id_table = surface_devices,
+ 	.probe = surface_probe,
++	.remove = surface_remove,
+ 	.input_mapping = surface_input_mapping,
+ 	.event = surface_event,
+ };

@@ -1,0 +1,48 @@
+DKMS only: keep the symbol CRCs of the stock include/media/ipu-bridge.h
+
+Patches 0002 and 0005 change struct ipu_sensor (the size of prop_names
+and ep_properties), which the exported ipu_bridge_init() (through
+ipu_parse_sensor_fwnode_t) and ipu_bridge_parse_ssdb() take a pointer to.
+With CONFIG_MODVERSIONS the CRCs of these symbols then differ from the ones
+the stock importers were built with (intel-ipu6, intel-ipu7, ipu3-cio2,
+ivsc-csi, intel_cvs), and those modules refuse to load against the DKMS
+ipu-bridge.ko.
+
+The layout change is private to ipu-bridge: the structures are allocated
+and filled inside it. Most importers pass ipu-bridge's own
+ipu_bridge_parse_ssdb() as the callback; the one that brings its own
+(atomisp) writes only fields in front of the changed ones (link, lanes,
+mclkspeed, rotation, orientation, vcm_type), whose offsets do not move.
+So the CRCs are computed from the stock layout (__GENKSYMS__ is defined
+only while genksyms reads the source) and the module is compiled with the
+new one. dkms/check-build.sh compares the resulting CRCs with the kernel's
+Module.symvers; without this patch ipu_bridge_init and
+ipu_bridge_parse_ssdb differ (measured on linux-surface 7.3.4-2).
+
+Applied by dkms/gen.sh to the bundled copy of the header, only when this
+repository's patches changed it.
+
+--- a/include/media/ipu-bridge.h
++++ b/include/media/ipu-bridge.h
+@@ -135,7 +135,9 @@
+ 	char data_lanes[11];
+ 	char remote_endpoint[16];
+ 	char link_frequencies[17];
++#ifndef __GENKSYMS__
+ 	char clock_noncontinuous[20];
++#endif
+ };
+ 
+ struct ipu_node_names {
+@@ -178,7 +180,11 @@
+ 	const char *vcm_type;
+ 
+ 	struct ipu_property_names prop_names;
++#ifdef __GENKSYMS__
++	struct property_entry ep_properties[5];
++#else
+ 	struct property_entry ep_properties[IPU_BRIDGE_EP_NUM_ENTRIES];
++#endif
+ 	struct property_entry dev_properties[5];
+ 	struct property_entry ipu_properties[3];
+ 	struct property_entry ivsc_properties[1];

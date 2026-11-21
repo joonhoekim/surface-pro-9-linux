@@ -1,0 +1,30 @@
+This repository is licensed per file, following the REUSE convention
+(https://reuse.software). REUSE.toml and the SPDX headers in the files are
+authoritative; the licence texts are in LICENSES/.
+
+  kernel/patches/, kernel/config/     GPL-2.0-only
+      Changes to the Linux kernel. Each patch keeps its author (From:) and
+      sign-offs; kernel/PROVENANCE.md records where each one comes from.
+
+  helper/                             GPL-3.0-or-later
+      helper/crates/sp9-digitizer and sp9-digitizerd are derived from
+      iptsd (GPL-2.0-or-later); the files that are say so in their headers.
+
+  userspace/iptsd/*.patch             GPL-2.0-or-later
+      Changes to iptsd, under iptsd's licence.
+
+  userspace/libcamera/*.patch         LGPL-2.1-or-later, BSD-2-Clause, CC0-1.0
+      Changes to libcamera, each under the licence of the libcamera files
+      it changes (REUSE.toml lists them per patch).
+
+  userspace/ (everything else),       MIT
+  tools/, nix/, flake.nix,
+  flake.lock, .github/
+
+  Documentation: every *.md file      CC-BY-SA-4.0
+  and docs/ (including the            Code and commands quoted inside the
+  reference data in docs/reference/)  documents may also be used under MIT.
+
+Copyright (C) 2026 Joonhoe Kim for the author's own work. Patches taken from
+upstream Linux and from linux-surface kernel pull requests belong to their
+authors; the code derived from iptsd also belongs to the iptsd authors. See NOTICE for attributions and trademarks.

@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Joonhoe Kim
+[package]
+name = "sp9-ctl"
+description = "Command-line client for sp9-helperd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# --version: the project version plus `git describe` for development builds
+build = "../../version-build.rs"
+
+[dependencies]
+zbus = { workspace = true, features = ["blocking-api"] }
+sp9-digitizer = { path = "../sp9-digitizer" }
+serde_json.workspace = true

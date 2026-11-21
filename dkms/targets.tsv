@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# linux-surface kernel releases the DKMS packages are generated for. One line per release tag of
+# linux-surface/linux-surface. The generator rebuilds each line's source exactly as that release's
+# package was built, and checks every pin:
+#   tag          the release tag (debian-* or arch-*; the part before the first "-" is the kind)
+#   release      `uname -r` of that kernel (checked against the header package in CI)
+#   stable       the kernel.org stable version of the tarball
+#   commit       the linux-surface commit the tag points to (patches/<series>, pkg/<kind>/kernel)
+#   tarball      sha256 of linux-<stable>.tar.xz from cdn.kernel.org (kernel.org's sha256sums.asc)
+#   distpatch    arch: sha256 of archlinux/linux's linux-v<stable>-archN.patch.zst; debian: -
+# Columns are separated by tabs.
+debian-7.3.4-2	7.3.4-2-surface	7.3.4	38ba90ffb48b0666fb3acb432325ff5b98ca4d7d	b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f	-
+arch-7.3.4-2	7.3.4-arch1-2-surface	7.3.4	94b27dd9adab25b64aa12dd9fbb870cb5ff6210d	b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f	0bd7c69abfa671c377989c4795bcb3662a25904d4ec8dbda73204b5689405c2f

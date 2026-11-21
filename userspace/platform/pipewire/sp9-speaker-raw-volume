@@ -1,0 +1,49 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Put the raw speaker sink (wireplumber.conf.d/60-sp9-speaker-raw.conf) at 100 %.
+#
+# The volume the user moves is the "Speakers" filter sink in front of it; the raw sink is the
+# ALSA Master of the amplifier. WirePlumber starts a sink it has no stored route for at 40 %
+# (device.routes.default-sink-volume 0.064, Master -23.25 dB), and that caps the output at
+# -23.9 dB whatever the filter sink says. Nothing in a volume control shows it.
+#
+# Not device.routes.default-sink-volume on the card: it does not replace a value WirePlumber
+# has already stored (~/.local/state/wireplumber/default-routes), and the HDMI/DP routes of the
+# same card would start at 100 % too. wpctl goes through WirePlumber, which then stores 100 %
+# as the route's value.
+#
+# Started with every WirePlumber start (systemd user unit sp9-speaker-raw-volume.service). The
+# node appears a little later and WirePlumber restores the stored route around the same time,
+# so the value has to read 100 % twice in a row before this exits.
+#
+# Only while the "Speakers" filter sink exists: it carries the speaker protection (high-pass,
+# 3.7 kHz cut, limiter). Its module is nofail, so without the LADSPA plugins it is missing, the
+# raw sink is the speaker output itself, and its volume is left alone.
+node=sp9_speaker_raw
+filter=effect_input.sp9_speakers
+good=0
+i=0
+while [ "$i" -lt 30 ]; do
+	i=$((i + 1))
+	id=$(pw-cli info "$node" 2>/dev/null | sed -n 's/^[[:space:]]*id: \([0-9][0-9]*\).*/\1/p' | head -n 1)
+	fid=$(pw-cli info "$filter" 2>/dev/null | sed -n 's/^[[:space:]]*id: \([0-9][0-9]*\).*/\1/p' | head -n 1)
+	if [ -n "$id" ] && [ -n "$fid" ]; then
+		case $(wpctl get-volume "$id" 2>/dev/null) in
+		"Volume: 1.00"*)
+			good=$((good + 1))
+			[ "$good" -ge 2 ] && exit 0
+			;;
+		*)
+			good=0
+			wpctl set-volume "$id" 1.0
+			;;
+		esac
+	fi
+	sleep 1
+done
+if [ -z "$fid" ]; then
+	echo "sp9-speaker-raw-volume: no $filter (speaker protection not loaded); $node left as it is" >&2
+else
+	echo "sp9-speaker-raw-volume: $node is not at 100 %" >&2
+fi
+exit 1

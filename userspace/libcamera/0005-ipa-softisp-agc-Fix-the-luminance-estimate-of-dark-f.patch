@@ -1,0 +1,147 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 15:03:12 +0900
+Subject: [PATCH] ipa: softisp: agc: Fix the luminance estimate of dark frames
+ and the loop delay
+
+Three defects that make the exposure oscillate for a second or more
+after a start or a change of light:
+
+- The luminance estimate multiplies the lower edge of each histogram
+  bin by the gain, which leaves the first bin at zero whatever the gain.
+  A dark frame, with most of its pixels in that bin, never reaches the
+  target in the estimate, and the gain it asks for grows without bound
+  (1434x for a frame that needed 17x). Use the bin centre.
+
+- The sensor controls sent after the statistics of frame N are those of
+  the frame context of frame N, filled before these statistics were
+  processed, so a new result leaves one frame later. With statistics
+  every fourth frame and a sensor delay of two frames it then misses
+  frame N + 4: every result is judged eight frames later, and the
+  regulation splits into two loops that take turns, each seeing only
+  the other's output. Hand out the new values with the frame they were
+  computed on.
+
+- The first frame after the start may be black (one start in three with
+  an OV5693 on an IPU6), which sends the exposure to its maximum. Do not
+  use its statistics, and do not send the placeholder values (minimum
+  gain, default exposure) to the sensor before the first result: the
+  sensor still has the values of the previous session, which are the
+  best guess there is.
+---
+ src/ipa/softisp/algorithms/agc.cpp | 34 +++++++++++++++++++++++++++---
+ src/ipa/softisp/ipa_context.h      |  2 ++
+ src/ipa/softisp/softisp.cpp        | 16 ++++++++++++++
+ 3 files changed, 49 insertions(+), 3 deletions(-)
+
+diff --git a/src/ipa/softisp/algorithms/agc.cpp b/src/ipa/softisp/algorithms/agc.cpp
+index ea234bc2..cf307e62 100644
+--- a/src/ipa/softisp/algorithms/agc.cpp
++++ b/src/ipa/softisp/algorithms/agc.cpp
+@@ -19,6 +19,9 @@ namespace ipa::softisp::algorithms {
+ 
+ namespace {
+ 
++/* Number of frames after the start whose statistics are not used. */
++constexpr uint32_t kSkipFrames = 1;
++
+ class AgcTraits : public AgcMeanLuminance::Traits
+ {
+ public:
+@@ -35,8 +38,14 @@ public:
+ 		 */
+ 		double sum = 0;
+ 
++		/*
++		 * Take the centre of each bin. With the lower edge the first
++		 * bin stays at zero whatever the gain, and a dark frame, with
++		 * most pixels in that bin, never reaches the target: the
++		 * estimated gain then grows without bound.
++		 */
+ 		for (size_t i = 0; i < yHist_.bins(); i++)
+-			sum += std::min<double>(yHist_.bins(), i * gain) * yHist_[i];
++			sum += std::min<double>(yHist_.bins(), (i + 0.5) * gain) * yHist_[i];
+ 
+ 		return sum / yHist_.total() / yHist_.bins();
+ 	}
+@@ -78,12 +87,17 @@ void Agc::prepare(IPAContext &context, [[maybe_unused]] const uint32_t frame,
+ }
+ 
+ void Agc::process(IPAContext &context,
+-		  [[maybe_unused]] const uint32_t frame,
++		  const uint32_t frame,
+ 		  IPAFrameContext &frameContext,
+ 		  const SwIspStats *stats,
+ 		  ControlList &metadata)
+ {
+-	if (stats->valid) {
++	/*
++	 * The first frame after the start may be black (seen with an OV5693
++	 * on an IPU6), and regulating on it drives the sensor to its maximum
++	 * exposure. Leave it out; the sensor keeps the values it has.
++	 */
++	if (stats->valid && frame >= kSkipFrames) {
+ 		/* \todo The histogram should come already adjusted. */
+ 		auto histogram = stats->yHistogram;
+ 
+@@ -100,6 +114,20 @@ void Agc::process(IPAContext &context,
+ 			.exposure = frameContext.sensor.exposure,
+ 			.gain = frameContext.sensor.gain,
+ 		}}, metadata);
++
++		/*
++		 * The sensor controls sent after this function are those of
++		 * the frame context, which was filled before these statistics
++		 * were processed. Hand out the new values now: one frame later
++		 * they miss the next frame that has statistics, and the
++		 * regulation then splits into two loops that take turns.
++		 */
++		if (frameContext.agc.autoExposureEnabled)
++			frameContext.agc.exposure = context.activeState.agc.automatic.exposure;
++		if (frameContext.agc.autoGainEnabled)
++			frameContext.agc.gain = context.activeState.agc.automatic.gain;
++
++		context.activeState.agcStarted = true;
+ 	} else {
+ 		agc_.process(context.configuration.agc, context.activeState.agc, frameContext.agc, {}, metadata);
+ 	}
+diff --git a/src/ipa/softisp/ipa_context.h b/src/ipa/softisp/ipa_context.h
+index 1c5db17e..4af006f3 100644
+--- a/src/ipa/softisp/ipa_context.h
++++ b/src/ipa/softisp/ipa_context.h
+@@ -41,6 +41,8 @@ struct IPAActiveState {
+ 	ipa::awb::ActiveState awb;
+ 	ipa::ccm::ActiveState ccm;
+ 	ipa::agc::ActiveState agc;
++	/* The exposure regulation has produced its first result. */
++	bool agcStarted;
+ 
+ 	struct {
+ 		uint8_t level;
+diff --git a/src/ipa/softisp/softisp.cpp b/src/ipa/softisp/softisp.cpp
+index 00249a30..3c61c1b3 100644
+--- a/src/ipa/softisp/softisp.cpp
++++ b/src/ipa/softisp/softisp.cpp
+@@ -253,6 +253,22 @@ void IPASoftIsp::processStats(const uint32_t frame,
+ 		algo->process(context_, frame, frameContext, stats_, metadata);
+ 	metadataReady.emit(frame, metadata);
+ 
++	if (auto &position = context_.activeState.af.lensPosition) {
++		ControlList lensCtrls(context_.lensControls);
++		lensCtrls.set(V4L2_CID_FOCUS_ABSOLUTE, *position);
++		setLensControls.emit(lensCtrls);
++		position.reset();
++	}
++
++	/*
++	 * Until the regulation has run once, its values are placeholders
++	 * (minimum gain, default exposure). Do not send them to a sensor that
++	 * still has the values of the previous session.
++	 */
++	if (!context_.activeState.agcStarted &&
++	    frameContext.agc.autoExposureEnabled && frameContext.agc.autoGainEnabled)
++		return;
++
+ 	ControlList ctrls(context_.sensorControls);
+ 	agc::prepareControls(ctrls, context_.camHelper.get(),
+ 			     frameContext.agc.exposure, frameContext.agc.gain);

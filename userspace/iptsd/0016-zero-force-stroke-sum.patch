@@ -1,0 +1,196 @@
+Optionally let a stroke continue without force by the summed tip amplitudes (ZeroForceStrokeSum)
+
+A pen that is pressed lightly reports force on and off within one stroke: its force tone falls
+silent for some frames while the tip stays on the glass. The contact then has to continue on the
+strength of the tip signal alone, and ZeroForceStrokeLevel ends it when that strength falls below a
+fraction of what it was while the stroke had force.
+
+The strength used so far is the energy of the interpolated peak, which is meant not to depend on
+where the tip is between two antennas. With a tilted pen it depends on it more than anything else.
+Measured on the Surface Pro 9 with the Slim Pen 2 on a capture of 9 glyphs written without lifting
+the pen, light pressure, 46 degrees of tilt:
+
+- the force tone was absent 6 times within a glyph, for 4 to 24 windows (30 to 180 ms);
+- within a stroke the energy of the interpolated peak changes between 1.0 and 3.2 times its
+  reference (the antenna on the side the pen leans to has almost no signal, the parabola through
+  three antennas overshoots), so it fell below 0.85 of its average over the stroke in 3 of the 6
+  intervals although nothing had changed: 12 strokes instead of 9, with gaps of 21, 67 and 67 ms;
+- the sum of the amplitudes of the three antennas around the strongest one, squared and added for
+  both axes, stays within 0.81 .. 1.02 of its value before the interval in all 6 (as an amplitude
+  its relative standard deviation within a stroke is 2 .. 3 % at any tilt, where the interpolated
+  peak has 2.3 % with an upright pen and 9.5 % and more with a tilted one).
+
+With ZeroForceStrokeSum a stroke that had force continues without force for as long as that sum
+stays above ZeroForceStrokeLevel times its average during the force, and neither the interpolated
+peak nor ZeroForceExit is consulted for it. How a contact without any force begins
+(ZeroForceEnter, ZeroForceStartSamples), how one that never had force ends (ZeroForceExit), the
+reference (ZeroForceReference) and the lockout after a firm stroke are unchanged.
+
+Where the pen is really lifted the sum falls below 0.9 of its value in the third to fourth window
+after the force ended (median over 171 lifts of four captures), as before.
+
+With ZeroForceStrokeSum and ZeroForceStrokeLevel = 0.8 (0.85 with the interpolated peak before):
+
+- the 9 glyphs: 9 strokes (12 before);
+- handwriting captures, strokes per phase before -> after: small light writing 49 -> 45, normal
+  32 -> 30 and 31 -> 31, tilted 20 -> 18, light 20 -> 19, a short text 44 -> 44; ticks, dots and
+  hatches (15, 24, 10) unchanged; nothing while hovering, a firm stroke lifted quickly ends at
+  the same sample;
+- the strokes that are now joined are short intervals without force in which the summed amplitude
+  stayed above 0.9 of its value before: by the tip signal the tip did not leave the glass, and
+  such an interval can not be told from the ones inside the 9 glyphs. With 0.85 the 9 glyphs give
+  10 strokes and the tilted writing 24.
+
+Off by default.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 09c7114..2cc85c7 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -105,6 +105,7 @@ public:
+ 	usize dft_pressure_bit_min_mag = 3000;
+ 	bool dft_pressure_ramp = false;
+ 	bool dft_zero_force_pressure = false;
++	bool dft_zero_force_stroke_sum = false;
+ 	f64 dft_tip_signal_reference = 0;
+ 	f64 dft_centroid_fade_min = 0;
+ 	f64 dft_centroid_fade_max = 0;
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index bdc9fd4..6a77648 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -404,6 +404,12 @@ private:
+ 	// Average of the tip energy over the part of the stroke that had force.
+ 	std::optional<f64> m_stroke_energy = std::nullopt;
+ 
++	// The tip energy from the summed amplitudes of three antennas per axis (see
++	// sum_amplitude), and its average over the part of the stroke that had force.
++	// Only used with ZeroForceStrokeSum.
++	std::optional<f64> m_tip_sum = std::nullopt;
++	std::optional<f64> m_stroke_sum = std::nullopt;
++
+ 	// For how many more samples there is no zero force contact after a firm stroke
+ 	// ended, and the pressure of the last three pressure windows (0 without force).
+ 	usize m_zero_force_lockout = 0;
+@@ -1675,10 +1681,18 @@ private:
+ 
+ 			m_stroke_energy = m_stroke_energy.value_or(energy) +
+ 			                  ((energy - m_stroke_energy.value_or(energy)) * 0.25);
++
++			if (m_tip_sum.has_value()) {
++				const f64 sum = m_tip_sum.value();
++
++				m_stroke_sum = m_stroke_sum.value_or(sum) +
++				               ((sum - m_stroke_sum.value_or(sum)) * 0.25);
++			}
+ 		} else if (m_zero_force_lockout > 0) {
+ 			m_zero_force_contact = false;
+ 			m_zero_force_above = 0;
+ 			m_stroke_energy = std::nullopt;
++			m_stroke_sum = std::nullopt;
+ 		} else if (m_zero_force_contact || m_zero_force_above >= start) {
+ 			const f64 energy = m_tip_energy.value();
+ 			const f64 level = m_config.dft_zero_force_stroke_level;
+@@ -1690,9 +1704,21 @@ private:
+ 				energy >= m_config.dft_zero_force_exit * m_zero_force_reference &&
+ 				!faded;
+ 
++			/*
++			 * A stroke that had force is judged by the summed amplitudes alone,
++			 * relative to what they were during the force (see sum_amplitude):
++			 * the interpolated peak of a tilted pen changes too much within a
++			 * stroke for either of the two conditions above.
++			 */
++			if (level > 0 && m_stroke_sum.has_value() && m_tip_sum.has_value()) {
++				m_zero_force_contact =
++					m_tip_sum.value() >= level * m_stroke_sum.value();
++			}
++
+ 			if (!m_zero_force_contact) {
+ 				m_zero_force_above = 0;
+ 				m_stroke_energy = std::nullopt;
++				m_stroke_sum = std::nullopt;
+ 			}
+ 		} else {
+ 			const f64 energy = m_tip_energy.value();
+@@ -1821,6 +1847,16 @@ private:
+ 		if (!std::isnan(peak_x) && !std::isnan(peak_y))
+ 			m_tip_energy = (peak_x * peak_x) + (peak_y * peak_y);
+ 
++		m_tip_sum = std::nullopt;
++
++		if (m_config.dft_zero_force_stroke_sum) {
++			const f64 sum_x = sum_amplitude(dft.x[0]);
++			const f64 sum_y = sum_amplitude(dft.y[0]);
++
++			if (!std::isnan(sum_x) && !std::isnan(sum_y))
++				m_tip_sum = (sum_x * sum_x) + (sum_y * sum_y);
++		}
++
+ 		const auto mag_2 = dft.x[2].magnitude + dft.y[2].magnitude;
+ 		const auto mag_3 = dft.x[3].magnitude + dft.y[3].magnitude;
+ 
+@@ -2199,6 +2235,42 @@ private:
+ 		return row.first + k + (moment / sum);
+ 	}
+ 
++	/*!
++	 * Sums the amplitudes of the three antennas around the strongest one.
++	 *
++	 * This is the strength of the tip signal for the continuation of a stroke without
++	 * force with ZeroForceStrokeSum. The interpolated peak (interpolate_peak) is meant to
++	 * remove the dependence on where the tip is between two antennas, but with a tilted pen it
++	 * does the opposite: measured on the Surface Pro 9 with the Slim Pen 2 at 46 degrees of
++	 * tilt, the energy from the interpolated peak changes between 1.0 and 3.2 times
++	 * its reference within one stroke (the neighbour on the side the pen leans to has
++	 * almost no signal, and the parabola through the three antennas overshoots), while
++	 * the sum of the three amplitudes stays within 1.05 to 1.25 times its value for an
++	 * upright pen.
++	 *
++	 * @param[in] row A list of measurements on one axis.
++	 * @return The summed amplitude, or NaN at the edge of the screen.
++	 */
++	[[nodiscard]] static f64 sum_amplitude(const ipts::protocol::dft::Row &row)
++	{
++		const u8 maxi = ipts::protocol::dft::NUM_COMPONENTS / 2;
++
++		f64 sum = 0;
++
++		for (u8 i = 0; i < 3; i++) {
++			const u8 j = casts::to<u8>(maxi + i - 1);
++			const f64 amp = std::hypot(row.real.at(j), row.imag.at(j));
++
++			// off-screen components are always zero
++			if (amp < 1)
++				return casts::to<f64>(NAN);
++
++			sum += amp;
++		}
++
++		return sum;
++	}
++
+ 	/*!
+ 	 * Interpolates the amplitude that an antenna directly below the stylus would measure.
+ 	 *
+@@ -2328,6 +2400,8 @@ private:
+ 		m_force_off = 0;
+ 		m_zero_force_above = 0;
+ 		m_stroke_energy = std::nullopt;
++		m_stroke_sum = std::nullopt;
++		m_tip_sum = std::nullopt;
+ 		m_zero_force_lockout = 0;
+ 		m_recent_pressure = {};
+ 		m_measured_pressure = 0;
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 1d978e7..a7da600 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -228,6 +228,7 @@ private:
+ 		this->get(ini, "DFT", "PressureBitMinMag", m_config.dft_pressure_bit_min_mag);
+ 		this->get(ini, "DFT", "PressureRamp", m_config.dft_pressure_ramp);
+ 		this->get(ini, "DFT", "ZeroForcePressure", m_config.dft_zero_force_pressure);
++		this->get(ini, "DFT", "ZeroForceStrokeSum", m_config.dft_zero_force_stroke_sum);
+ 		this->get(ini, "DFT", "TipSignalReference", m_config.dft_tip_signal_reference);
+ 		this->get(ini, "DFT", "CentroidFadeMin", m_config.dft_centroid_fade_min);
+ 		this->get(ini, "DFT", "CentroidFadeMax", m_config.dft_centroid_fade_max);

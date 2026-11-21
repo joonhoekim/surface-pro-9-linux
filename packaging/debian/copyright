@@ -1,0 +1,86 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: surface-pro-9-linux
+Upstream-Contact: https://github.com/joonhoekim/surface-pro-9-linux/issues
+Source: https://github.com/joonhoekim/surface-pro-9-linux
+Comment:
+ The source tarball is made by packaging/source-tarball.sh: the git tree plus
+ the Rust crates the helper builds with, vendored in helper/vendor. Each
+ vendored crate carries its own licence in its directory (Cargo.toml and the
+ licence files it ships); they are linked statically into sp9-helperd,
+ sp9-ctl, sp9-settings and sp9-digitizerd. REUSE.toml in the source is the
+ authoritative licence map of the project's own files.
+
+Files: *
+Copyright: 2026 Joonhoe Kim
+License: MIT
+
+Files: helper/*
+Copyright: 2026 Joonhoe Kim
+License: GPL-3+
+Comment: sp9-digitizer and sp9-digitizerd are derived from iptsd
+ (GPL-2.0-or-later); the derived files name their iptsd sources.
+
+Files: helper/data/io.github.joonhoekim.OpenDeviceHelper.SurfacePro9.metainfo.xml
+Copyright: 2026 Joonhoe Kim
+License: MIT
+
+Files: helper/vendor/*
+Copyright: the authors of each crate, as listed in its Cargo.toml
+License: MIT or Apache-2.0
+Comment: Most crates are dual-licensed MIT OR Apache-2.0; a few use other
+ permissive licences (Unicode-3.0, BSD-3-Clause, Zlib, ISC) or, for the GTK
+ bindings, MIT. The exact licence of each crate is in its Cargo.toml.
+
+Files: kernel/*
+Copyright: the authors named in each patch's From: and Signed-off-by: lines
+License: GPL-2
+
+Files: *.md docs/*
+Copyright: 2026 Joonhoe Kim
+License: CC-BY-SA-4.0
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in
+ all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ THE SOFTWARE.
+
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify it under
+ the terms of the GNU General Public License as published by the Free Software
+ Foundation, either version 3 of the License, or (at your option) any later
+ version.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in "/usr/share/common-licenses/GPL-3".
+
+License: GPL-2
+ This program is free software; you can redistribute it and/or modify it under
+ the terms of the GNU General Public License version 2 as published by the Free
+ Software Foundation.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 2 can be found in "/usr/share/common-licenses/GPL-2".
+
+License: MIT or Apache-2.0
+ Either the MIT licence above or the Apache License 2.0, at the choice of the
+ recipient. On Debian systems, the complete text of the Apache License 2.0 can
+ be found in "/usr/share/common-licenses/Apache-2.0".
+
+License: CC-BY-SA-4.0
+ Creative Commons Attribution-ShareAlike 4.0 International. The full text is
+ in LICENSES/CC-BY-SA-4.0.txt of the source and at
+ https://creativecommons.org/licenses/by-sa/4.0/legalcode

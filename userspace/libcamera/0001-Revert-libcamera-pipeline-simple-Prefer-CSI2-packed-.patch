@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 14:33:09 +0900
+Subject: [PATCH] Revert "libcamera: pipeline: simple: Prefer CSI2 packed bayer
+ formats over unpacket formats"
+
+This reverts commit ec773a6b26ca648876cfc5c017ec8c576a50fc00.
+
+On a Surface Pro 9 (IPU6 8086:465d, kernel 7.3.4) the IPU6 ISYS returns
+every buffer of a CSI-2 packed 10 bit format with the error flag set, for
+both sensors (OV5693 2592x1944, OV13858 2112x1188), and the kernel logs
+CSI-2 receiver errors. With the packed format preferred no frame reaches
+the application. The unpacked formats work.
+
+---
+ src/libcamera/pipeline/simple/simple.cpp | 24 +-----------------------
+ 1 file changed, 1 insertion(+), 23 deletions(-)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index 35e06649..1eb7d0da 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -1228,15 +1228,6 @@ CameraConfiguration::Status SimpleCameraConfiguration::validate()
+ 	 * Then pick, among the possible configuration for the pixel format,
+ 	 * the smallest sensor resolution that can accommodate all streams
+ 	 * without upscaling.
+-	 *
+-	 * If both packed and unpacked Bayer capture formats are supported
+-	 * prefer packed for lower memory usage and better software ISP
+-	 * performance.
+-	 *
+-	 * Note preferring packed also works around a bug on ipu6/7 setups where
+-	 * the CSI receives sometimes hands over corrupt frames. With unpacked
+-	 * formats this causes OOB array accesses in the software ISP, due to
+-	 * some of the unused high bits being 1 in these corrupt frames.
+ 	 */
+ 	const SimpleCameraData::Configuration *maxPipeConfig = nullptr;
+ 	pipeConfig_ = nullptr;
+@@ -1244,25 +1235,12 @@ CameraConfiguration::Status SimpleCameraConfiguration::validate()
+ 	for (const SimpleCameraData::Configuration *pipeConfig : *configs) {
+ 		const Size &captureSize = pipeConfig->captureSize;
+ 		const Size &maxOutputSize = pipeConfig->outputSizes.max;
+-		bool curCfgPacked = false;
+-		bool newCfgPacked = false;
+-
+-		if (pipeConfig_) {
+-			BayerFormat curBayerFmt = BayerFormat::fromPixelFormat(pipeConfig_->captureFormat);
+-			BayerFormat newBayerFmt = BayerFormat::fromPixelFormat(pipeConfig->captureFormat);
+-			/* Only compare packed vs unpacked if both formats are Bayer */
+-			if (curBayerFmt.isValid() && newBayerFmt.isValid()) {
+-				curCfgPacked = curBayerFmt.packing == BayerFormat::Packing::CSI2;
+-				newCfgPacked = newBayerFmt.packing == BayerFormat::Packing::CSI2;
+-			}
+-		}
+ 
+ 		if (maxOutputSize.width >= maxProcessedStreamSize.width &&
+ 		    maxOutputSize.height >= maxProcessedStreamSize.height &&
+ 		    captureSize.width >= maxRawStreamSize.width &&
+ 		    captureSize.height >= maxRawStreamSize.height) {
+-			if (!pipeConfig_ || captureSize < pipeConfig_->captureSize ||
+-			    (captureSize <= pipeConfig_->captureSize && !curCfgPacked && newCfgPacked))
++			if (!pipeConfig_ || captureSize < pipeConfig_->captureSize)
+ 				pipeConfig_ = pipeConfig;
+ 		}
+ 

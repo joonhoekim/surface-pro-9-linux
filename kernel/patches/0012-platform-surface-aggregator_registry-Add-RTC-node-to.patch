@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 12 Nov 2026 17:35:18 -0800
+Subject: [PATCH] platform/surface: aggregator_registry: Add RTC node to the
+ Surface Pro 9 group
+
+The rtc-surface driver binds to the SAM/SAM function (TC 0x01, TID 0x01,
+IID 0x00, function 0x00), but no registry group creates that device, so
+the driver never loads.
+
+On the Surface Pro 9 the ACPI time and alarm device (ACPI000E, _SUB
+MSHW0217) depends on the SAM serial hub and has no time methods of its
+own (_GCP is 0), so the clock sits behind SAM. With the node added,
+rtc-surface binds and its time (CID 0x10, get UTC time) agrees with the
+system UTC to within a second.
+
+Add the node to ssam_node_group_sp9. The group is also used for the
+Surface Pro 10, 11 and 12 (Intel); the SAM RTC has not been checked on
+those.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/platform/surface/surface_aggregator_registry.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/platform/surface/surface_aggregator_registry.c b/drivers/platform/surface/surface_aggregator_registry.c
+index ef87965fc..3d17dfdcf 100644
+--- a/drivers/platform/surface/surface_aggregator_registry.c
++++ b/drivers/platform/surface/surface_aggregator_registry.c
+@@ -51,6 +51,12 @@ static const struct software_node ssam_node_hub_base = {
+ 	.parent = &ssam_node_root,
+ };
+ 
++/* Real-time clock. */
++static const struct software_node ssam_node_rtc = {
++	.name = "ssam:01:01:01:00:00",
++	.parent = &ssam_node_root,
++};
++
+ /* AC adapter. */
+ static const struct software_node ssam_node_bat_ac = {
+ 	.name = "ssam:01:02:01:01:01",
+@@ -373,6 +379,7 @@ static const struct software_node *ssam_node_group_sp8[] = {
+ static const struct software_node *ssam_node_group_sp9[] = {
+ 	&ssam_node_root,
+ 	&ssam_node_hub_kip,
++	&ssam_node_rtc,
+ 	&ssam_node_bat_ac,
+ 	&ssam_node_bat_main,
+ 	&ssam_node_tmp_perf_profile_with_fan,

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Version updates for the workflow actions, the website's npm packages and the helper's Rust crates.
+# Kernel, linux-surface, iptsd, libcamera and nixpkgs pins are moved by hand (they need a test on the device).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: monthly
+    groups:
+      site:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /helper
+    schedule:
+      interval: monthly
+    groups:
+      helper:
+        patterns: ["*"]

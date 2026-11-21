@@ -1,0 +1,88 @@
+# /etc/sp9/helper.toml -- sp9-helperd settings. The daemon writes this file when settings change
+# through D-Bus (sp9-ctl, front-ends); after editing it by hand run `sp9-ctl reload`.
+# Every key is optional; these are the defaults.
+
+[performance]
+# Apply the profile's RAPL PL1/PL2/tau on every platform_profile or power source change.
+follow_profile = true
+# Write the profile's energy_performance_preference too, and write it again when something else
+# (power-profiles-daemon) replaces it within 5 s of that write. Off leaves the EPP to others.
+epp = true
+# Experimental: lower PL1 by the skin temperature (balanced-performance, performance). skin_sensor is a channel of the
+# surface_thermal hwmon (temp9 = SAM sensor 9 = VTS1); a label works only where labels are
+# unique, and on this device temp9 and temp1 are both labelled I_RTS1.
+skin_guard = false
+skin_sensor = "temp9"
+
+# Overrides of the table (docs/helper-reference.md). Bounds: PL1 5-35 W, PL1 <= PL2 <= 60 W,
+# tau 1-28 s, EPP 0-255. Keys: "<profile>.ac" / "<profile>.dc".
+# [performance.limits."performance.ac"]
+# pl1_w = 35.0
+# pl2_w = 60.0
+# tau_s = 28.0
+# epp = 64
+
+[fan]
+# Experimental: allow the SAM FAN 0x0b rpm request (sp9-ctl fan request RPM, 1600-7500). The
+# firmware follows it only while it is not driving the fan itself; suspend and a daemon restart
+# cancel it. The request itself is not stored here.
+allow_rpm_request = false
+
+[display]
+# PSR by power source through debugfs i915_edp_psr_debug: "default" (never written), "off", "psr1".
+psr_ac = "default"
+psr_dc = "default"
+
+[input]
+# Inhibit iptsd's virtual touchscreen while the eDP connector is off.
+touch_off_when_display_off = false
+# sp9-digitizerd reports the pen where it will be this many milliseconds from now (0-30; 0 = off).
+# Kept in the iptsd drop-in as [Stylus] PredictionMs; iptsd does not have the key.
+pen_prediction_ms = 0.0
+
+# Values over the platform preset (24 / 20, DisableOnStylus = true); absent = preset.
+[input.iptsd]
+# activation_threshold = 24.0
+# deactivation_threshold = 20.0
+# disable_on_stylus = true
+
+# The pen's zero-force contact in iptsd (needs the iptsd patch of this repository; another
+# iptsd ignores the keys): the pen counts as touching when its tip signal reaches enter_percent
+# of the level it has while writing with force, and stops below exit_percent
+# (1 <= exit < enter <= 150). Low values can ink while the pen hovers very close: raise them then.
+# floor_percent: pressure reported in contact without force (0-50 % of the range).
+# reference: 0 = iptsd learns the level from strokes written with force after each start.
+[input.zero_force]
+enabled = true
+enter_percent = 85.0
+exit_percent = 75.0
+floor_percent = 3.0
+reference = 0.0
+
+[pen]
+# Pen haptics as a whole. On: the inking waveform starts on tip down and stops on tip up (as
+# Windows applications do), and with speed_feedback the pen speed goes to the digitizer.
+ink_feedback = false
+# Strength: the intensity byte of the start report, as Windows' "tactile signals" setting.
+# 2-254 is what Windows sends (127 = its default = 100 % of `sp9-ctl pen strength`).
+intensity = 127
+# The continuous waveform started on tip down: "ink", "pencil", "marker", "chisel-marker",
+# "brush", "sparkle". Windows applications pick one per tool (OneNote: brush, Journal: pencil).
+ink_waveform = "brush"
+# Feed the pen state back to the digitizer (THC feature report 9). The Slim Pen 2 plays its
+# continuous waveforms only while the digitizer has a pen speed from the host. Only while
+# ink_feedback is on. Do not run the standalone surface-pen-feedback service at the same time.
+speed_feedback = true
+# One click when the eraser end touches down. The eraser end plays no continuous waveform
+# (on Windows neither). Only while ink_feedback is on.
+eraser_click = true
+# Pen speed in mm/s that maps to the largest speed value (50-2000). Absent: 300, the scale
+# Windows uses. Not a strength setting; `sp9-ctl pen full-scale N` sets it.
+# full_scale_mm_s = 300.0
+# Pen speeds below this (mm/s, 0-100) are sent as speed 0. Windows has about 15; 0 = none.
+speed_dead_zone_mm_s = 0.0
+# Couple a pen with this host when it is put into the cover slot (Bluetooth bond through the
+# cover, LE legacy OOB pairing; needs kernel patch 0023). sp9-ctl pen couple does it once.
+auto_couple = false
+# Restart bluetooth.service when BlueZ has not attached the pen's HID 10 s after a coupling.
+couple_restart_bluetooth = false

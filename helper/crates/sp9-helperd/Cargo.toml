@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Joonhoe Kim
+[package]
+name = "sp9-helperd"
+description = "System D-Bus service for the device-specific controls of the Surface Pro 9 (Intel)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# --version: the project version plus `git describe` for development builds
+build = "../../version-build.rs"
+
+[dependencies]
+sp9-helper-core = { path = "../sp9-helper-core" }
+sp9-digitizer = { path = "../sp9-digitizer" }
+zbus.workspace = true
+async-io = "2"
+blocking = "1"
+futures-lite = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+zbus = { workspace = true, features = ["p2p"] }

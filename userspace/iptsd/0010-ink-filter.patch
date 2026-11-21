@@ -1,0 +1,426 @@
+Optional Kalman filter for the position of a DFT pen in contact (InkFilter)
+
+A filter with position and a decaying velocity as state, the same on both axes. A measurement
+is trusted less when the phases of the three antennas around the tip disagree (which they do
+when something other than the tip tone contributes: noise, the barrel of a tilted pen), and the
+model follows faster when the pen is fast. The time between samples is taken from the window
+timestamps. When the contact ends, the distance between the filtered and the measured position
+is faded out over 5 samples.
+
+Measured by replaying captures of
+handwriting from the Surface Pro 9: the roughness of the path (distance of a sample from the
+cubic through its four neighbours, moving pen) goes from 0.011 .. 0.027 mm to 0.005 .. 0.012 mm
+(median), and from 0.041 to 0.014 mm for a pen held at 37 degrees, at the price of the reported
+position trailing the pen by 0.16 .. 0.24 mm (median, 4 .. 6 ms). With it the reported position
+is within 0.05 .. 0.07 mm (median) of what Windows reports for the same frames, without it within
+0.17 .. 0.22 mm, nearly all of which is that lag. Off by default.
+
+diff --git a/src/core/generic/config.hpp b/src/core/generic/config.hpp
+index 1dc9d84..c5bd539 100644
+--- a/src/core/generic/config.hpp
++++ b/src/core/generic/config.hpp
+@@ -93,6 +93,7 @@ public:
+ 	f64 dft_jitter_radius = 0;
+ 	f64 dft_hover_jitter_radius = 0;
+ 	usize dft_jitter_count = 6;
++	bool dft_ink_filter = false;
+ 
+ public:
+ 	/*!
+diff --git a/src/core/generic/dft.hpp b/src/core/generic/dft.hpp
+index aea0c2e..eb50cca 100644
+--- a/src/core/generic/dft.hpp
++++ b/src/core/generic/dft.hpp
+@@ -167,7 +167,172 @@ public:
+ 	}
+ };
+ 
++/*!
++ * A Kalman filter for the position of a stylus that is drawing.
++ *
++ * The state is the position and a velocity that decays, the same model on both axes, so the
++ * axes share one covariance. How much a measurement is trusted depends on how well the phases
++ * of the antennas that carry the tip signal agree, and how fast the model is allowed to
++ * change depends on the speed of the pen.
++ *
++ * The noise constants are meant for lengths in 0.01 mm and steps of 3.75 ms (four steps per
++ * 15 ms frame); the time between two samples is a real number of such steps.
++ */
++class DftInkFilter {
++private:
++	constexpr static f64 STEP = 3750;
++	constexpr static f64 UNIT = 0.01;
++	constexpr static f64 DECAY = 0.8;
++
++	bool m_valid = false;
++
++	// Position and velocity.
++	f64 m_px = 0;
++	f64 m_py = 0;
++	f64 m_vx = 0;
++	f64 m_vy = 0;
++
++	// Covariance: position, position-velocity, velocity.
++	f64 m_ppp = 0;
++	f64 m_ppv = 0;
++	f64 m_pvv = 0;
++
++	// Smoothed phase coherence and speed.
++	f64 m_coherence = 0;
++	f64 m_speed = 0;
++
++	// The previous measurement.
++	u32 m_timestamp = 0;
++	f64 m_ix = 0;
++	f64 m_iy = 0;
++
++public:
++	/*!
++	 * Adds a measurement and replaces it with the filtered position.
++	 *
++	 * @param[in,out] x The X coordinate in millimeters.
++	 * @param[in,out] y The Y coordinate in millimeters.
++	 * @param[in] timestamp The time of the measurement in microseconds.
++	 * @param[in] coherence How well the phases of the tip signal agree, 0 to 1.
++	 */
++	void update(f64 &x, f64 &y, const u32 timestamp, const f64 coherence)
++	{
++		const f64 ix = x / UNIT;
++		const f64 iy = y / UNIT;
++
++		// Wraps around correctly, a step backwards becomes a very long one.
++		const f64 elapsed = casts::to<f64>(timestamp - m_timestamp);
++
++		if (!m_valid || elapsed <= 0 || elapsed > 50000) {
++			m_valid = true;
++
++			m_px = ix;
++			m_py = iy;
++			m_vx = 0;
++			m_vy = 0;
++
++			m_ppp = 0.1;
++			m_ppv = 0;
++			m_pvv = 0.1;
++
++			m_coherence = coherence;
++			m_speed = 0;
++
++			m_timestamp = timestamp;
++			m_ix = ix;
++			m_iy = iy;
++			return;
++		}
++
++		const f64 n = std::clamp(elapsed / STEP, 0.5, 8.0);
++
++		// The trust in the measurements drops fast and recovers slowly.
++		const f64 fall = 1 - std::pow(0.2, n);
++		const f64 rise = 1 - std::pow(0.8, n);
++
++		m_coherence += (coherence < m_coherence ? fall : rise) * (coherence - m_coherence);
++
++		const f64 c = std::clamp(m_coherence, 0.5, 1.0);
++		const f64 r = 0.2 + (32 * (2 * (1 - c)) * (2 * (1 - c)));
++
++		const f64 v = std::hypot(ix - m_ix, iy - m_iy) / n;
++		m_speed += rise * (v - m_speed);
++
++		const f64 q = 0.02 + (0.2 * std::clamp(m_speed, 0.0, 200.0) / 200);
++
++		// Predict, one step (or the remaining part of one) at a time.
++		for (f64 k = n; k > 0;) {
++			const f64 h = std::min(k, 1.0);
++			const f64 d = std::pow(DECAY, h);
++			const f64 g = DECAY * (1 - d) / (1 - DECAY);
++
++			m_px += g * m_vx;
++			m_py += g * m_vy;
++			m_vx *= d;
++			m_vy *= d;
++
++			const f64 ppp = m_ppp + (2 * g * m_ppv) + (g * g * m_pvv) + (q * h);
++			const f64 ppv = d * (m_ppv + (g * m_pvv));
++			const f64 pvv = (d * d * m_pvv) + (q * h);
++
++			m_ppp = ppp;
++			m_ppv = ppv;
++			m_pvv = pvv;
++
++			k -= h;
++		}
++
++		// Update
++		const f64 s = m_ppp + r;
++		const f64 kp = m_ppp / s;
++		const f64 kv = m_ppv / s;
++
++		const f64 ex = ix - m_px;
++		const f64 ey = iy - m_py;
++
++		m_px += kp * ex;
++		m_py += kp * ey;
++		m_vx += kv * ex;
++		m_vy += kv * ey;
++
++		const f64 ppp = (1 - kp) * m_ppp;
++		const f64 ppv = (1 - kp) * m_ppv;
++		const f64 pvv = m_pvv - (kv * m_ppv);
++
++		m_ppp = ppp;
++		m_ppv = ppv;
++		m_pvv = pvv;
++
++		m_timestamp = timestamp;
++		m_ix = ix;
++		m_iy = iy;
++
++		x = m_px * UNIT;
++		y = m_py * UNIT;
++	}
++
++	/*!
++	 * Forgets the state, the next measurement starts a new stroke.
++	 */
++	void reset()
++	{
++		m_valid = false;
++	}
++
++	/*!
++	 * Whether the filter is following a stroke.
++	 */
++	[[nodiscard]] bool valid() const
++	{
++		return m_valid;
++	}
++};
++
+ class DftStylus {
++private:
++	// Over how many samples the lag of the ink filter is faded out after a stroke.
++	constexpr static usize FILTER_FADE = 5;
++
+ private:
+ 	Config m_config;
+ 	DeviceInfo m_info;
+@@ -230,10 +395,18 @@ private:
+ 	f64 m_tilt_offset_x = 0;
+ 	f64 m_tilt_offset_y = 0;
+ 
+-	// Holds the reported position of a pen that does not move: see filter_position().
++	// Holds the reported position of a pen that does not move, and filters the
++	// position while the pen draws: see filter_position().
++	DftInkFilter m_ink_filter {};
+ 	DftJitterLock m_jitter_lock {};
+ 	bool m_filter_contact = false;
+ 
++	// When the stroke ends the filtered position is behind the measured one. What is
++	// left of that distance (in mm), and for how many more samples it is faded out.
++	f64 m_filter_lag_x = 0;
++	f64 m_filter_lag_y = 0;
++	usize m_filter_fade = 0;
++
+ public:
+ 	DftStylus(Config config, const DeviceInfo &info)
+ 		: m_config {std::move(config)},
+@@ -277,8 +450,14 @@ public:
+ 				return false;
+ 			}
+ 
+-			if (m_stylus.proximity)
+-				this->filter_position(m_stylus.x, m_stylus.y, 0, 0);
++			if (m_stylus.proximity && !dft.x.empty() && !dft.y.empty()) {
++				this->filter_position(m_stylus.x,
++				                      m_stylus.y,
++				                      0,
++				                      0,
++				                      dft.timestamp,
++				                      this->phase_coherence(dft.x[0], dft.y[0]));
++			}
+ 
+ 			/* This event type is the most important one. It is the first and
+ 			 * the last one to arrive. It sets both proximity and lift. It is
+@@ -487,7 +666,12 @@ private:
+ 		x = this->antenna_to_screen_x(x, width);
+ 		y = this->antenna_to_screen_y(y, height);
+ 
+-		this->filter_position(x, y, ox, oy);
++		this->filter_position(x,
++		                      y,
++		                      ox,
++		                      oy,
++		                      dft.timestamp,
++		                      this->phase_coherence(dft.x[0], dft.y[0]));
+ 
+ 		m_stylus.x = std::clamp(x, 0.0, 1.0);
+ 		m_stylus.y = std::clamp(y, 0.0, 1.0);
+@@ -499,22 +683,30 @@ private:
+ 	/*!
+ 	 * Finishes a position that is about to be reported.
+ 	 *
+-	 * The tilt offset is added, and a pen that does not move is held in place
+-	 * (JitterRadius while in contact, HoverJitterRadius while hovering).
++	 * While the pen draws, the position optionally goes through a Kalman filter
++	 * (InkFilter). Then the tilt offset is added, and a pen that does not move is held
++	 * in place (JitterRadius while in contact, HoverJitterRadius while hovering).
+ 	 *
+ 	 * @param[in,out] x The X coordinate, in the range 0 to 1.
+ 	 * @param[in,out] y The Y coordinate, in the range 0 to 1.
+ 	 * @param[in] ox An offset to add to the filtered X coordinate.
+ 	 * @param[in] oy An offset to add to the filtered Y coordinate.
++	 * @param[in] timestamp The time of the measurement in microseconds.
++	 * @param[in] coherence How well the phases of the tip signal agree, 0 to 1.
+ 	 */
+-	void filter_position(f64 &x, f64 &y, const f64 ox, const f64 oy)
++	void filter_position(f64 &x,
++	                     f64 &y,
++	                     const f64 ox,
++	                     const f64 oy,
++	                     const u32 timestamp,
++	                     const f64 coherence)
+ 	{
+ 		// The size of the screen is configured in centimeters.
+ 		const f64 w = m_config.width * 10;
+ 		const f64 h = m_config.height * 10;
+ 
+-		const bool enabled =
+-			m_config.dft_jitter_radius > 0 || m_config.dft_hover_jitter_radius > 0;
++		const bool enabled = m_config.dft_ink_filter || m_config.dft_jitter_radius > 0 ||
++		                     m_config.dft_hover_jitter_radius > 0;
+ 
+ 		if (!enabled || w <= 0 || h <= 0) {
+ 			x += ox;
+@@ -527,6 +719,29 @@ private:
+ 		f64 fx = x * w;
+ 		f64 fy = y * h;
+ 
++		if (m_config.dft_ink_filter) {
++			if (contact) {
++				m_ink_filter.update(fx, fy, timestamp, coherence);
++
++				m_filter_lag_x = fx - (x * w);
++				m_filter_lag_y = fy - (y * h);
++				m_filter_fade = FILTER_FADE;
++			} else {
++				m_ink_filter.reset();
++
++				// Do not jump to the measured position when the stroke ends.
++				if (m_filter_fade > 0) {
++					m_filter_fade--;
++
++					const f64 part =
++						casts::to<f64>(m_filter_fade) / FILTER_FADE;
++
++					fx += m_filter_lag_x * part;
++					fy += m_filter_lag_y * part;
++				}
++			}
++		}
++
+ 		fx += ox * w;
+ 		fy += oy * h;
+ 
+@@ -545,6 +760,54 @@ private:
+ 		y = fy / h;
+ 	}
+ 
++	/*!
++	 * Determines how well the phases of the three antennas around the tip agree.
++	 *
++	 * All antennas receive the same tone, so their phases are equal as long as the tip
++	 * signal dominates. A phase that deviates means that something else (noise, the
++	 * signal of the barrel of a tilted pen) has a share in the amplitudes that the
++	 * position is calculated from.
++	 *
++	 * @param[in] row_x The measurements of the tip signal on the X axis.
++	 * @param[in] row_y The measurements of the tip signal on the Y axis.
++	 * @return 1 if all phases agree, down to 0 if two of them are 90 degrees or more apart.
++	 */
++	[[nodiscard]] static f64 phase_coherence(const ipts::protocol::dft::Row &row_x,
++	                                         const ipts::protocol::dft::Row &row_y)
++	{
++		f64 coherence = 1;
++
++		for (const ipts::protocol::dft::Row &row : {row_x, row_y}) {
++			const u8 mid = ipts::protocol::dft::NUM_COMPONENTS / 2;
++
++			std::array<f64, 3> re {};
++			std::array<f64, 3> im {};
++
++			for (u8 i = 0; i < 3; i++) {
++				const u8 j = casts::to<u8>(mid + i - 1);
++				const f64 amp = std::hypot(row.real.at(j), row.imag.at(j));
++
++				if (amp <= 0)
++					return 0;
++
++				re.at(i) = row.real.at(j) / amp;
++				im.at(i) = row.imag.at(j) / amp;
++			}
++
++			const f64 cos = std::min({
++				(re[0] * re[1]) + (im[0] * im[1]),
++				(re[0] * re[2]) + (im[0] * im[2]),
++				(re[1] * re[2]) + (im[1] * im[2]),
++			});
++
++			const f64 angle = std::min(std::acos(std::clamp(cos, -1.0, 1.0)), M_PI_2);
++
++			coherence = std::min(coherence, 1 - (angle / M_PI_2));
++		}
++
++		return coherence;
++	}
++
+ 	/*!
+ 	 * Calculates the tilt of the stylus from one of the MPP v2 position windows, and
+ 	 * the offset of the tip position that comes with it.
+@@ -1215,7 +1478,9 @@ private:
+ 		}
+ 		m_tilt_offset_valid = false;
+ 
++		m_ink_filter.reset();
+ 		m_jitter_lock.reset();
++		m_filter_fade = 0;
+ 	}
+ };
+ 
+diff --git a/src/core/linux/config-loader.hpp b/src/core/linux/config-loader.hpp
+index 2f77795..3cf0fa6 100644
+--- a/src/core/linux/config-loader.hpp
++++ b/src/core/linux/config-loader.hpp
+@@ -216,6 +216,7 @@ private:
+ 		this->get(ini, "DFT", "JitterRadius", m_config.dft_jitter_radius);
+ 		this->get(ini, "DFT", "HoverJitterRadius", m_config.dft_hover_jitter_radius);
+ 		this->get(ini, "DFT", "JitterCount", m_config.dft_jitter_count);
++		this->get(ini, "DFT", "InkFilter", m_config.dft_ink_filter);
+ 
+ 		// Legacy options that are kept for compatibility
+ 		this->get(ini, "DFT", "TipDistance", m_config.stylus_tip_distance);
+diff --git a/src/ipts/parser.hpp b/src/ipts/parser.hpp
+index 9489e07..d97fb8a 100644
+--- a/src/ipts/parser.hpp
++++ b/src/ipts/parser.hpp
+@@ -426,6 +426,7 @@ private:
+ 		dft.y = reader.subspan<protocol::dft::Row>(window.num_rows);
+ 
+ 		dft.type = window.data_type;
++		dft.timestamp = window.timestamp;
+ 		dft.width = m_dim.columns;
+ 		dft.height = m_dim.rows;
+ 
+diff --git a/src/ipts/samples/dft.hpp b/src/ipts/samples/dft.hpp
+index cd91674..e929201 100644
+--- a/src/ipts/samples/dft.hpp
++++ b/src/ipts/samples/dft.hpp
+@@ -17,6 +17,9 @@ struct DftWindow {
+ 	std::optional<u32> group = std::nullopt;
+ 	protocol::dft::Type type {};
+ 
++	//! The time at which the window was sampled, in microseconds.
++	u32 timestamp = 0;
++
+ 	u8 width = 0;
+ 	u8 height = 0;
+ 

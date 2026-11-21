@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Surface Pro 9 (Intel): start sp9-psr1.service, which limits the panel to PSR1 through i915 debugfs.
+ACTION=="add", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{DEVTYPE}=="drm_minor", DRIVERS=="i915", ATTR{[dmi/id]product_sku}=="Surface_Pro_9_2038", TAG+="systemd", ENV{SYSTEMD_WANTS}+="sp9-psr1.service"

@@ -1,0 +1,306 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Packages: build the Debian/Ubuntu and Arch packages in the official containers, lint them
+# (lintian, namcap), install-test them in a container that boots systemd, and on a release tag
+# vX.Y.Z publish them: the files to the GitHub release, the signed apt and pacman repositories as
+# the release asset pages-packages.tar.gz, which the Website workflow puts under /packages/ of
+# GitHub Pages. packaging/README.md describes the pieces; docs/releasing.md the release.
+#
+# Adding a package to the repositories (as the dkms job does for sp9-dkms): a job that uploads an artifact
+#   pkg-deb-<codename>-<name>   .deb files for one suite (codenames: packaging/targets.tsv)
+#   pkg-deb-all-<name>          architecture-independent .deb files for every suite
+#   pkg-arch-<name>             .pkg.tar.zst files
+# and its name in publish.needs. The publish job takes every pkg-* artifact.
+name: Packages
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'packaging/**'
+      - 'helper/**'
+      - 'userspace/platform/**'
+      - 'userspace/libcamera/**'
+      - 'tools/linux/post-install-check.sh'
+      - 'tools/sdc-blob.py'
+      - '.github/workflows/packages.yml'
+  pull_request:
+    paths:
+      - 'packaging/**'
+      - 'helper/**'
+      - 'userspace/platform/**'
+      - 'userspace/libcamera/**'
+      - '.github/workflows/packages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  source:
+    name: Source tarball
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      arch-version: ${{ steps.v.outputs.arch }}
+      tag: ${{ steps.v.outputs.tag }}
+      targets: ${{ steps.v.outputs.targets }}
+      camera-targets: ${{ steps.v.outputs.camera }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # packaging/version.sh counts the commits since the tag
+      - id: v
+        run: |
+          {
+            echo "version=$(packaging/version.sh)"
+            echo "arch=$(packaging/version.sh --arch)"
+            echo "tag=$(packaging/version.sh --tag)"
+            # the build matrix: every target of packaging/targets.tsv, and those that carry the camera stack
+            echo "targets=$(awk -F'\t' '!/^#/ && NF >= 5 { printf "%s{\"id\":\"%s\",\"image\":\"%s\",\"codename\":\"%s\",\"suffix\":\"%s\"}", s, $1, $2, $3, $4; s = "," }' packaging/targets.tsv | sed 's/.*/[&]/')"
+            echo "camera=$(awk -F'\t' '!/^#/ && $5 == "yes" { printf "%s{\"id\":\"%s\",\"image\":\"%s\",\"codename\":\"%s\",\"suffix\":\"%s\"}", s, $1, $2, $3, $4; s = "," }' packaging/targets.tsv | sed 's/.*/[&]/')"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: A tag must name the version in helper/Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          if [ "$TAG" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, but helper/Cargo.toml says v$(packaging/version.sh | sed 's/[~+].*//')"
+            exit 1
+          fi
+      - run: packaging/source-tarball.sh out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source
+          path: out/*.tar.xz
+          if-no-files-found: error
+
+  deb:
+    name: Build ${{ matrix.id }}
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.source.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source
+          path: source
+      - name: Build and lintian
+        env:
+          DEB_SUFFIX: ${{ matrix.suffix }}
+          DEB_CODENAME: ${{ matrix.codename }}
+        run: sh packaging/build-deb.sh all source/*.tar.xz out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pkg-deb-${{ matrix.codename }}-sp9-linux
+          path: out/*.deb
+          if-no-files-found: error
+
+  deb-test:
+    name: Install test ${{ matrix.id }}
+    needs: [source, deb]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.source.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pkg-deb-${{ matrix.codename }}-sp9-linux
+          path: debs
+      - run: packaging/docker.sh deb-test "${{ matrix.id }}" debs
+
+  arch:
+    name: Build Arch
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source
+          path: source
+      - name: Build and namcap
+        run: sh packaging/build-arch.sh source/*.tar.xz out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pkg-arch-sp9-linux
+          path: out/*.pkg.tar.zst
+          if-no-files-found: error
+      # the PKGBUILD with the version and checksum filled in (for a rebuild or an AUR package)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: arch-pkgbuild
+          path: |
+            out/PKGBUILD
+            out/.SRCINFO
+            out/*.install
+          include-hidden-files: true
+          if-no-files-found: error
+
+  arch-test:
+    name: Install test Arch
+    needs: arch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pkg-arch-sp9-linux
+          path: pkgs
+      - run: packaging/docker.sh arch-test pkgs
+
+  # The patched libcamera (experimental, opt-in; packaging/libcamera/README.md), for the targets
+  # whose PipeWire can load its plugin.
+  libcamera-deb:
+    name: libcamera ${{ matrix.id }}
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.source.outputs.camera-targets) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build, lintian and install test
+        env:
+          SP9_VERSION: ${{ needs.source.outputs.version }}
+          DEB_SUFFIX: ${{ matrix.suffix }}
+          DEB_CODENAME: ${{ matrix.codename }}
+        run: |
+          bash packaging/libcamera/build-deb.sh out
+          bash packaging/libcamera/install-test.sh out/sp9-libcamera_*.deb
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pkg-deb-${{ matrix.codename }}-sp9-libcamera
+          path: out/*.deb
+          if-no-files-found: error
+
+  libcamera-arch:
+    name: libcamera Arch
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build, namcap and install test
+        env:
+          SP9_ARCH_VERSION: ${{ needs.source.outputs.arch-version }}
+        run: |
+          bash packaging/libcamera/build-arch.sh out
+          bash packaging/libcamera/install-test.sh out/sp9-libcamera-*.pkg.tar.zst
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pkg-arch-sp9-libcamera
+          path: out/*.pkg.tar.zst
+          if-no-files-found: error
+
+  # sp9-dkms and sp9-dkms-bluetooth (dkms/README.md): generated, built and tested against
+  # linux-surface's kernels by the DKMS workflow; artifacts pkg-deb-all-sp9-dkms, pkg-arch-sp9-dkms
+  # Only for a release: the DKMS workflow runs by itself for changes under dkms/ and kernel/patches/.
+  dkms:
+    name: DKMS
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/dkms.yml
+
+  publish:
+    name: Publish ${{ needs.source.outputs.tag }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [source, deb-test, arch-test, libcamera-deb, libcamera-arch, dkms]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # the release and its assets
+    concurrency:
+      group: packages-publish
+      cancel-in-progress: false
+    env:
+      TAG: ${{ needs.source.outputs.tag }}
+      VERSION: ${{ needs.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: pkg-*
+          path: in
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source
+          path: source
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: arch-pkgbuild
+          path: pkgbuild
+      - name: Signing key
+        env:
+          KEY: ${{ secrets.SP9_REPO_SIGNING_KEY }}
+        run: |
+          [ -n "$KEY" ] || { echo "::error::secret SP9_REPO_SIGNING_KEY is not set (tools/repo-key.sh)"; exit 1; }
+          [ -s packaging/keyring/sp9-archive-keyring.asc ] || { echo "::error::packaging/keyring/sp9-archive-keyring.asc is missing"; exit 1; }
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s\n' "$KEY" | gpg --batch --quiet --import
+          # the secret must be a subkey of the key the repository publishes
+          want=$(gpg --batch --with-colons --show-keys packaging/keyring/sp9-archive-keyring.asc | awk -F: '$1 == "fpr" { print $10; exit }')
+          have=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+          [ "$want" = "$have" ] || { echo "::error::the secret key ($have) is not the published key ($want)"; exit 1; }
+          sub=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "ssb" && $12 ~ /s/ { s = 1; next } s && $1 == "fpr" { f = $10; s = 0 } END { print f }')
+          [ -n "$sub" ] || { echo "::error::no signing subkey in the secret"; exit 1; }
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "SIGNING_KEY=$sub!" >> "$GITHUB_ENV"
+      - name: apt repository
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends reprepro
+          packaging/publish-apt.sh in pages/packages
+      - name: pacman repository
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$GNUPGHOME:/gnupg" -e GNUPGHOME=/gnupg -e SIGNING_KEY -w /w archlinux:latest \
+            sh -c 'pacman -Sy --noconfirm --needed gnupg > /dev/null && packaging/publish-pacman.sh in pages/packages && chown -R '"$(id -u):$(id -g)"' pages /gnupg'
+      - name: Pages tree and release files
+        run: |
+          cp packaging/keyring/sp9-archive-keyring.asc pages/packages/
+          gpg --batch --dearmor < packaging/keyring/sp9-archive-keyring.asc > pages/packages/sp9-archive-keyring.gpg
+          tar -C pages -czf pages-packages.tar.gz packages
+          mkdir release
+          cp source/*.tar.xz in/*/*.deb in/*/*.pkg.tar.zst release/
+          cp pkgbuild/PKGBUILD pkgbuild/.SRCINFO pkgbuild/*.install release/ 2> /dev/null || true
+          mv release/PKGBUILD release/sp9-linux.PKGBUILD
+          mv release/.SRCINFO release/sp9-linux.SRCINFO
+          cp pages-packages.tar.gz release/
+          (cd release && sha256sum -- * > SHA256SUMS && gpg --batch --local-user "$SIGNING_KEY" --armor --detach-sign SHA256SUMS)
+          # the CHANGELOG.md section of this version as the release text
+          awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" { p = 1; next } p && /^## \[/ { exit } p' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Release $VERSION." > notes.md
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+          else
+            gh release create "$TAG" --verify-tag --title "$VERSION" --notes-file notes.md release/*
+          fi

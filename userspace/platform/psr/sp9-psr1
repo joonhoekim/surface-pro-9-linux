@@ -1,0 +1,48 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# sp9-psr1 -- PSR1 only on the internal panel, without a kernel parameter and without a taint.
+#
+# Windows turns PSR2 off on this panel and keeps PSR1. Kernel patch 0014 does that with an i915
+# quirk; a kernel without it enables PSR2. i915.enable_psr=1 also limits PSR to PSR1, but it is an
+# unsafe module parameter and setting it taints the kernel (flag 64, TAINT_USER). This writes
+# I915_PSR_DEBUG_FORCE_PSR1 (3) to the i915 debugfs file i915_edp_psr_debug instead: the same
+# limit, applied at once with a fastset, kept across suspend, and no taint. Run as root by
+# sp9-psr1.service, which the udev rule 61-sp9-psr1.rules starts when the i915 card appears.
+#
+# Left alone: a value other than 0 (someone chose one, e.g. sp9-helperd's PSR policy). Not
+# possible: under kernel lockdown (integrity or confidentiality, the usual state of a
+# distribution kernel booted with Secure Boot) debugfs refuses the write; only i915.enable_psr=1
+# is left then, with the taint (install.sh component psr-param).
+set -u
+log() { echo "sp9-psr1: $*"; }
+
+[ "$(cat /sys/class/dmi/id/product_sku 2>/dev/null)" = Surface_Pro_9_2038 ] || exit 0
+if grep -qs -e '\[integrity\]' -e '\[confidentiality\]' /sys/kernel/security/lockdown; then
+	log "kernel lockdown is on: debugfs is read-only, PSR stays as the kernel chose"
+	exit 0
+fi
+
+# The file appears when i915 registers its display, shortly after the card device.
+n=0
+while :; do
+	set -- /sys/kernel/debug/dri/*/i915_edp_psr_debug
+	[ -e "$1" ] && break
+	n=$((n + 1))
+	if [ $n -ge 100 ]; then
+		log "no i915_edp_psr_debug after 10 s (debugfs not mounted, or no i915 eDP with PSR)"
+		exit 0
+	fi
+	sleep 0.1
+done
+
+# A device can be listed twice (by minor and by PCI name); the second read then sees 3.
+for f in "$@"; do
+	v=$(cat "$f" 2>/dev/null) || continue
+	case $v in
+	3) ;;
+	0) if echo 3 2>/dev/null > "$f"; then log "PSR1 only ($f)"; else log "write to $f refused"; fi ;;
+	*) log "$f is $v, left alone" ;;
+	esac
+done
+exit 0

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Joonhoe Kim
+[package]
+name = "sp9-digitizerd"
+description = "Touch and pen daemon for the Surface Pro 9 (Intel) digitizer: hidraw in, uinput touchscreen and stylus out"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# --version: the project version plus `git describe` for development builds
+build = "../../version-build.rs"
+
+[dependencies]
+sp9-digitizer = { path = "../sp9-digitizer" }
+toml.workspace = true
+zbus.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+zbus = { workspace = true, features = ["p2p"] }
+futures-lite = "2"
+
+[[bin]]
+name = "sp9-digitizerd"
+path = "src/main.rs"
+
+[[bin]]
+name = "sp9-digitizer-replay"
+path = "src/bin/replay.rs"

@@ -1,0 +1,69 @@
+﻿
+
+Manufacturer         : SK Hynix
+PartNumber           : H58G56AK6BX069      
+Capacity             : 2147483648
+Speed                : 6400
+ConfiguredClockSpeed : 5200
+SMBIOSMemoryType     : 35
+FormFactor           : 0
+
+Manufacturer         : SK Hynix
+PartNumber           : H58G56AK6BX069      
+Capacity             : 2147483648
+Speed                : 6400
+ConfiguredClockSpeed : 5200
+SMBIOSMemoryType     : 35
+FormFactor           : 0
+
+Manufacturer         : SK Hynix
+PartNumber           : H58G56AK6BX069      
+Capacity             : 2147483648
+Speed                : 6400
+ConfiguredClockSpeed : 5200
+SMBIOSMemoryType     : 35
+FormFactor           : 0
+
+Manufacturer         : SK Hynix
+PartNumber           : H58G56AK6BX069      
+Capacity             : 2147483648
+Speed                : 6400
+ConfiguredClockSpeed : 5200
+SMBIOSMemoryType     : 35
+FormFactor           : 0
+
+Manufacturer         : SK Hynix
+PartNumber           : H58G56AK6BX069      
+Capacity             : 2147483648
+Speed                : 6400
+ConfiguredClockSpeed : 5200
+SMBIOSMemoryType     : 35
+FormFactor           : 0
+
+Manufacturer         : SK Hynix
+PartNumber           : H58G56AK6BX069      
+Capacity             : 2147483648
+Speed                : 6400
+ConfiguredClockSpeed : 5200
+SMBIOSMemoryType     : 35
+FormFactor           : 0
+
+Manufacturer         : SK Hynix
+PartNumber           : H58G56AK6BX069      
+Capacity             : 2147483648
+Speed                : 6400
+ConfiguredClockSpeed : 5200
+SMBIOSMemoryType     : 35
+FormFactor           : 0
+
+Manufacturer         : SK Hynix
+PartNumber           : H58G56AK6BX069      
+Capacity             : 2147483648
+Speed                : 6400
+ConfiguredClockSpeed : 5200
+SMBIOSMemoryType     : 35
+FormFactor           : 0
+
+
+
+

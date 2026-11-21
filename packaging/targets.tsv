@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# The Debian and Ubuntu releases packages are built for: one apt suite each, named by its codename.
+# The CI workflow (.github/workflows/packages.yml) makes its build matrix from this table, and
+# packaging/docker.sh runs the same builds locally.
+#   id: target name; image: official container; codename: apt suite; suffix: Debian revision suffix
+#   (the same version is built once per suite, and the pool needs distinct file names; "~" keeps a
+#   distribution upgrade an upgrade); camera: whether sp9-libcamera is built (needs PipeWire 1.6)
+# id	image	codename	suffix	camera
+ubuntu-24.04	ubuntu:24.04	noble	ubuntu24.04	no
+ubuntu-26.04	ubuntu:26.04	resolute	ubuntu26.04	yes
+ubuntu-26.10	ubuntu:26.10	stonking	ubuntu26.10	yes
+debian-13	debian:13	trixie	deb13	yes
+debian-testing	debian:testing	forky	deb14	yes

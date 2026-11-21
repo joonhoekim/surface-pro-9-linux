@@ -1,0 +1,68 @@
+surface-pro-9-linux
+https://github.com/joonhoekim/surface-pro-9-linux
+
+Linux support for the Microsoft Surface Pro 9 with an Intel CPU
+(SKU Surface_Pro_9_2038).
+
+This is an independent project. It is not affiliated with, sponsored by or
+endorsed by Microsoft, Intel, Realtek, the linux-surface project, the iptsd
+project or the libcamera project.
+
+Built on linux-surface
+----------------------
+
+The kernel this repository builds is Linux v7.3.4 with the linux-surface patch
+series for 7.3 and this repository's patches on top:
+
+  https://github.com/linux-surface/linux-surface
+  commit ea852b4eff5ed641571e13766bda5bd9cf121983 (the pin in flake.nix)
+
+linux-surface is not copied into this repository; it is fetched at that commit
+when the kernel is built and stays under its own licences.
+
+Patches from other authors
+--------------------------
+
+kernel/patches/0001 to 0010 were not written for this repository. They come
+from upstream Linux and from pull requests to the linux-surface kernel tree,
+as kernel/PROVENANCE.md records patch by patch. They keep their authors and
+sign-offs unchanged:
+
+  0001        Sakari Ailus
+  0002-0006   Fernando Rimoli (0006 also signed off by Arsalan Naeem)
+  0007-0010   Jairo Valdivia
+
+All kernel patches are licensed GPL-2.0-only, as the Linux kernel is.
+
+iptsd
+-----
+
+  https://github.com/linux-surface/iptsd
+
+userspace/iptsd/ holds patches to iptsd (GPL-2.0-or-later); the NixOS module
+applies them to the iptsd package of nixpkgs. The touch and pen processing
+library helper/crates/sp9-digitizer, used by helper/crates/sp9-digitizerd, derives
+from iptsd 3.1.0's processing with those patches, rewritten in Rust for this
+device. It keeps
+"Copyright (C) the iptsd authors" in the headers of the derived files and is
+distributed under GPL-3.0-or-later, which iptsd's "or later" licence permits.
+
+libcamera
+---------
+
+  https://libcamera.org
+
+userspace/libcamera/ holds patches to libcamera 0.8.0; the NixOS module
+builds libcamera with them. libcamera is not copied into this repository.
+Each patch is under the licence of the libcamera files it changes
+(LGPL-2.1-or-later, BSD-2-Clause, CC0-1.0), as REUSE.toml records.
+
+Trademarks
+----------
+
+Microsoft, Surface and Windows are trademarks of the Microsoft group of
+companies. Intel and Iris are trademarks of Intel Corporation or its
+subsidiaries. Realtek is a trademark of Realtek Semiconductor Corp. Linux is
+the registered trademark of Linus Torvalds. All other trademarks belong to
+their owners. The names are used here only to identify the hardware and
+software this repository works with.

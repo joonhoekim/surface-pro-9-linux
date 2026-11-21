@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# Surface Pro 9: the pen as iptsd reports it.
+# libinput takes the tip as down only above 5 % of the pressure range (and as up below 1 %), and
+# scales the pressure from there. Feather-light strokes of the Slim Pen 2 stay below 5 %
+# (measured: 3 % to 25 %, median 11 %) and were dropped or cut at both ends. The values are
+# device units of ABS_PRESSURE (0..4096): tip down at 2, up at 1.
+[Surface Pro 9 IPTSD stylus]
+MatchName=IPTSD Virtual Stylus 045E:0C52
+AttrPressureRange=2:1

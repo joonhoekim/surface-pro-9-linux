@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 Joonhoe Kim
+# A Python module the daemon runs with python3 (SP9_PYTHON), not an executable of its own.
+sp9-helper: executable-not-elf-or-script [usr/libexec/sp9-helper/sdc-blob.py]
+# Read only, for the version report of sp9-ctl packages (packaging/README.md); dpkg-query would need
+# a subprocess in the root daemon for the same answer.
+sp9-helper: uses-dpkg-database-directly [usr/libexec/sp9-helperd]

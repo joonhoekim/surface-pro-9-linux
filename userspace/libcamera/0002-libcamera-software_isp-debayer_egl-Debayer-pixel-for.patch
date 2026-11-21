@@ -1,0 +1,405 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 19 Nov 2026 14:37:57 +0900
+Subject: [PATCH] libcamera: software_isp: debayer_egl: Debayer pixel for pixel
+ and scale in a second pass
+
+The GPU debayering draws the whole input scaled into the output with
+nearest-texel lookups. Where a fragment's position in the input falls on
+the edge between two texels, the centre lookup, the neighbour lookups
+(spaced by a step that was computed from stride - 1 and height - 1) and
+the Bayer phase taken from floor() of the position no longer agree, and
+the pixel gets the colours of the wrong Bayer site. With the output at
+480/527 of the input (1920x1080 from 2112x1188 or 2592x1944) this shows
+as magenta lines every 480 output pixels, vertical and horizontal:
+columns 791 and 1271 and rows 311 and 791 with an OV13858, columns 731
+and 1211 and row 731 with an OV5693 on an IPU6. The CPU debayering of
+the same frames has no such lines.
+
+Besides, the scaled quad is anchored to a corner, so an output with
+another aspect ratio than the input is cropped on one side only, the
+reduction skips input pixels without filtering, and the statistics
+window is the top-left output-sized corner of the input rather than the
+area the output shows, so exposure and white balance follow a part of
+the scene that may not even be visible.
+
+Debayer the largest centred area of the input that has the aspect ratio
+of the output, one fragment per input pixel, with the lookups snapped to
+texel centres and the exact texel size as step. When the output is
+smaller than that area, debayer into an intermediate texture and scale
+it down in a second pass, bilinear for small reductions and with mipmaps
+below 70%. Leave out the two rows at the top and bottom that the
+interpolation cannot fill unless the full height is asked for. Gather
+the statistics over the same area.
+---
+ src/libcamera/shaders/bayer_unpacked.frag  |  15 +-
+ src/libcamera/shaders/meson.build          |   1 +
+ src/libcamera/shaders/scale.frag           |  22 +++
+ src/libcamera/software_isp/debayer_egl.cpp | 182 ++++++++++++++++++---
+ src/libcamera/software_isp/debayer_egl.h   |  13 ++
+ 5 files changed, 207 insertions(+), 26 deletions(-)
+ create mode 100644 src/libcamera/shaders/scale.frag
+
+diff --git a/src/libcamera/shaders/bayer_unpacked.frag b/src/libcamera/shaders/bayer_unpacked.frag
+index be2f89dd..22b1fe50 100644
+--- a/src/libcamera/shaders/bayer_unpacked.frag
++++ b/src/libcamera/shaders/bayer_unpacked.frag
+@@ -29,6 +29,7 @@ uniform mat3            ccm;
+ uniform vec3            blacklevel;
+ uniform float           gamma;
+ uniform float           contrastExp;
++uniform vec2            tex_step;
+ 
+ #if defined(APPLY_LSC)
+ uniform sampler2D lsc_tex;
+@@ -46,14 +47,22 @@ float apply_contrast(float value)
+ void main(void) {
+     vec3 rgb;
+ 
++    /*
++     * Sample at texel centres. center.zw is the position in source pixels,
++     * and the interpolated texture coordinates may lie anywhere inside the
++     * texel, including on its edge, where the nearest-texel lookups of the
++     * neighbours and the Bayer phase below would disagree.
++     */
++    vec2 snap = (floor(center.zw) + 0.5 - center.zw) * tex_step;
++
+     #if defined(RAW10P)
+     #define pixel(p) p.r / 4.0 + p.g * 64.0
+-    #define fetch(x, y) pixel(texture2D(tex_y, vec2(x, y)))
++    #define fetch(x, y) pixel(texture2D(tex_y, vec2(x, y) + snap))
+     #elif defined(RAW12P)
+     #define pixel(p) p.r / 16.0 + p.g * 16.0
+-    #define fetch(x, y) pixel(texture2D(tex_y, vec2(x, y)))
++    #define fetch(x, y) pixel(texture2D(tex_y, vec2(x, y) + snap))
+     #else
+-    #define fetch(x, y) texture2D(tex_y, vec2(x, y)).r
++    #define fetch(x, y) texture2D(tex_y, vec2(x, y) + snap).r
+     #endif
+ 
+     float C = fetch(center.x, center.y); // ( 0, 0)
+diff --git a/src/libcamera/shaders/meson.build b/src/libcamera/shaders/meson.build
+index c409ff9b..63b2db15 100644
+--- a/src/libcamera/shaders/meson.build
++++ b/src/libcamera/shaders/meson.build
+@@ -7,6 +7,7 @@ shader_files = files([
+     'bayer_unpacked.frag',
+     'bayer_unpacked.vert',
+     'identity.vert',
++    'scale.frag',
+ ])
+ 
+ # Generate header from shaders
+diff --git a/src/libcamera/shaders/scale.frag b/src/libcamera/shaders/scale.frag
+new file mode 100644
+index 00000000..dff1900b
+--- /dev/null
++++ b/src/libcamera/shaders/scale.frag
+@@ -0,0 +1,22 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * scale.frag - Copy an RGB texture, filtered by the sampler state
++ *
++ * Second pass of the GPU debayering when the output is smaller than the
++ * debayered area. lod_bias moves the mipmap level selection: with a
++ * negative bias the next smaller level only blends in when the reduction is
++ * large enough to alias.
++ */
++
++#ifdef GL_ES
++precision highp float;
++#endif
++
++varying vec2 textureOut;
++uniform sampler2D tex_y;
++uniform float lod_bias;
++
++void main(void)
++{
++	gl_FragColor = vec4(texture2D(tex_y, textureOut, lod_bias).rgb, 1.0);
++}
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index 33933b11..0707de1d 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -11,9 +11,11 @@
+ 
+ #include <algorithm>
+ #include <assert.h>
++#include <cmath>
+ #include <memory>
+ #include <span>
+ #include <stdlib.h>
++#include <string.h>
+ #include <string>
+ #include <tuple>
+ #include <vector>
+@@ -331,18 +333,34 @@ int DebayerEGL::configure(const StreamConfiguration &inputCfg,
+ 	outputSize_ = outputCfg.size;
+ 	nativeOutputSize_ = outSizeRange.max;
+ 
+-	window_.x = ((inputCfg.size.width - outputCfg.size.width) / 2) &
++	/*
++	 * The output shows the largest centred area of the debayered image
++	 * that has the aspect ratio of the output, scaled down to the output
++	 * size. window_ is that area in input pixels. It is debayered pixel
++	 * for pixel, and when the output is smaller a second pass scales the
++	 * result down.
++	 *
++	 * The interpolation reaches two rows beyond the pixel. sizes() keeps
++	 * no border above and below, so leave those rows out unless the output
++	 * asks for the full height.
++	 */
++	Size usable = nativeOutputSize_;
++	if (outputSize_.height + 4 <= inputCfg.size.height)
++		usable.height = std::min(usable.height, inputCfg.size.height - 4);
++
++	const float reduction = std::min(static_cast<float>(usable.width) / outputSize_.width,
++					 static_cast<float>(usable.height) / outputSize_.height);
++	window_.width = std::min<unsigned int>(usable.width,
++					       std::lround(outputSize_.width * reduction));
++	window_.height = std::min<unsigned int>(usable.height,
++						std::lround(outputSize_.height * reduction));
++	window_.x = ((inputCfg.size.width - window_.width) / 2) &
+ 		    ~(inputConfig_.patternSize.width - 1);
+-	window_.y = ((inputCfg.size.height - outputCfg.size.height) / 2) &
++	window_.y = ((inputCfg.size.height - window_.height) / 2) &
+ 		    ~(inputConfig_.patternSize.height - 1);
+-	window_.width = outputCfg.size.width;
+-	window_.height = outputCfg.size.height;
+ 
+-	/*
+-	 * Don't pass x,y from window_ since process() already adjusts for it.
+-	 * But crop the window to 2/3 of its width and height for speedup.
+-	 */
+-	stats_->setWindow(Rectangle(window_.size()));
++	/* The statistics cover what the output shows. */
++	stats_->setWindow(window_);
+ 
+ 	inputBufferCount_ = inputCfg.bufferCount;
+ 	outputBufferCount_ = outputCfg.bufferCount;
+@@ -394,22 +412,19 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
+ 	GLfloat firstRed[] = { firstRed_x_, firstRed_y_ };
+ 	GLfloat imgSize[] = { (GLfloat)width_,
+ 			      (GLfloat)height_ };
+-	GLfloat Step[] = { static_cast<float>(bytesPerPixel_) / (inputConfig_.stride - 1),
+-			   1.0f / (height_ - 1) };
++	/* The size of one texel: the texture is stride / bytesPerPixel wide. */
++	GLfloat Step[] = { static_cast<float>(bytesPerPixel_) / inputConfig_.stride,
++			   1.0f / height_ };
+ 	GLfloat Stride = (GLfloat)width_ / (shaderStridePixels_ / bytesPerPixel_);
+ 	/*
+-	 * Scale the output size from the native size the algorithm produces for
+-	 * the input size. Keep the aspect ratio and prefer cropping over black
+-	 * bars.
++	 * The quad covers the whole input, one fragment per input pixel. The
++	 * viewport selects the part that lands in the render target.
+ 	 */
+-	GLfloat scale = std::max((GLfloat)outputSize_.width / nativeOutputSize_.width,
+-				 (GLfloat)outputSize_.height / nativeOutputSize_.height);
+-	GLfloat trans = -(1.0f - scale);
+-	GLfloat projMatrix[] = {
+-		scale, 0, 0, 0,
+-		0, scale, 0, 0,
++	static const GLfloat projMatrix[] = {
++		1, 0, 0, 0,
++		0, 1, 0, 0,
+ 		0, 0, 1, 0,
+-		trans, trans, 0, 1
++		0, 0, 0, 1
+ 	};
+ 	/* Static const coordinates */
+ 	static const GLfloat vcoordinates[4][2] = {
+@@ -594,6 +609,111 @@ eGLImage *DebayerEGL::getCachedOutputFrameBuffer(FrameBuffer *output)
+ 	return eglImageOut;
+ }
+ 
++int DebayerEGL::initScaleShaders()
++{
++	std::vector<std::string> shaderEnv;
++	GLuint vertexShaderId = 0;
++	GLuint fragmentShaderId = 0;
++
++	egl_.pushEnv(shaderEnv, "#version 100");
++
++	if (egl_.compileVertexShader(vertexShaderId, identity_vert, shaderEnv)) {
++		LOG(Debayer, Error) << "Compile scale vertex shader fail";
++		return -ENODEV;
++	}
++	utils::scope_exit vShaderGuard([&] { glDeleteShader(vertexShaderId); });
++
++	if (egl_.compileFragmentShader(fragmentShaderId, scale_frag, shaderEnv)) {
++		LOG(Debayer, Error) << "Compile scale fragment shader fail";
++		return -ENODEV;
++	}
++	utils::scope_exit fShaderGuard([&] { glDeleteShader(fragmentShaderId); });
++
++	if (egl_.linkProgram(scaleProgramId_, vertexShaderId, fragmentShaderId)) {
++		LOG(Debayer, Error) << "Linking scale program fail";
++		return -ENODEV;
++	}
++
++	scaleAttributeVertex_ = glGetAttribLocation(scaleProgramId_, "vertexIn");
++	scaleAttributeTexture_ = glGetAttribLocation(scaleProgramId_, "textureIn");
++	scaleUniformTexture_ = glGetUniformLocation(scaleProgramId_, "tex_y");
++	scaleUniformStrideFactor_ = glGetUniformLocation(scaleProgramId_, "stride_factor");
++	scaleUniformProjMatrix_ = glGetUniformLocation(scaleProgramId_, "proj_matrix");
++	scaleUniformLodBias_ = glGetUniformLocation(scaleProgramId_, "lod_bias");
++
++	/*
++	 * Mipmaps keep a reduction to less than about 70% free of aliasing.
++	 * Smaller reductions are left to the bilinear filter, which is
++	 * sharper. Mipmaps of textures whose size is not a power of two need
++	 * OpenGL ES 3 or an extension.
++	 */
++	const char *version = reinterpret_cast<const char *>(glGetString(GL_VERSION));
++	const char *extensions = reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS));
++	bool npotMipmap = (version && !strncmp(version, "OpenGL ES ", 10) && version[10] >= '3') ||
++			  (extensions && strstr(extensions, "GL_OES_texture_npot"));
++	scaleMipmap_ = npotMipmap && outputSize_.width * 10 < window_.width * 7;
++
++	eglImageDebayered_.emplace(GL_RGBA, window_.width, window_.height,
++				   window_.width * 4, GL_TEXTURE3, 3);
++	egl_.createTexture2D(*eglImageDebayered_, nullptr, GL_LINEAR);
++	if (scaleMipmap_)
++		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
++
++	LOG(Debayer, Info)
++		<< "Debayering " << window_ << " and scaling to " << outputSize_
++		<< (scaleMipmap_ ? " with mipmaps" : "");
++
++	return 0;
++}
++
++void DebayerEGL::scaleGPU(eGLImage &eglImageOut)
++{
++	static const GLfloat projMatrix[] = {
++		1, 0, 0, 0,
++		0, 1, 0, 0,
++		0, 0, 1, 0,
++		0, 0, 0, 1
++	};
++	static const GLfloat vcoordinates[4][2] = {
++		{ -1.0f, -1.0f },
++		{ -1.0f, +1.0f },
++		{ +1.0f, +1.0f },
++		{ +1.0f, -1.0f },
++	};
++	static const GLfloat tcoordinates[4][2] = {
++		{ 0.0f, 0.0f },
++		{ 0.0f, 1.0f },
++		{ 1.0f, 1.0f },
++		{ 1.0f, 0.0f },
++	};
++
++	egl_.activateBindTexture(*eglImageDebayered_);
++	if (scaleMipmap_)
++		glGenerateMipmap(GL_TEXTURE_2D);
++
++	glUseProgram(scaleProgramId_);
++	egl_.attachTextureToFBO(eglImageOut);
++
++	glEnableVertexAttribArray(scaleAttributeVertex_);
++	glVertexAttribPointer(scaleAttributeVertex_, 2, GL_FLOAT, GL_TRUE,
++			      2 * sizeof(GLfloat), vcoordinates);
++	glEnableVertexAttribArray(scaleAttributeTexture_);
++	glVertexAttribPointer(scaleAttributeTexture_, 2, GL_FLOAT, GL_TRUE,
++			      2 * sizeof(GLfloat), tcoordinates);
++
++	glUniform1i(scaleUniformTexture_, eglImageDebayered_->texture_unit_uniform_id_);
++	glUniform1f(scaleUniformStrideFactor_, 1.0f);
++	glUniformMatrix4fv(scaleUniformProjMatrix_, 1, GL_FALSE, projMatrix);
++	/*
++	 * Half a level sharper than the default selection, which blends in
++	 * the half-size level as soon as the reduction is below 1.
++	 */
++	glUniform1f(scaleUniformLodBias_, scaleMipmap_ ? -0.5f : 0.0f);
++
++	glViewport(0, 0, outputSize_.width, outputSize_.height);
++	glDrawArrays(GL_TRIANGLE_FAN, 0, DEBAYER_OPENGL_COORDS);
++}
++
+ int DebayerEGL::debayerGPU(FrameBuffer *input, FrameBuffer *output, const DebayerParams &params, std::optional<MappedFrameBuffer> *inMapped, std::optional<DmaSyncer> *inDmaSyncer)
+ {
+ 	eGLImage *eglImageIn;
+@@ -606,13 +726,22 @@ int DebayerEGL::debayerGPU(FrameBuffer *input, FrameBuffer *output, const Debaye
+ 	if (!eglImageOut)
+ 		return -ENOMEM;
+ 
+-	egl_.attachTextureToFBO(*eglImageOut);
++	/*
++	 * First pass: debayer window_ pixel for pixel, into the output when
++	 * it has the size of the window and into the intermediate texture
++	 * otherwise.
++	 */
++	glUseProgram(programId_);
++	egl_.attachTextureToFBO(eglImageDebayered_ ? *eglImageDebayered_ : *eglImageOut);
+ 	setShaderVariableValues(*eglImageIn, params);
+ 
+-	glViewport(0, 0, width_, height_);
++	glViewport(-window_.x, -window_.y, width_, height_);
+ 	glClear(GL_COLOR_BUFFER_BIT);
+ 	glDrawArrays(GL_TRIANGLE_FAN, 0, DEBAYER_OPENGL_COORDS);
+ 
++	if (eglImageDebayered_)
++		scaleGPU(*eglImageOut);
++
+ 	GLenum err = glGetError();
+ 	if (err != GL_NO_ERROR) {
+ 		LOG(eGL, Error) << "Drawing scene fail " << err;
+@@ -691,6 +820,9 @@ int DebayerEGL::start()
+ 	if (initBayerShaders(inputPixelFormat_, outputPixelFormat_))
+ 		return -EINVAL;
+ 
++	if (window_.size() != outputSize_ && initScaleShaders())
++		return -EINVAL;
++
+ 	if (lscEnabled_) {
+ 		constexpr unsigned int gridSize = DebayerParams::kLscGridSize;
+ 		constexpr unsigned int stride = gridSize * DebayerParams::kLscBytesPerCell;
+@@ -713,9 +845,13 @@ void DebayerEGL::stop()
+ 
+ 	eglImageLscLookup_.reset();
+ 	lscLutVersion_.reset();
++	eglImageDebayered_.reset();
+ 
+ 	if (programId_)
+ 		glDeleteProgram(programId_);
++	if (scaleProgramId_)
++		glDeleteProgram(scaleProgramId_);
++	scaleProgramId_ = 0;
+ 
+ 	egl_.resetEGLContext();
+ }
+diff --git a/src/libcamera/software_isp/debayer_egl.h b/src/libcamera/software_isp/debayer_egl.h
+index cbbc6a45..9e2f8233 100644
+--- a/src/libcamera/software_isp/debayer_egl.h
++++ b/src/libcamera/software_isp/debayer_egl.h
+@@ -66,7 +66,9 @@ private:
+ 	static int getInputConfig(PixelFormat inputFormat, DebayerInputConfig &config);
+ 	int initBayerShaders(PixelFormat inputFormat, PixelFormat outputFormat);
+ 	int getShaderVariableLocations();
++	int initScaleShaders();
+ 	void setShaderVariableValues(eGLImage &eGLImageIn, const DebayerParams &params);
++	void scaleGPU(eGLImage &eglImageOut);
+ 	int debayerGPU(FrameBuffer *input, FrameBuffer *output, const DebayerParams &params, std::optional<MappedFrameBuffer> *mappedInputBuffer, std::optional<DmaSyncer> *inputBufferDmaSyncer);
+ 
+ 	eGLImage *getCachedInputFrameBuffer(FrameBuffer *input, std::optional<MappedFrameBuffer> *inMapped, std::optional<DmaSyncer> *inDmaSyncer);
+@@ -77,6 +79,17 @@ private:
+ 	GLuint fragmentShaderId_ = 0;
+ 	GLuint programId_ = 0;
+ 
++	/* Second pass, used when the output is smaller than the debayered area */
++	GLuint scaleProgramId_ = 0;
++	GLint scaleAttributeVertex_;
++	GLint scaleAttributeTexture_;
++	GLint scaleUniformTexture_;
++	GLint scaleUniformStrideFactor_;
++	GLint scaleUniformProjMatrix_;
++	GLint scaleUniformLodBias_;
++	std::optional<eGLImage> eglImageDebayered_;
++	bool scaleMipmap_;
++
+ 	/* Pointer to object representing input texture */
+ 	std::deque<std::pair<SharedFD, std::unique_ptr<eGLImage>>> eglImageInCache_;
+ 	std::deque<std::pair<SharedFD, std::unique_ptr<eGLImage>>> eglImageOutCache_;
