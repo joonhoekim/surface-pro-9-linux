@@ -32,6 +32,8 @@
     <control>keyboard</control>
   </supports>
   <content_rating type="oars-1.1"/>
-  <!-- <releases> is added with the first release, each <release> with its date (docs/releasing.md):
-       AppStream rejects a release without one. -->
+  <!-- newest first, each with its date (docs/releasing.md): AppStream rejects a release without one -->
+  <releases>
+    <release version="0.1.0" date="2026-11-21"/>
+  </releases>
 </component>
