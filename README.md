@@ -151,17 +151,14 @@ afterwards.
 | Distribution | Guide | Support |
 |---|---|---|
 | NixOS | [install-nixos.md](docs/install-nixos.md) | Supported |
-| Ubuntu 26.04, Debian 13 | [install-debian-ubuntu.md](docs/install-debian-ubuntu.md) | Supported[^repos] |
-| Arch Linux | [install-arch.md](docs/install-arch.md) | Works; best effort[^repos] |
+| Ubuntu 26.04, Debian 13 | [install-debian-ubuntu.md](docs/install-debian-ubuntu.md) | Supported |
+| Arch Linux | [install-arch.md](docs/install-arch.md) | Works; best effort |
 | Ubuntu 24.04 | [install-debian-ubuntu.md](docs/install-debian-ubuntu.md) | Works without cameras; not a target |
 | Ubuntu 26.10, Debian testing | [install-debian-ubuntu.md](docs/install-debian-ubuntu.md) | Best effort; tested in containers only |
 | Any other | [install-from-source.md](docs/install-from-source.md) | Unverified |
 
 A linux-surface kernel release newer than `sp9-dkms` runs without this project's kernel patches until `sp9-dkms`
 covers it ([kernel updates](docs/install.md#kernel-updates)).
-
-[^repos]: The apt and pacman repositories are published with the first release; until then, build the packages
-    locally.
 
 ## Where details live
 

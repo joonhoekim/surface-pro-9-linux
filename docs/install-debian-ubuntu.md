@@ -65,15 +65,6 @@ sudo update-grub
 
 ## 2. This project's repository
 
-**Not published yet.** The repository is published with the first release, so until then the key file and the
-repository below do not exist on the website, and the commands of this section fail
-(HTTP 404). Until then, build the packages yourself,[^build-locally] skip this section, and install the files in
-place of the package names of sections 3 and 5: `sudo apt install ./sp9_*.deb ./sp9-platform_*.deb …` (apt
-resolves the distribution's dependencies). The on-device runs above were made that way.
-
-[^build-locally]: [packaging/README.md](../packaging/README.md#building-locally); `sp9-dkms` and
-    `sp9-dkms-bluetooth`: [dkms/README.md](../dkms/README.md#ci).
-
 The repository is signed with the key in [packaging/keyring/](../packaging/keyring/README.md); its fingerprint is
 in [SECURITY.md](../SECURITY.md#package-signing). Compare it with what `gpg --show-keys` prints below before you trust
 the key. The suite is your release's codename: `noble`, `resolute`, `stonking`, `trixie`, `forky`.
@@ -93,6 +84,13 @@ sudo apt install sp9-archive-keyring              # from now on key changes arri
 
 The repository holds the packages of the latest release. Every release also attaches them, with the source
 tarball and a signed `SHA256SUMS`, to its [GitHub release](https://github.com/joonhoekim/surface-pro-9-linux/releases).
+
+Instead of this repository you can build the packages yourself[^build-locally] and install the files in place
+of the package names of sections 3 and 5: `sudo apt install ./sp9_*.deb ./sp9-platform_*.deb …` (apt resolves the
+distribution's dependencies). The on-device runs above were made that way, before the repository was published.
+
+[^build-locally]: [packaging/README.md](../packaging/README.md#building-locally); `sp9-dkms` and
+    `sp9-dkms-bluetooth`: [dkms/README.md](../dkms/README.md#ci).
 
 ## 3. Install the packages
 

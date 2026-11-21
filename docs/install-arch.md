@@ -58,16 +58,6 @@ sudo pacman -Syu mkinitcpio linux-surface linux-surface-headers \
 
 ## 2. This project's repository
 
-**Not published yet.** The repository is published with the first release, so until then the key file and `sp9.db`
-below do not exist on the website, and the commands of this section fail (HTTP 404).
-Until then, build the packages yourself,[^build-locally] skip this section, and install the files in place of the
-package names of sections 3 and 5: `sudo pacman -U sp9-*.pkg.tar.zst` (pacman resolves the distribution's
-dependencies from the sync repositories).
-
-[^build-locally]: [packaging/README.md](../packaging/README.md#building-locally); `sp9-dkms` and
-    `sp9-dkms-bluetooth`: [dkms/README.md](../dkms/README.md#ci); `sp9-libcamera`:
-    [packaging/libcamera/README.md](../packaging/libcamera/README.md).
-
 The repository is signed with the key in [packaging/keyring/](../packaging/keyring/README.md); its fingerprint is
 in [SECURITY.md](../SECURITY.md#package-signing). Compare it with what `gpg --show-keys` prints below before you trust
 the key.
@@ -83,6 +73,14 @@ sudo pacman -Syu sp9-keyring                       # key changes arrive as updat
 
 The repository holds the packages of the latest release. Every release also attaches them, with the source
 tarball and a signed `SHA256SUMS`, to its [GitHub release](https://github.com/joonhoekim/surface-pro-9-linux/releases).
+
+Instead of this repository you can build the packages yourself[^build-locally] and install the files in place of
+the package names of sections 3 and 5: `sudo pacman -U sp9-*.pkg.tar.zst` (pacman resolves the distribution's
+dependencies from the sync repositories).
+
+[^build-locally]: [packaging/README.md](../packaging/README.md#building-locally); `sp9-dkms` and
+    `sp9-dkms-bluetooth`: [dkms/README.md](../dkms/README.md#ci); `sp9-libcamera`:
+    [packaging/libcamera/README.md](../packaging/libcamera/README.md).
 
 ## 3. Install the packages
 

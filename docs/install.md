@@ -58,7 +58,7 @@ Every package is built for each packaged release. Reports for any row are welcom
 - **Device:** NixOS in depth ([hardware-status.md](hardware-status.md)); the packaged releases once each (table
   above).
 - **Unverified:** Ubuntu 26.10 and Debian testing on the device; on any packaged release, Secure Boot with the DKMS
-  key enrolled through MokManager, the signed repositories (not published yet), and moving to a new linux-surface
+  key enrolled through MokManager, installing from the signed repositories, and moving to a new linux-surface
   kernel release. That the files behave there as under NixOS is inferred. The source route was never followed, and
   its kernel build script has not been run to completion.
 
