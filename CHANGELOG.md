@@ -8,6 +8,16 @@ a release fixes is the set of patches on them.
 
 ## [Unreleased]
 
+### Added
+
+- **IR camera** (ST VD55G0), with this repository's kernel only (NixOS module or a source build; not in
+  `sp9-dkms`): kernel patches 0027 (ipu-bridge entry), 0028 (ST's driver as adapted in linux-surface/kernel#164,
+  with Surface Pro 9 changes) and 0029 (IR illuminator on sensor GPIO 1, 10-bit output), and
+  `CONFIG_VIDEO_VD55G0=m` in `sp9.config`. It delivers 10-bit monochrome frames through libcamera and the
+  illuminator lights a dark room; face sign-in is not provided. Test CAM-8.
+- Kernel patch 0030: the IPU6 captures packed and 8-bit formats intact on this device (they were truncated on
+  both camera ports); 0031 offers the IR camera's 8-bit output again.
+
 ## [0.1.0] - 2026-11-21
 
 The first release. The hardware status is in [README.md](README.md) and

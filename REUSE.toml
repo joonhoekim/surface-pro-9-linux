@@ -41,9 +41,10 @@ SPDX-License-Identifier = "GPL-2.0-only"
 
 # Kernel patches. They are changes to the Linux kernel and carry its licence. Each patch names its
 # author in From: and everyone who signed it off in Signed-off-by:; kernel/PROVENANCE.md records
-# where 0001-0010 were taken from (upstream Linux and linux-surface/kernel pull requests).
-# "override": a patch that adds a kernel source file contains that file's own SPDX line (0008 has
-# the kernel's older spelling "GPL-2.0", the same licence), which is not a header of the patch file.
+# where 0001-0010 and 0028 were taken from (upstream Linux and linux-surface/kernel pull requests).
+# "override": a patch that adds a kernel source file contains that file's own SPDX line (0008 and
+# 0028 have the kernel's older spelling "GPL-2.0", the same licence), which is not a header of the
+# patch file.
 [[annotations]]
 path = "kernel/patches/0001-*.patch"
 precedence = "override"
@@ -75,10 +76,22 @@ path = [
   "kernel/patches/0017-*.patch", "kernel/patches/0018-*.patch", "kernel/patches/0019-*.patch",
   "kernel/patches/0020-*.patch", "kernel/patches/0021-*.patch", "kernel/patches/0022-*.patch",
   "kernel/patches/0023-*.patch", "kernel/patches/0024-*.patch", "kernel/patches/0025-*.patch",
-  "kernel/patches/0026-*.patch",
+  "kernel/patches/0026-*.patch", "kernel/patches/0027-*.patch", "kernel/patches/0029-*.patch",
+  "kernel/patches/0030-*.patch", "kernel/patches/0031-*.patch",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Joonhoe Kim <26rote@gmail.com>"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+# STMicroelectronics' VD55G0 driver as adapted in linux-surface/kernel#164, with Surface Pro 9 changes.
+[[annotations]]
+path = "kernel/patches/0028-*.patch"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2024 STMicroelectronics SA",
+  "André Gilerson <andre.gilerson@gmail.com>",
+  "2026 Joonhoe Kim <26rote@gmail.com>",
+]
 SPDX-License-Identifier = "GPL-2.0-only"
 
 # DKMS packaging (dkms/): the scripts and data carry MIT headers; these Debian metadata files have no

@@ -17,8 +17,10 @@ are manual tests). Test IDs (`PEN-1`, …) are defined in [test-plan.md](test-pl
 documents disagree, those two win.
 
 [^later-patches]: Most results were measured on kernels with 0001–0022. The later patches matter only for the pen's
-    cover coupling and reconnection (0023, 0024, Bluetooth) and for the gain range of the camera sensors (0025,
-    0026); each row of the test results names the patch range of its kernel.
+    cover coupling and reconnection (0023, 0024, Bluetooth), for the gain range of the camera sensors (0025,
+    0026) and for the IR camera (0027–0031: measured with 0029 loaded as a module, then on booted kernels built with
+    0001–0029 and 0001–0031);
+    each row of the test results names the patch range of its kernel.
 
 ## Display
 
@@ -402,9 +404,42 @@ Verdict: works. Tests: CAM-1 pass, CAM-4 pass.
 
 ### IR (VD55G0)
 
-Verdict: does not work: there is no Linux driver for the VD55G0 sensor, which Windows uses for Hello face
-sign-in. The mainline `vd55g1` driver does not list this sensor, and with nothing to power it the sensor does
-not answer on I2C. Patch 0015 prepares its 24 MHz clock selection; the clock output is unmeasured.
+Verdict: works with this repository's kernel only (not in `sp9-dkms`). Test: CAM-8 pass.
+
+- **Measured.** The driver reads model ID 0x4730, revision 0x1111 (cut 1) at probe. The sensor is in the media
+  graph on CSI-2 port 3, and the front and rear cameras still deliver frames with it there (10/10 each).
+  libcamera receives 10-bit monochrome frames (644×604): 90 frames with 0 CSI-2 errors.[^ir-8bit] PipeWire gives
+  the front camera priority 800, the rear 750 and the IR camera 700, so applications keep the front camera as
+  the default.
+- **Observed.** Under the IR illuminator a dark room is visible.
+- **Measured, illuminator.** The illuminator is on the sensor's GPIO 1, driven as a strobe. It stops lighting
+  once the exposure exceeds about 65 % of the frame, so while the strobe is on the exposure range is held to
+  60 % of the frame. The sensor's own auto exposure runs the exposure up to the frame length, which turns the
+  illuminator off; on the Surface Pro 9 the driver therefore starts in manual exposure (1000 lines, analogue
+  gain 16) with the strobe on, and libcamera controls exposure and gain.
+- **Tested, not provided: face sign-in.** howdy 3.0.0 without PAM, fed from the PipeWire IR node through
+  GStreamer and v4l2loopback: with three enrolled models, facing the camera was recognised 2/2 (3.5 s each with
+  start-up); with one model the closest distance was 4.12 against the threshold 3.5 and recognition failed;
+  with no face in view or the camera covered it was rejected. No spoofing test with a photo. Not wired into any
+  PAM service, and this repository does not set it up.
+- **Measured, through PipeWire** (what applications use). PipeWire picks 480×320; libcamera's exposure
+  control raises the exposure to the illuminator's limit (60 % of the frame) and the analogue gain to 24, and the
+  mean brightness settles at about 105/255 within 2 s in a dark room.
+- **Measured, 8-bit and packed capture.** The IPU6 input system received formats stored at their own bit depth
+  (8-bit, packed 10-bit) through its MIPI pin with long packet headers discarded, and on this device that path
+  truncated most frames on both camera ports (IR and front). Patch 0030 captures every format through the SoC
+  raw pin with the normal store mode; on a booted kernel with it IR 8-bit, packed and unpacked 10-bit and the
+  front camera's packed and unpacked formats arrive with 0 errors, and libcamera and PipeWire capture of all
+  three cameras is unchanged. Patch 0031 offers the 8-bit formats again; the default stays 10-bit.
+- **Responsible.** Patch 0027 (ipu-bridge entry for `SMO55F0`), 0028 (ST's VD55G0 driver as adapted in
+  linux-surface/kernel#164, with the Surface Pro 9 rail name and reset GPIO), 0029 (illuminator), 0030 (IPU6
+  capture path, for every IPU6 sensor), 0031 (8-bit output again); 0015 sets the 24 MHz clock its SSDB asks for. 0027 without 0028 can keep the front and rear camera
+  nodes from appearing: the IPU6 waits for the IR sensor.
+
+[^ir-8bit]: 8-bit output (Y8, SGRBG8) arrives truncated in about 90 % of the frames (`Transfer FIFO overflow`,
+    ISYS error `STR2MMIO`) at every frame size and frame rate tried; 10-bit output had 0 errors in 209 frames.
+    Patch 0029 therefore offered only the 10-bit formats, until 0030 removed the cause and 0031 lifted the
+    restriction.
 
 Research: [research/gaps/camera.md](research/gaps/camera.md),
 [research/control/camera.md](research/control/camera.md).

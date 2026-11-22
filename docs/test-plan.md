@@ -14,7 +14,7 @@ The Kind column says how a test is run:
   device, or a comparison with Windows.
 - **mixed**: part of the procedure runs from a script and part is manual; the column names the manual part.
 
-Of the 50 tests, 6 are scriptable, 27 manual and 17 mixed. The read-only state the tests start from is collected
+Of the 51 tests, 6 are scriptable, 27 manual and 18 mixed. The read-only state the tests start from is collected
 by [`tools/linux/post-install-check.sh`](../tools/linux/post-install-check.sh)
 ([table at the bottom](#post-install-check-unattended)).
 IDs are fixed. When an item is dropped its number is not reused, and a new item takes the number after the last
@@ -110,6 +110,7 @@ Capture with `cam` (libcamera-tools). Use the names from the output of `cam -l`.
 | CAM-5 | Privacy LED | manual | [camera](research/gaps/camera.md) difference 11 | Watch the device while streaming from the front and the rear camera in turn | Record which LED lights (the white LED next to the front camera is expected) |
 | CAM-6 | Image quality | manual | [camera](research/gaps/camera.md) difference 10 | Compare with the Windows Camera app under the same indoor lighting | Record the differences in exposure, colour and noise with two photos (kept outside the repository) |
 | CAM-7 | Lines and exposure in the processed image | mixed: looking at the preview | [camera](research/gaps/camera.md) section 6 | For the front and the rear camera, `cam -c N -s width=1920,height=1080 -C60 -F` and a preview in a camera application (PipeWire path). Look for coloured columns or rows at a fixed spacing; note exposure time, gain and mean brightness per frame from the metadata. Compare a raw frame from [`tools/linux/cam-raw.sh`](../tools/linux/cam-raw.sh) with [`cam-raw-stats.py --columns`](../tools/linux/cam-raw-stats.py) | No column or row differs from its neighbours; the brightness settles within about a second of the start and does not swing afterwards; the image is neither blown out nor dark |
+| CAM-8 | IR capture and illuminator | mixed: darkening the room, judging the image | [camera](research/gaps/camera.md) difference 8 | On a kernel with patches 0027–0029, `cam -c N -C90 -F` with the IR camera's name from `cam -l`; count `csi2-3 error` lines in the kernel log over the run. Repeat with the room lights off and look at a saved frame | 90 10-bit monochrome frames (644×604) with no CSI-2 errors; with the lights off the room is visible under the IR illuminator |
 
 ## SAM and platform (SAM)
 

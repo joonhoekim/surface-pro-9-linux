@@ -10,7 +10,7 @@ Origin, author, status and evidence of each patch are in [PROVENANCE.md](PROVENA
 |---|---|
 | Upstream | stable `v7.3.4` (`7595a62d45ee1a2297eafa5f2ef5d0a45142d84d`) |
 | linux-surface | `patches/7.3/0001`–`0015` of [linux-surface/linux-surface](https://github.com/linux-surface/linux-surface) at `ea852b4eff5ed641571e13766bda5bd9cf121983` (47 commits, `patches/7.3/BASE` = `v7.3.4`) |
-| This repository | `patches/0001`–`0026` |
+| This repository | [`patches/`](patches/), in file name order |
 
 The linux-surface series is not copied but pinned by commit: it is a public git repository, so the commit hash
 alone reproduces it exactly, and copying 15 files would only add provenance tracking and update work.
@@ -23,14 +23,14 @@ git clone https://github.com/linux-surface/linux-surface.git
 git -C linux-surface checkout ea852b4eff5ed641571e13766bda5bd9cf121983
 cd linux-sp9
 git am ../linux-surface/patches/7.3/*.patch                    # 15 files, 47 commits (whitespace warnings only)
-git am /path/to/surface-pro-9-linux/kernel/patches/*.patch     # 0001-0026, in order
+git am /path/to/surface-pro-9-linux/kernel/patches/*.patch     # in order
 ```
 
 In exactly this order (v7.3.4 → 47 linux-surface commits → 0001–0017) everything has been confirmed to apply
 cleanly without 3-way merging. 0018–0022 were exported from commits on the same tree as the booted kernel
 (`tools/linux/kmod-dev.sh patch`). 0023 comes from the same module development tree, where it was built as
 `bluetooth.ko` and loaded into the booted kernel; 0025 and 0026 were built there as `ov5693.ko` and
-`ov13858.ko` and loaded the same way.
+`ov13858.ko` and loaded the same way, and 0029 as `vd55g0.ko`.
 
 Build and boot are confirmed through the Nix path: the Surface Pro 9 boots the kernel (`uname -r` = `7.3.4`) that
 [`nix/kernel.nix`](../nix/kernel.nix) builds by applying the 15 linux-surface files and 0001–0022 (37 files in
@@ -38,8 +38,9 @@ all) with `patch -p1` to the same tarball. The measurements on the device per pa
 0022 the creation of the rear lens device was checked on one boot only (there is no confirmation across several
 boots). 0023 was first exercised as a module loaded into that kernel; the device has since booted the kernel
 built with all of 0001–0023 (38 files), and the pen's cover coupling and reconnection were checked again on it.
-Kernels built with 0001–0024 and with 0001–0026 (41 files) have been booted since; each row of the test
-results names the patch range of the kernel it was taken on. Results on the device per
+Kernels built with 0001–0024, 0001–0026 (41 files), 0001–0028, 0001–0029 and 0001–0031 have been booted since; 0029 was
+first loaded as a module into the 0001–0028 kernel. Each row of the test results names the patch range of the kernel
+it was taken on. Results on the device per
 function are in [docs/research/gaps](../docs/research/gaps/README.md) and
 [docs/test-results.md](../docs/test-results.md).
 No build has been run to completion through the `git am` tree or the `build-kernel.sh` (.deb) path described
@@ -48,10 +49,10 @@ below.
 ## Configuration
 
 `config/sp9.config` is merged after `configs/surface-7.3.config` of linux-surface. It contains only the options
-the series uses that are missing from the linux-surface fragment (IPU6, OV13858, Type-C UCSI and
-`UCSI_SURFACE_HID`, the LED class and `LEDS_BRIGHTNESS_HW_CHANGED`).
+the series uses that are missing from the linux-surface fragment (IPU6, OV13858, the VD55G0 driver of 0028,
+Type-C UCSI and `UCSI_SURFACE_HID`, the LED class and `LEDS_BRIGHTNESS_HW_CHANGED`).
 Start from a distribution configuration (`x86_64_defconfig` lacks most laptop devices).
-In the running kernel of the Nix build all 41 options of the linux-surface fragment and all 8 options of
+In the running kernel of the Nix build all 41 options of the linux-surface fragment and all 9 options of
 `sp9.config` are in effect (compared against `/proc/config.gz`).
 
 ```sh
@@ -159,6 +160,7 @@ create the initramfs and the boot loader entry with the distribution's tools
 | Camera: front binning | 0020 | On a `clock-noncontinuous` endpoint ov5693 does not offer the binned 1296x972 mode. Requests of 720p and below go to the full mode |
 | Camera: rear lens power | 0021 | dw9719 powers up on the first `focus_absolute` write, not on open. A lens node that is merely held open no longer keeps the rear sensor awake |
 | Camera: sensor gain range | 0025, 0026 | Limits `analogue_gain` to the range the sensors follow: ov5693 16–992 (1x–62x), ov13858 0x80–0x7c0 (1x–15.5x). Outside it the image gets darker again or does not change, and an auto exposure loop that is told the wider range oscillates |
+| Camera: IR (VD55G0) | 0027–0031 | An ipu-bridge entry for `SMO55F0` (CSI-2 port 3, one lane), ST's VD55G0 driver as adapted in linux-surface/kernel#164 with the Surface Pro 9 rail and reset changes, and on the Surface Pro 9 the IR illuminator (sensor GPIO 1 as strobe, exposure held below 60 % of the frame) and 10-bit output by default; 0030 changes the IPU6 input system for every IPU6 sensor (packed and 8-bit formats through the SoC raw pin, which ends their truncation on this device), and 0031 offers the 8-bit formats again. 0027 goes in only together with 0028 |
 | Camera: rear VCM creation | 0022 | The ov13858 probe enables runtime PM before it registers the subdev. This prevents boots without a lens device, which happen when the VCM creation work fails with -EACCES while waking the sensor |
 | Bluetooth: LE legacy OOB pairing | 0023 | LE legacy pairing with a Temporary Key supplied out of band: the 16 B given as `hash192` in the extended form of Add Remote OOB Data are used as the TK (the Slim Pen 2's coupling through the Type Cover's pen slot). In that pairing the host also offers its identity key; a pen that did not receive it does not advertise for reconnection. While a TK is stored for the peer a pairing that would not use it is refused (OOB Not Available) instead of falling back to Just Works; the TK is dropped once a pairing with it has completed. Checked on the device, first as a loaded module and then on a booted kernel built with the patch: cover coupling with LTK and IRK stored, and reconnection after the pen's idle disconnect. The refusal was checked on a booted kernel with `btmon`. The responder path and the path with Secure Connections OOB data are compile-tested only |
 | Bluetooth: reconnection of a device that was paired again | 0024 | When a device is paired again and its IRK changed, the entry in the controller's resolving list is replaced. Without it a device bonded again in the same boot (the Slim Pen 2) advertises from addresses the controller cannot resolve and does not reconnect until the adapter is powered off and on. Checked on a kernel built with it |
@@ -177,6 +179,7 @@ patches are applied to that release's files, not to the pinned base above.
 | 0007 | not shipped | Not needed: `ucsi_surface_hid` matches the device in the generic HID group (`dkms/patches/ucsi-surface-hid-generic.patch`). It is in the HID core, which Arch builds in |
 | 0008–0010, 0012, 0013, 0015–0022, 0025, 0026 | `sp9-dkms` | `ucsi_surface_hid` (new), `surface_charger`, `surface_aggregator_registry`, `surface_platform_profile`, `intel_skl_int3472_discrete`, `hid-surface`, `ithc`, `dw9719`, `ov13858` |
 | 0014 | not shipped | It would mean rebuilding i915. Outside NixOS the platform component `psr` forces PSR1 through debugfs instead, without a taint ([userspace/platform](../userspace/platform/README.md)) |
+| 0027–0031 | not shipped | The IR camera needs this repository's kernel; without 0030 the packed and 8-bit formats stay truncated, which libcamera does not use. Shipping it would mean a new `vd55g0` module and 0027 in the `ipu-bridge` module, which must not go out without the driver |
 | 0023, 0024 | `sp9-dkms-bluetooth` | A separate package: the whole `bluetooth.ko`, built only from the `net/bluetooth` of exactly the running kernel release |
 
 ## What was left out
@@ -186,9 +189,6 @@ patches are applied to that release's files, not to the pinned base above.
   as `pwr1` and the rear sensor delivers frames. Not urgent, deferred.
 - The upstream Surface Pro 9 rotation quirk (`db44b1792898`) and the OV13858 sensor configuration
   (`2ee01a094aba`): linux-surface `0013-cameras.patch` already does the same.
-- A VD55G0 (IR) driver: its status registers, firmware patch and exposure register block differ from `vd55g1`,
-  so adding a model ID is not enough ([camera.md](../docs/research/gaps/camera.md), the section on VD55G0 and
-  vd55g1).
 - The OV5693 binned mode: the link frequency 358.4 MHz has been derived, but window placement, flip and Bayer
   phase have to be settled on the device, so it is on hold ([camera.md](../docs/research/gaps/camera.md), the
   section on the binned mode's link frequency). With flip on, this mode yields no frames (`Frame sync error`),
