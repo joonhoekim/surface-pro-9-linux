@@ -59,8 +59,10 @@ boot() { # image name mount...
 		img=$name:systemd init=/lib/systemd/systemd
 		;;
 	esac
+	# /tmp is a mount from the start: an image whose systemd mounts a tmpfs on /tmp (Ubuntu 26.10)
+	# would otherwise hide what the test had put there, mid-run.
 	$D run -d --rm --name "$name" --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-		--tmpfs /run --tmpfs /run/lock "$@" "$img" "$init" > /dev/null
+		--tmpfs /run --tmpfs /run/lock --tmpfs /tmp "$@" "$img" "$init" > /dev/null
 }
 unboot() { # name
 	$D stop -t 2 "$1" > /dev/null
