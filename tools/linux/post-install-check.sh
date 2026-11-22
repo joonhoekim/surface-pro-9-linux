@@ -316,7 +316,13 @@ rootrun $F "gpio" cat /sys/kernel/debug/gpio
 i2c_has() { compgen -G "/sys/bus/i2c/devices/*$1*" >/dev/null; }
 i2c_has OVTI5693 && sum CAM front MATCH "OVTI5693 i2c device present" || sum CAM front MISSING "no OVTI5693 i2c device"
 i2c_has OVTID858 && sum CAM rear MATCH "OVTID858 i2c device present" || sum CAM rear MISSING "no OVTID858 i2c device"
-i2c_has SMO55F0 &&sum CAM ir INFO "SMO55F0 i2c device present (no driver expected)" || sum CAM ir INFO "no SMO55F0 i2c device"
+if compgen -G "/sys/bus/i2c/drivers/vd55g0/*SMO55F0*" >/dev/null; then
+	sum CAM ir MATCH "SMO55F0 bound to vd55g0 (patches 0027-0029)"
+elif i2c_has SMO55F0; then
+	sum CAM ir INFO "SMO55F0 i2c device present, no driver (the IR camera needs this repository's kernel)"
+else
+	sum CAM ir INFO "no SMO55F0 i2c device"
+fi
 kgrep 'Unknown VCM type' >/dev/null && sum CAM vcm DIFF "'Unknown VCM type' in log (gap camera #4, no autofocus)" || sum CAM vcm INFO "no 'Unknown VCM type' line"
 # ipu6 names the firmware file only when loading it fails; success is "CSE authenticate_run done".
 if kgrep 'intel-ipu6.*(Requesting signed firmware|CSE .*(fail|timeout)|Timed out while waiting for CSE)' >/dev/null; then

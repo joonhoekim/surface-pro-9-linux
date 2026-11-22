@@ -186,7 +186,7 @@ cache either, so both are local builds. This repository still uses its own deriv
 | | nixos-hardware | This repository |
 |---|---|---|
 | Version | `hardware.microsoft-surface.kernelVersion` enum: `longterm` = 6.18.60, `stable` = 7.3.1 | 7.3.4 |
-| linux-surface | `668a0208…` | `ea852b4e…` (`patches/7.3/BASE` = v7.3.4). The combination patches 0001–0026 of this repository apply to |
+| linux-surface | `668a0208…` | `ea852b4e…` (`patches/7.3/BASE` = v7.3.4). The combination this repository's patches apply to |
 | Config fragment | `structuredExtraConfig` in `patches.nix` prefixes the keys with `CONFIG_`, so every one is an "unused option", and `ignoreConfigErrors = true` hides that error (unverified).[^nixos-hardware-config] What remains is only what nixpkgs `common-config.nix` and autoModules switch on | linux-surface `configs/surface-7.3.config` and `sp9.config` are parsed at evaluation time and passed without the prefix, with the strict check on[^not-set] |
 | `boot.kernelPackages` | A definition without a priority. It collides with a host that also sets `boot.kernelPackages` without a priority; that host needs `mkForce` | `mkOverride 90` |
 | Extras | surface-pro-intel enables `iptsd`, `surface-control`, a thermald `thermal-conf.xml` made for other models, and `mem_sleep_default=deep` (mkDefault) | Only what has evidence on the SP9 (`userspace/platform/README.md`). thermald is the host's choice |
@@ -445,7 +445,7 @@ are checks that are done and reflected in the text above.
 | # | Command | What to look at |
 |---|---|---|
 | N2 | `nix build .#surface-pen-tools` | Whether the shebang is the Python that includes dbus-next. Confirmed: the build, the tests and `--help`[^n2] |
-| N5 | In the host flake, add one test patch to `boot.kernelPatches` and run `nixos-rebuild build --flake .#sp9` | Whether it lands after this repository's 41 patches,[^n5-patches] and whether a package taken from `config.boot.kernelPackages` (`cpupower`, for example) builds against this kernel. Confirmed: the priority and the initrd module[^n5-confirmed] |
+| N5 | In the host flake, add one test patch to `boot.kernelPatches` and run `nixos-rebuild build --flake .#sp9` | Whether it lands after this repository's patches,[^n5-patches] and whether a package taken from `config.boot.kernelPackages` (`cpupower`, for example) builds against this kernel. Confirmed: the priority and the initrd module[^n5-confirmed] |
 | N9 | Build with `audio.codecPatch = "pins"`, `audio.legacy = true` | `/run/current-system/firmware/sp9-alc274-pins.fw` (uncompressed), two lines in `/etc/modprobe.d/nixos.conf` |
 | N10 | `hibernateReboot = true` | The drop-in in `/etc/systemd/sleep.conf.d/`, `systemd-analyze cat-config systemd/sleep.conf` |
 | N11 | `pen.connectService = true` | The ExecStart path in `systemctl status surface-pen-connect`, the unit being enabled |
@@ -455,7 +455,7 @@ are checks that are done and reflected in the text above.
 
 [^n2]: `tests/test_reports.py` passes its 16 tests; `--help` of both tools.
 
-[^n5-patches]: 15 linux-surface files + 26 in `kernel/patches`. The path from `kernel.override` through
+[^n5-patches]: The linux-surface files, then `kernel/patches`. The path from `kernel.override` through
     `nix/kernel.nix` to `buildLinux` is what this checks.
 
 [^n5-confirmed]: `mkOverride 90` beats a host's plain `linuxPackages_latest` definition, and `pinctrl_tigerlake` is

@@ -21,6 +21,8 @@ test IDs: [docs/test-results.md](docs/test-results.md).
 [^conditions]: One unit (i5-1235U, 16 GB, 256 GB); kernel 7.3.4 with patches 0001–0026, firmware UEFI 24.103.143
     and SAM 6.603.139. Most results were measured on kernels with 0001–0022; the later patches matter only for the
     pen's cover coupling and reconnection (0023, 0024) and for the gain range of the camera sensors (0025, 0026).
+    The IR camera was measured with 0029 loaded as a module, then on booted kernels built with 0001–0029 and
+    0001–0031.
     Unverified or untested means there is no record yet, not that the part fails.
 
 | Hardware | Verdict | In short | Source |
@@ -30,7 +32,7 @@ test IDs: [docs/test-results.md](docs/test-results.md).
 | Pen (Slim Pen 2) | Works[^pen-open] | Writing, the barrel button and the eraser end work in a drawing application (observed).[^pen-daemons] Position and tilt match the Windows touch processor (measured by replay);[^pen-replay] tilt held by hand reads the right direction and 39–48° at about 45° (measured). Tail button sends three distinct keys (measured); manual pairing works (2/2). With the device helper: continuous haptics while drawing (observed), cover-slot bonding (measured, 12/12) and reconnection after the idle disconnect (measured); the battery level is read.[^pen-helper] The eraser end plays one click, no continuous waveform, as on Windows | PEN-1 to 9 pass; [userspace/pen](userspace/pen/README.md), [gaps/pen-vendor-exchange.md](docs/research/gaps/pen-vendor-exchange.md) |
 | Front camera | Works | Frames at 640x480, 720p and 1080p requests (measured).[^front-frames] No purple lines and the exposure settles (measured; observed in a camera application).[^front-patches] While a camera streams, the privacy LED on its side lights (observed, front and rear). The sensor's binned 1296x972 mode does not work and is not offered. Mirroring and image quality against Windows: unverified; colours are uncalibrated | CAM-2 pass, CAM-7 pass, CAM-5 pass, CAM-3 fail, CAM-6 unverified |
 | Rear camera | Works | Frames at 4K, 1080p and 720p (measured); the exposure settles.[^rear-patches] The image is upright and sharp, and autofocus focuses (observed).[^rear-af] The scale between lens position and distance is not measured; colours are uncalibrated | CAM-1 pass, CAM-4 pass |
-| IR camera | Does not work: no Linux driver for the VD55G0 sensor (Windows uses it for Hello face sign-in) | The mainline `vd55g1` driver does not list this sensor, and with no driver to power it the sensor does not answer | [gaps/camera.md](docs/research/gaps/camera.md) section 4.1 and item 8 |
+| IR camera | Works with this repository's kernel only[^ir-open] | Frames as a 10-bit monochrome camera (644×604) through libcamera, with no CSI-2 errors (measured). The IR illuminator lights a dark room (observed).[^ir-driver] Applications keep the front camera as the default[^ir-priority] | CAM-8 pass; [gaps/camera.md](docs/research/gaps/camera.md) difference 8 |
 | Speakers | Works; the speaker filter does not limit the 100 Hz–1 kHz range[^speaker-limit] | Left and right each produce sound (measured by recording). A PipeWire filter chain built from this device's measurements (high-pass, a cut at the 3.7 kHz distortion peak, limiter) is the default sink. With it, music has no audible distortion at 25–100 % volume and left and right are correct (observed)[^speaker-listen] | AUD-1 pass, AUD-2 pass; [gaps/audio.md](docs/research/gaps/audio.md) G4 |
 | Microphones | Works; the optional echo-cancelled source cuts the near-end voice while the speakers play | Signal on both channels, same polarity (measured). Default gain is set to +30 dB because +60 dB clips; speech from the front does not clip at that gain (measured). An echo-cancelled source for calls is available, not the default (measured)[^mic-calls] | AUD-3 partial, AUD-4 partial |
 | Type Cover | Works | Keys, touchpad and the function row work. Over 6 detach and attach cycles the keyboard and touchpad went away and came back each time (measured), and worked after each attach (observed).[^cover-ubuntu] Backlight levels 0–3 reach the LED (observed)[^cover-backlight][^cover-open] | SAM-1 pass; [docs/helper-reference.md](docs/helper-reference.md) |
@@ -78,6 +80,16 @@ test IDs: [docs/test-results.md](docs/test-results.md).
 [^rear-patches]: With patch 0026 and the patched libcamera.
 
 [^rear-af]: The patched libcamera's contrast autofocus.
+
+[^ir-open]: Not in `sp9-dkms`, so not on the packaged routes. Face sign-in is tested, not provided: howdy 3.0.0
+    without PAM recognised a face 2/2 with three enrolled models (one model was not enough) and rejected an empty
+    or covered view; no spoofing test, not wired into PAM.
+
+[^ir-driver]: ST's VD55G0 driver as adapted in a pending linux-surface pull request (patch 0028), with this
+    repository's ipu-bridge entry, illuminator patch and IPU6 capture fix (0027, 0029–0031). 10-bit is the
+    default; 8-bit output is offered too.
+
+[^ir-priority]: PipeWire node priorities: front 800, rear 750, IR 700 (measured).
 
 [^speaker-limit]: The filter leaves 100 Hz–1 kHz unchanged; a full-scale 100 Hz tone has 72 % THD on the raw
     speaker sink (measured, [gaps/audio.md](docs/research/gaps/audio.md) G4).
@@ -195,8 +207,8 @@ covers it ([kernel updates](docs/install.md#kernel-updates)).
 | [docs/](docs/install.md) | Installation, hardware status, tests, the helper, and the research: [gaps/](docs/research/gaps/README.md) (Linux against the Windows baseline, by area) and [control/](docs/research/control/) (how Windows controls each function and how to do the same on Linux) |
 | [docs/hardware.md](docs/hardware.md), [docs/reference/](docs/reference/) | Hardware inventory and firmware versions read on Windows, and the device lists behind it |
 
-[^patch-origins]: v7.3.4 + linux-surface 7.3 + 26 patches: 6 upstream backports, 4 from a pending linux-surface
-    pull request, 16 local.
+[^patch-origins]: On v7.3.4 + linux-surface 7.3: upstream backports (0001–0006), patches from pending linux-surface
+    pull requests (0007–0010, and 0028, ST's VD55G0 driver), and this repository's own (the rest).
 
 [^package-list]: `sp9`, `sp9-helper`, `sp9-settings`, `sp9-digitizerd`, `sp9-platform`, `sp9-cmdline`, keyrings,
     the experimental `sp9-libcamera`.

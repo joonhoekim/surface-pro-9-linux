@@ -53,6 +53,10 @@ The per-module definitions are in [`modules/`](modules/). Not shipped, and why:
   platform component `psr` forces PSR1 through debugfs without tainting the kernel
   ([userspace/platform](../userspace/platform/README.md)).
 - **0023, 0024** (Bluetooth): in the separate package `sp9-dkms-bluetooth`, see below.
+- **0027–0031** (IR camera, IPU6 capture path): not yet. It would take a new `vd55g0` module, 0027 in
+  `ipu-bridge`, which must not ship without the driver (the IPU6 would wait for the IR sensor), and 0030 in
+  `intel-ipu6-isys`. The IR camera needs this repository's kernel. Without 0030 the packed and 8-bit formats
+  still arrive truncated on linux-surface's kernel; libcamera uses the unpacked formats, so it is not affected.
 
 ## How the sources are made
 

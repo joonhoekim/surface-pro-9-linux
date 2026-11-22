@@ -9,7 +9,7 @@ welcome ([install.md](install.md#report-what-you-see)).
 
 ## 1. Kernel
 
-The kernel is stable v7.3.4 + linux-surface's 7.3 series + this repository's 26 patches
+The kernel is stable v7.3.4 + linux-surface's 7.3 series + this repository's patches
 ([kernel/README.md](../kernel/README.md)).
 
 [`tools/linux/build-kernel.sh`](../tools/linux/build-kernel.sh) fetches the pinned sources, applies both
@@ -35,12 +35,12 @@ Results go to `out/kernel/dist/` with a `SHA256SUMS`. The release string is `7.3
   while keeping another kernel as the default.
 
 Without this kernel (a distribution kernel, or linux-surface's packaged kernel) the platform files below
-still apply, but the 26 patches are missing: see [kernel/PROVENANCE.md](../kernel/PROVENANCE.md) for what
-each one changes. No such combination was tested.
+still apply, but this repository's kernel patches are missing (the IR camera among them): see
+[kernel/PROVENANCE.md](../kernel/PROVENANCE.md) for what each one changes. No such combination was tested.
 
-[^apply-order]: v7.3.4, linux-surface's 47 commits, then 0001–0017 with `git am`; 0018–0026 were exported from
-    commits on the tree of the booted kernel, where 0023, 0025 and 0026 were first built and loaded as modules; a
-    NixOS-built kernel with all 26 has been booted.
+[^apply-order]: v7.3.4, linux-surface's 47 commits, then 0001–0017 with `git am`; the later patches were exported
+    from commits on the tree of the booted kernel, where 0023, 0025, 0026 and 0029 were first built and loaded as
+    modules; NixOS-built kernels with 0001–0026 and with 0001–0028 have been booted.
 
 [^config-base]: The configuration starts from the Ubuntu mainline config that linux-surface uses for its Debian
     packages, not from the nixpkgs configuration the verified kernel was built with: the options the fragments

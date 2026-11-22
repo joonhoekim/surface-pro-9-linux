@@ -32,6 +32,11 @@ sign-offs unchanged:
   0002-0006   Fernando Rimoli (0006 also signed off by Arsalan Naeem)
   0007-0010   Jairo Valdivia
 
+kernel/patches/0028 adds STMicroelectronics' VD55G0 sensor driver (copyright
+STMicroelectronics SA, GPL-2.0) as adapted by André Gilerson in pull request
+#164 to the linux-surface kernel tree, with changes for the Surface Pro 9 by
+Joonhoe Kim.
+
 All kernel patches are licensed GPL-2.0-only, as the Linux kernel is.
 
 iptsd

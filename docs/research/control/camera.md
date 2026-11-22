@@ -17,7 +17,8 @@ from names and structure, not observed). The Linux results are in [gaps/camera](
 ## Summary
 
 - **ICL2, the IR camera's control logic, has no GPIO of type Strobe/Flash/Torch** (ACPI), so the IR illuminator is not switched through
-  INT3472. How it is switched is not known.
+  INT3472. On Linux it lights from the sensor's own GPIO 1, driven as a strobe (measured, patch 0029); how Windows switches it was
+  not traced.
 - On the MF side the IR source exposes `IRTORCHMODE` (Off/On/AlternatingFrameIllumination, intensity fixed at 32) and `FACEAUTH_MODE`
   (confirmed).
 - **Privacy LEDs**: the front and rear GPIOs drive separate LEDs, each on the side of its camera (observed on Linux, CAM-5); the IR
@@ -47,7 +48,7 @@ Bound drivers from the PnP tree; the roles are inferred from their names and bin
 | **Sensor power off** | Not observed | - | The sensor driver's `power_off` does reset → regulators → clock | - |
 | **MCLK** | `_DSM 82c0d13a` `{IMGCLK n, on, freq}` | DSDT; meaning of `freq` from coreboot ADL `camera_clock_ctl.asl` (gaps difference 9) | int3472 `_DSM` clock + **patch 0015** | - |
 | **Privacy LED** | Privacy LED (0x0D) GPIO, on value 1 from `_DSM`. Front ICL1 pin 0xA0, rear ICL0 0x49, IR ICL2 0x46 | ACPI | int3472 registers it as the `privacy` LED (`<sensor>::privacy_led`) (L/drivers/platform/x86/intel/int3472/led.c); it is switched on and off with v4l2 subdevice stream start and stop | Whether the Windows trigger is stream start or sensor power. What the IR GPIO (0x46) drives |
-| **IR illuminator** | Not switched through an INT3472 GPIO (ICL2 has none of the Strobe/Flash/Torch kind) | ACPI | A VD55G0 driver is needed (gaps difference 8) | How the illuminator is switched |
+| **IR illuminator** | Not switched through an INT3472 GPIO (ICL2 has none of the Strobe/Flash/Torch kind) | ACPI | Patch 0029: sensor GPIO 1 as strobe, on by default on the Surface Pro 9; it stops lighting once the exposure exceeds about 65 % of the frame, so the exposure range is held to 60 % while the strobe is on (measured; gaps difference 8) | How Windows switches it |
 | IR illumination intensity | Registry `Services\vd55g0\IRFlashLedIntensity = 100`. MF `IRTORCHMODE` intensity min=max=32 | confirmed: registry, MF query | Not applicable (on/off only) | Whether the intensity reaches the hardware (the fixed intensity of 32 suggests it does not, inferred) |
 | **IR torch mode (MF)** | `KSPROPERTY_CAMERACONTROL_EXTENDED_IRTORCHMODE` (id 38): capability 0x7 (Off/AlwaysOn/Alternating), current flags 0x2. WinRT `InfraredTorchControl` has Off/On/AlternatingFrameIllumination, currently On | confirmed: `camera-controls.ps1` | User space (Howdy and the like) switches it on with the V4L2 flash control. Every-other-frame illumination has to be supported by the sensor driver | flags 0x2 and WinRT `CurrentMode=On` disagree |
 | Windows Hello face authentication mode | `FACEAUTH_MODE` (id 35); capability 0x3, current flags 0x1 | confirmed: MF query | Not applicable | - |
@@ -68,13 +69,12 @@ Bound drivers from the PnP tree; the roles are inferred from their names and bin
 |---|---|
 | Front OV5693 (ICL1) | `reset`=1, `powerdown`=1 → **xvclk on** → avdd·dovdd·dvdd (int3472 provides only avdd, 2 ms) → reset=0 → 5–7.5 ms (ov5693.c:667–689) |
 | Rear OV13858 (ICL0) | (LS) reset=1 → **xvclk on** → avdd·pwr1 together → 5–10 ms → reset=0 → 20 ms (LS:757–784) |
-| IR VD55G0 (ICL2) | No driver. vd55g1 does regulators → clock → reset release → 5–10 ms (L/drivers/media/i2c/vd55g1.c:1733–1747) |
+| IR VD55G0 (ICL2) | The vd55g0 driver of patch 0028 (ST's, from linux-surface/kernel#164) with `avdd`, `dovdd` and the reset GPIO; the sensor answers at probe and streams (measured) |
 
 The two Linux drivers enable the clock before the rails, and `regulator_bulk_enable` does not guarantee an order between the rear
 rails. The rear camera delivers frames on Linux (measured, CAM-1), so no problem from this order has been seen.
 
-For the IR camera, mapping 0x0B and 0x10 to the vd55g1 supply names (`vcore/vddio/vana`) needs the schematic; upstream int3472 calls
-them `avdd` (0x0B) and `dovdd` (0x10).
+For the IR camera, upstream int3472 calls 0x0B and 0x10 `avdd` and `dovdd`, and patch 0028 requests them under those names.
 
 ## 4. Controls exposed by MF
 
@@ -101,11 +101,10 @@ The Linux IPU firmware is `intel/ipu/ipu6ep_fw.bin`; whether it is the same as t
 
 ## 6. Work on the Linux side
 
-1. **Once a VD55G0 driver exists**, IR illumination through `V4L2_CID_FLASH_LED_MODE` as in vd55g1, once it is known how the
-   illuminator is switched. Every-other-frame illumination is what MF offers (`IRTORCHMODE`), so a way to match Howdy-like user space
-   has to be decided together with it.
+1. **IR illumination**: done with patches 0027–0029 (sensor GPIO 1 as strobe, `V4L2_CID_FLASH_LED_MODE` as in vd55g1). Every-other-frame
+   illumination, which MF offers (`IRTORCHMODE`), is not implemented; what Howdy-like user space needs is not decided.
 2. **Privacy LED**: done for front and rear (CAM-5): the LED GPIO of the streaming camera goes high and low afterwards
-   (measured), and the LED on that camera's side lights (observed). The IR camera needs a driver first.
+   (measured), and the LED on that camera's side lights (observed). For the IR camera it is unverified.
 3. **Power sequence**: the order of the rear rails and of clock and rails is changed only when a problem is observed.
 
 ## 7. Open

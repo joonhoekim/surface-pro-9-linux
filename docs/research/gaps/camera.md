@@ -2,7 +2,8 @@
 
 In short: the front camera needs the `0x4800` fix (this repository's patches 0001–0006) and the rear camera's autofocus
 needs the DW9800 VCM mapping (patch 0011); with those, patches 0020–0022, 0025 and 0026 and the patched libcamera 0.8.0 both
-cameras work in applications. The IR camera (VD55G0) has no Linux driver, and the front sensor's binned mode does not work.
+cameras work in applications. The IR camera (VD55G0) works with ST's driver and patches 0027–0031, and the front sensor's binned mode
+does not work.
 
 The subjects are the IPU6 (`8086:465d`), the front OV5693 (`OVTI5693`, `MSHW0340`), the rear OV13858 (`OVTID858`, `MSHW0341`),
 the IR VD55G0 (`SMO55F0`, `MSHW0342`) and three `INT3472` control-logic devices. The Windows side is the ACPI tables, PnP tree,
@@ -28,8 +29,9 @@ patches are named by file. Test IDs (`CAM-n`) refer to [test-plan.md](../../test
   patch 0011). The ipu-bridge VCM table ends at 9, so it drops the VCM with "Unknown VCM type 17". There is no autofocus.
 - INT3472 GPIO type 0x08 (rear control logic) is a type upstream does not know, and linux-surface registers it on every device under the
   non-standard name `pwr1`.
-- The IR VD55G0 has no Linux driver, and the upstream `vd55g1` driver does not list it (4.1). Patch 0015 sets the 24 MHz MCLK its SSDB
-  asks for.
+- The IR VD55G0 has no driver in mainline or in linux-surface's patches, and the upstream `vd55g1` driver does not list it (4.1).
+  ST's VD55G0 driver, as adapted for the Surface Pro 11 in linux-surface/kernel#164, runs it with patches 0027–0031; patch 0015 sets
+  the 24 MHz MCLK its SSDB asks for.
 
 Measurements on Linux 7.3.4 (libcamera 0.7.2 SoftISP) are in the "Verification on Linux" column of section 3 and in section 5. Values
 without a stated patch range are from a kernel with patches 0001–0017. In short:
@@ -134,6 +136,7 @@ repository's patch 0006) sets bit 5 (clock-lane gating) when the link has a non-
 | int3472 0x08 | linux-surface registers 0x08 as the regulator `pwr1` on every device | LS:979–1000 |
 | dw9719 | Supports the `dw9800k` model (fixed configuration, no ID register) | L/drivers/media/i2c/dw9719.c:71–73,136–147,446 |
 | vd55g1 | Models 0x53354731/0x53354733 only, no ACPI matching, supplies `vcore/vddio/vana`, xclk 6–27 MHz | L/drivers/media/i2c/vd55g1.c:131–165,488–492 |
+| VD55G0 | No driver in mainline or in linux-surface's patches. STMicroelectronics' VD55G0 driver (GPL-2.0), adapted for the Surface Pro 11 with an ipu-bridge `SMO55F0` entry, is in linux-surface/kernel#164 (open). ST's datasheet DS13170 and user manual UM2829 are public on st.com (not read for this work) | `gh pr view 164 -R linux-surface/kernel` |
 | Wiki | SP9 front not working, rear working, IR not working | linux-surface wiki, `Camera-Support.md` |
 | Front camera fix | linux-surface/kernel#180 (v7.2, bit 5 only, open), linux-surface#2171 (0x2d, closed), upstream media `next` 0e12587945f6. Nothing in the 7.3 patch directory writes 0x4800 | `gh pr view`; `grep 4800 patches/7.3/*` gives 0 results |
 | Binned mode | linux-surface#2252 (SP7+, port of the Windows table, open), #2234 | `gh pr view 2252` |
@@ -151,10 +154,10 @@ In the last column, the text before "Measured" is the check and the text after i
 | 5 | **Handling of INT3472 type 0x08** | ICL0 0x44 → `0x01004408` (1.3). Upstream ignores it; linux-surface maps it globally to `pwr1` | Upstream: the rear sensor's second rail is not switched on, giving -121 (inferred). linux-surface: the name is non-standard, so it is used only by the OV13858 patch, and it conflicts with the SP7+ OV8865, which uses the same type (wiki) | In `int3472_gpio_map`, restrict to `hids={"OVTID858"}`, `type_from=0x08`, `type_to` of the `POWER_ENABLE` kind, `con_id="dvdd"`. ov13858 requests the standard names `avdd/dovdd/dvdd` | Existence of 0x08 confirmed; the kind of physical rail is inferred | Consumers of `INT3472:00-*` in `/sys/kernel/debug/regulator/regulator_summary`; whether reading the OV13858 ID fails with the 0x08 rail off. Measured: `GPIO type 0x08 … con_id=pwr1`; on `INT3472:00`, avdd, pwr1 and the 19.2 MHz clk have the rear sensor as consumer. The test with the 0x08 rail off was not done |
 | 6 | ov13858 power control exists only as a linux-surface-specific patch | LS:697–943 (non-standard `pwr1`, many diagnostic `dev_info` calls, unconditional power-on at probe) | Not upstreamable as is. Log noise | Clean up to standard names (`avdd`, `dovdd`, `dvdd`), a `reset` GPIO and `devm_v4l2_sensor_clk_get`, and submit upstream | Confirmed | Amount of `dmesg \| grep ov13858` output. Measured: 7 lines of `ctrl(id:…) is not handled` each time the camera is opened and 4 `dev_info` lines per power transition; several hundred lines per boot |
 | 7 | The rotation does not come from firmware | SSDB degree 0, `_PLD` Rotation 0 (all three sensors). linux-surface sets 180 for front and rear by DMI | The value is right according to user confirmation (LS:1119–1125). But ov13858 has no H/V flip controls, so 180 is passed on only as a property and the actual rotation is left to user space. Where Windows gets the rotation from was not found | Adding `V4L2_CID_HFLIP/VFLIP` to ov13858 lets libcamera flip in the sensor (#177 is closed) | Rotation value confirmed externally; absence of flip confirmed | `v4l2-ctl -d /dev/v4l-subdevN -C camera_sensor_rotation` and the actual image orientation. Measured: `camera_sensor_rotation`=180 on both sensors. The front image is upright (hflip=vflip=1). For the rear, libcamera offers only rot180 (a `rot0` request is adjusted) and the image is upright (observed, CAM-1). Both cameras' PipeWire nodes carry `api.libcamera.rotation: 180` |
-| 8 | **No VD55G0 driver** | vd55g1 matches only the model IDs 0x53354731/33 and has no ACPI matching. No ipu-bridge entry for `SMO55F0` | No IR camera, nothing of the Windows Hello kind | Extending vd55g1 with the model ID alone is not enough to know it works (4.1). If VD55G0 support from ST or a separate driver appears, attach the ACPI ID `SMO55F0`, the supply mapping (`avdd`→`vana`, `dovdd`→`vddio`, no `vcore`), an ipu-bridge `SMO55F0` entry (1 lane, link 3 from the SSDB) and the 24 MHz MCLK (patch 0015) | Absence confirmed | Read the ID after power-on with `i2ctransfer -y <bus> w2@0x60 0x00 0x00 r4`. Measured: 0x60 does not respond (`Remote I/O error`). That is expected, since no driver powers the sensor. The model ID is unverified |
-| 9 | The frequency argument of the int3472 DSM clock is fixed at 1 | clk_and_regulator.c:37–39. `\_SB.ICLK.CLKF` changes only IMGCLKOUT bit 0. The IR SSDB mclk is 24 MHz | The IR sensor is given 19.2 MHz while the clk rate is reported as 24 MHz. Front and rear (19.2 MHz) are unaffected | Argument 0 when `mclkspeed == 24000000`, otherwise 1. **Patch 0015** | Meaning of the bit confirmed: coreboot ADL `camera_clock_ctl.asl` (0 = 24 MHz, 1 = 19.2 MHz) | Once an IR driver exists, compare `clk_summary` with the behaviour of the sensor PLL. Measured: `INT3472:01-clk` shows a rate of 24000000. It has no consumer, so the `_DSM` argument and the actual output frequency are unverified |
+| 8 | **No VD55G0 driver in mainline or linux-surface's patches** | vd55g1 matches only the model IDs 0x53354731/33 and has no ACPI matching. No ipu-bridge entry for `SMO55F0` | Without this repository's patches: no IR camera, nothing of the Windows Hello kind | Patches 0027–0029 (4.1): ST's VD55G0 driver as adapted in linux-surface/kernel#164, with the supplies as the INT3472 registers them (`avdd`, `dovdd`) and the reset GPIO on the ACPI path; an ipu-bridge `SMO55F0` entry (1 lane, link 3 from the SSDB); the 24 MHz MCLK (patch 0015); the illuminator on sensor GPIO 1 and 10-bit output only | Measured on the device | Before: 0x60 did not respond (`Remote I/O error`) with no driver to power the sensor. Measured with 0027 and 0028 in a booted kernel: model ID 0x4730, revision 0x1111 (cut 1) at probe; `vd55g0 2-0060` → `Intel IPU6 CSI2 3` in the media graph; front and rear still 10/10 frames each. 8-bit output (Y8, SGRBG8) arrives truncated in about 90 % of the frames (`Transfer FIFO overflow`, ISYS error `STR2MMIO`) at every frame size and rate tried; 10-bit output 0 errors in 209 frames. The illuminator lights from sensor GPIO 1 as a strobe and stops once the exposure exceeds about 65 % of the frame. With 0029 loaded as a module: libcamera 90 10-bit frames, 0 CSI-2 errors, and a dark room visible under the illuminator (observed, CAM-8) |
+| 9 | The frequency argument of the int3472 DSM clock is fixed at 1 | clk_and_regulator.c:37–39. `\_SB.ICLK.CLKF` changes only IMGCLKOUT bit 0. The IR SSDB mclk is 24 MHz | The IR sensor is given 19.2 MHz while the clk rate is reported as 24 MHz. Front and rear (19.2 MHz) are unaffected | Argument 0 when `mclkspeed == 24000000`, otherwise 1. **Patch 0015** | Meaning of the bit confirmed: coreboot ADL `camera_clock_ctl.asl` (0 = 24 MHz, 1 = 19.2 MHz) | Compare `clk_summary` with the behaviour of the sensor PLL. Measured: `INT3472:01-clk` shows a rate of 24000000. With patches 0027–0029 the IR sensor uses it, answers and streams (difference 8); the actual output frequency is not measured |
 | 10 | The EEPROM (0x50, romtype 9) is not used | 0x50 is in `_CRS` and the I2C device table; Windows is taken to identify the module and take LSC/AF calibration from the NVM (inferred) | Operation without per-module calibration. libcamera has no IPU6 tuning for OV13858/OV5693 and uses `uncalibrated.yaml` | Expose it read-only through at24 and decode the calibration, or write libcamera tuning yaml files. The `.aiqb` files are for the Intel HAL only | Confirmed (existence); contents unverified | Read 0x50 with `i2ctransfer` (never write). Measured: the rear 0x50 responds while the sensor is powered (only 1 byte was read). libcamera uses `uncalibrated.yaml`. The comparison with Windows photos is unverified (CAM-6) |
-| 11 | Three privacy LEDs | ICL0 0x49, ICL1 0xA0, ICL2 0x46 (1.3) | Linux attaches each to its sensor as a `privacy` LED. The IR sensor has no driver, so its LED is not used | Nothing to do: the mapping is right | Front and rear confirmed (observed) | Watch the LED while each camera streams; `/sys/class/leds/`. Measured (GPIO only): `OVTI5693_00::privacy_led`=1 and gpio-160 high while the front camera streams, `OVTID858_00::privacy_led`=1 and gpio-73 high while the rear camera streams, 0 after stopping. The IR LED (gpio-70) does not change. Streaming a camera lights the LED on that camera's side, front and rear (observed, CAM-5) |
+| 11 | Three privacy LEDs | ICL0 0x49, ICL1 0xA0, ICL2 0x46 (1.3) | Linux attaches each to its sensor as a `privacy` LED. Whether the IR one lights while the IR camera streams is unverified | Nothing to do: the mapping is right | Front and rear confirmed (observed) | Watch the LED while each camera streams; `/sys/class/leds/`. Measured (GPIO only): `OVTI5693_00::privacy_led`=1 and gpio-160 high while the front camera streams, `OVTID858_00::privacy_led`=1 and gpio-73 high while the rear camera streams, 0 after stopping. The IR LED (gpio-70) does not change. Streaming a camera lights the LED on that camera's side, front and rear (observed, CAM-5) |
 | 12 | IPU0 `_DSM 9a9e6ab4…`/`7192a970…` (CSLU/CSSP) are not used | The IPU SSDT (OEM table ID `IPUSSDT`), device `IPU0`; 0 grep hits in Linux | Effect unknown (the values are NVS variables and cannot be read from a table dump) | If needed, just record the `acpi_evaluate_dsm` results on Linux | Unverified | Read the return values with `acpiexec` or a debugging module |
 
 To restate why the front camera does not work: power, clock, reset, I2C address, lane count and MCLK agree with the ACPI description
@@ -170,16 +173,31 @@ The patches are in [`kernel/patches`](../../../kernel/patches).
 | 1 (0x4800) | `kernel/patches/0001`–`0006` (backport from upstream v7.4) |
 | 4 (VCM) | Patch 0011 |
 | 9 (DSM clock frequency) | Patch 0015: the third `_DSM` argument is 0 when the SSDB mclk is 24 MHz. For 19.2 MHz sensors (front and rear) it stays 1 |
-| 8 (VD55G0) | No patch (4.1) |
+| 8 (VD55G0) | Patches 0027–0031 (4.1) |
 | 2 (binned mode) | No patch fixes it (4.2). Patch 0020: the mode is not offered on `clock-noncontinuous` links |
 | Sensor gain ranges (6.2) | 0025 (ov5693: 16–992), 0026 (ov13858: 0x80–0x7c0) |
 
-### 4.1 VD55G0 is not supported by vd55g1
+### 4.1 VD55G0: ST's driver, not vd55g1
 
-The upstream `vd55g1` (L/drivers/media/i2c/vd55g1.c) matches the model IDs 0x53354731/0x53354733 only and has no ACPI matching. The
-VD55G0's own model ID has not been read on this device (the sensor stays unpowered without a driver, difference 8). Without VD55G0
-support from ST or a datasheet, no driver is written here. The values to attach once a driver exists are in section 3, difference 8;
-the ipu-bridge entry goes in together with the driver.
+The upstream `vd55g1` (L/drivers/media/i2c/vd55g1.c) matches the model IDs 0x53354731/0x53354733 only and has no ACPI matching, and
+adding a model ID to it is not enough. STMicroelectronics' own VD55G0 driver, as adapted for the Surface Pro 11 in
+linux-surface/kernel#164 (not merged), is the base instead:
+
+- **0027** adds the ipu-bridge entry for `SMO55F0` (CSI-2 port 3, one lane, from the SSDB). It goes in only together with 0028: without
+  the driver the IPU6 notifier waits for the IR sensor, and the front and rear camera nodes may not appear.
+- **0028** is the driver with the Surface Pro 9 changes: the second rail is requested as `dovdd`, the name under which the INT3472
+  registers it, and the reset GPIO is requested on the ACPI path too (without it the sensor did not answer, −121).
+- **0029** is for the Surface Pro 9: only the 10-bit codes are offered and Y10 is the default (8-bit frames arrive truncated,
+  difference 8); the illuminator is sensor GPIO 1 driven as a strobe, on by default on the Surface Pro 9 (DMI), with the exposure range
+  held to 60 % of the frame while the strobe is on; the exposure starts manual at 1000 lines with analogue gain 16, because the
+  sensor's own auto exposure runs the exposure up to the frame length and the illuminator goes off. The `led_gpio` module parameter
+  picks another sensor GPIO.
+- **0030** fixes the truncation on the IPU6 side: packed and 8-bit formats went through the input system's MIPI pin with
+  long packet headers discarded, which truncated most frames on both camera ports; through the SoC raw pin with the normal store
+  mode they arrive intact. **0031** then offers the 8-bit formats again (default Y10).
+
+Face sign-in (howdy, without PAM) was tried on top of it and is not provided
+([hardware-status.md](../../hardware-status.md), IR section).
 
 ### 4.2 Why the OV5693 binned mode has no fix
 
@@ -226,7 +244,7 @@ What remains to be tried: port the ov5693 commit of #2252 on top of patch 0006 (
 9. Privacy LED: which LED lights while each camera streams.
    See difference 11.
 10. IR: the model ID at 0x60 with `i2ctransfer`. It can be read only while the `INT3472:01` regulators are on.
-    Measured: no response (difference 8).
+    Measured without a driver: no response. With patches 0027 and 0028 the driver reads it at probe (difference 8).
 11. The results are reflected as "works/fails" in this document and in the hardware status table
     ([hardware-status.md](../../hardware-status.md)).
 

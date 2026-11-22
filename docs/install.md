@@ -102,7 +102,7 @@ The same parts on every route; they differ in where each part comes from.
 
 | Part | NixOS | Debian, Ubuntu, Arch (packages) | From source |
 |---|---|---|---|
-| **Kernel** | This repository's: v7.3.4 + linux-surface's 7.3 series + the 26 patches of [kernel/](../kernel/README.md), built on the device | linux-surface's, from its repository[^ls-kernel] | This repository's, built with `tools/linux/build-kernel.sh` |
+| **Kernel** | This repository's: v7.3.4 + linux-surface's 7.3 series + the patches of [kernel/](../kernel/README.md), built on the device | linux-surface's, from its repository[^ls-kernel] | This repository's, built with `tools/linux/build-kernel.sh` |
 | **Kernel patches as modules** (DKMS overlay) | Not needed: the patches are in the kernel | `sp9-dkms` and `sp9-dkms-bluetooth`, built by DKMS for each installed linux-surface kernel ([dkms/README.md](../dkms/README.md)) | Not needed |
 | **Platform files** ([userspace/platform](../userspace/platform/README.md)) | Module options | `sp9-platform` | `userspace/platform/install.sh` |
 | **Touch and pen daemon** | `touch.daemon`: `sp9-digitizerd` or iptsd with this repository's pen patches | `sp9-digitizerd`, which replaces iptsd | `helper/install.sh`, or iptsd built with the patches |
@@ -112,8 +112,8 @@ The same parts on every route; they differ in where each part comes from.
 | **Kernel command line** | Nothing needed with this kernel[^cmdline] | `sp9-cmdline`: GRUB on Debian and Ubuntu, unified kernel images on Arch | Not needed with this kernel |
 | **Updates** | `nix flake update`, then a rebuild | apt or pacman, with the distribution's updates | By hand |
 
-[^ls-kernel]: It lacks the 26 patches of [kernel/](../kernel/README.md); the DKMS overlay brings the ones that
-    can be built as modules. [kernel/PROVENANCE.md](../kernel/PROVENANCE.md) says what each patch changes.
+[^ls-kernel]: It lacks the patches of [kernel/](../kernel/README.md); the DKMS overlay brings the ones that
+    can be built as modules (not the IR camera's). [kernel/PROVENANCE.md](../kernel/PROVENANCE.md) says what each patch changes.
 
 [^cmdline]: `pci=hpiosize=0` and `i915.enable_psr=1` were measured as unnecessary on this repository's kernel. A
     distribution or linux-surface kernel needs `pci=hpiosize=0`; PSR1 comes from the platform files' debugfs
@@ -195,7 +195,8 @@ The full list is [hardware-status.md](hardware-status.md).
 - **Cameras.** Both work with the patched libcamera, the rear one with autofocus; the front sensor always runs its
   full-resolution mode at about 28.6 fps. Colours are uncalibrated (low saturation). Ubuntu 24.04 has no camera
   stack that works.
-- **IR camera.** No driver, so no face unlock.
+- **IR camera.** Only with this repository's kernel (NixOS, or built from source): a 10-bit monochrome camera
+  with its IR illuminator. Not in `sp9-dkms`, so not on the packaged routes. No face unlock is set up.
 - **Speakers.** The volume control you move is the "Speakers" filter sink, which the platform files make the
   default. The raw sink behind it is kept at 100 %; leave it there.
 - **Microphones.** The platform files set the first-use gain to +30 dB because the PipeWire default (+60 dB)
