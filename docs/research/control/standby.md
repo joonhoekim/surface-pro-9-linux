@@ -140,7 +140,9 @@ sessions). There were no PEP pre-vetoes (`PepPreVetoes`).
    section 3, `slp_s0_residency_usec`, `substate_residencies`, `ltr_show`. Whether the SSH (UA00) path fails to reach D3 is
    the first thing to look at. Done with `tools/linux/s2idle-trace.sh` (section 10; test PWR-1 in
    [test-results.md](../../test-results.md)): 10/10 cycles on AC entered and resumed with 0 unmet LPI constraints, and
-   `slp_s0` accrued in every cycle (S0i2.0 only; S0i3.0 stays 0). Steps 2–5 have not been done.
+   `slp_s0` accrued in every cycle (S0i2.0 only; S0i3.0 stays 0). One hour on battery (PWR-4): about 190 mW with
+   `slp_s0` residency 99.86 %, against 52–102 mW on Windows at the same residency; finding which devices draw the
+   difference is an open task ([display-power.md](../gaps/display-power.md) difference 6). Steps 2–5 have not been done.
 2. **Observe the SAPD Notify.** With a small driver that only does `acpi_install_notify_handler` on `MSHW0299` (or by
    tracing `Notify` with `acpi.debug_layer`/`debug_level`), see whether 0xC3, 0xC7, 0xC5, 0xC6, 0xC9, 0xC8, 0xC4 arrive in
    that order on s2idle. At present they are dropped at the "No handler for notify" level.
