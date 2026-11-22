@@ -200,16 +200,21 @@ The full list is [hardware-status.md](hardware-status.md).
   default. The raw sink behind it is kept at 100 %; leave it there.
 - **Microphones.** The platform files set the first-use gain to +30 dB because the PipeWire default (+60 dB)
   clips.[^mic-gain] For calls there is a separate source, "Microphone (echo cancelled)", which has to be selected
-  in the application; call quality is unverified.
+  in the application. It removes the echo, but while the speakers play it also cuts most of your own voice
+  (observed). Call quality is unverified.
 - **Rotation.** The screen follows the device in a compositor that reads iio-sensor-proxy (observed). Whether
   your desktop holds the orientation while the cover is attached is the desktop's business.
-- **Touch.** Works in everyday use with `sp9-digitizerd` (observed); the test of light taps and swipes and of
-  palm rejection has not been run.
+- **Touch.** Works in everyday use with `sp9-digitizerd` (observed). With its thresholds light taps and
+  three-finger swipes are all caught, a palm is ignored while the pen hovers, and touch comes back after
+  resume (measured). Touch does not wake the device from suspend.
 - **Type Cover.** Keys, touchpad, the function row, and detaching and reattaching worked once, on Ubuntu 26.04
   (observed); the repeated detach test has no record.
 - **Buttons, external monitor.** With the Type Cover detached (tablet use), the power and volume buttons work
-  (observed). An external monitor shows a picture on either USB-C port (observed); daisy-chaining over DP MST and
-  audio over the monitor are unverified.
+  (observed). An external monitor shows a picture on either USB-C port (observed); two screens over DP MST and
+  audio over the monitor work (measured + observed). With an external monitor plugged in, closing the cover
+  does not suspend: logind treats the device as docked.
+- **Standby power.** On battery s2idle draws about 190 mW, 2–4 times what Windows draws in standby (measured);
+  where the difference goes is not known yet.
 - **Hibernation.** Not available with zram swap only, the layout tested here.
 - **Heat.** Under sustained load the surface gets hotter than on Windows, which lowers the power limit at a
   lower skin temperature.
