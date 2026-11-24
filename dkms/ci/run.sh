@@ -43,8 +43,8 @@ cat "$OUT/candidates.tsv"
 echo "::endgroup::"
 export SP9_DKMS_TARGETS=$OUT/targets.tsv
 version=$(gen version)
-listed=$(SP9_DKMS_TARGETS=$DKMS/targets.tsv gen targets "$KIND")
-candidates=$(cut -f1 "$OUT/candidates.tsv")
+listed=$(SP9_DKMS_TARGETS=$DKMS/targets.tsv gen targets "$KIND" | xargs)
+candidates=$(cut -f1 "$OUT/candidates.tsv" | xargs)
 
 echo "::group::generate ($version)"
 rm -rf "$OUT/trees"
