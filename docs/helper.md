@@ -129,7 +129,7 @@ sp9-ctl --json status
 | Power limit overrides | Change the table per profile and power source. The range is limited to PL1 5–35 W, PL2 up to 60 W, tau 1–28 s | none |
 | Skin temperature guard | In `balanced-performance` and `performance`, when VTS1 exceeds the setpoint measured on Windows (47 / 48 °C), PL1 is lowered by proportional-integral control. The other profiles have no guard | **experimental, off** |
 | Fan | Reads the `surface_fan` rpm. The SAM FAN CID 0x0b (`u16` rpm) request is available only after it has been allowed explicitly: 1600–7500 rpm, or 0 (withdraw). It is followed only while the SAM is not driving the fan itself ("Fan request" below) | **experimental, off** |
-| Battery | Status, capacity, cycles, health against the design capacity, adapter rating (`input_power_limit`, kernel patch 0010), UEFI Battery Limit (read only) | — |
+| Battery | Status, capacity, cycles, health against the design capacity, adapter rating (`input_power_limit` of kernel patch 0010, or `dptf/adapter_rating_mw` of linux-surface's kernels from 7.3.5 on), UEFI Battery Limit (read only) | — |
 | Smart charging | Reads SAM 0x3a (support), 0x41 (engaged = bit 0x40, measured 0x00C0 while holding), 0x42 (countdown); 0x43 releases. Windows has no command to switch it back on either. The firmware engages it again by itself | — |
 | PSR policy | Per power source: `default` (untouched), `off`, `psr1`. Written to debugfs `i915_edp_psr_debug`. The boot parameter `i915.enable_psr=1` belongs to the platform files | `default` |
 | Panel ICC | Makes an ICC profile of the panel's native gamut from the factory calibration in UEFI `Type_1`/`Type_2`. Assign it with colord (`colormgr`) or in the desktop settings | — |

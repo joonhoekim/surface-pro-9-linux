@@ -26,11 +26,14 @@
 # no fuzz), and dkms/patches/ adjustments on top.
 #
 # A patch is skipped when the target already contains it: declared in mainline for the target's
-# series (UPSTREAM=, checked by reverse-applying), or found by reverse-applying. A patch that neither
-# applies nor reverse-applies stops the generator. The generator also stops when
+# series (UPSTREAM=, checked by reverse-applying), or found by reverse-applying, or when the target has
+# its own version of it (SUPERSEDED="NNNN=STRING": the target's files contain STRING). A patch that
+# neither applies nor reverse-applies is tried as its DKMS-only rebase (ALT_PATCHES="NNNN=FILE" in
+# dkms/patches/) and otherwise stops the generator. The generator also stops when
 #   - a main-package file differs from the copy recorded in dkms/lock.tsv (a stable or linux-surface
 #     change to a file this package replaces; it prints the diff when the reviewed tag is known),
-#   - the set of linux-surface patches that change a module's files differs from its LS_PATCHES,
+#   - the set of linux-surface patches that change a module's files differs from its LS_PATCHES (or
+#     from each of its "|"-separated alternatives),
 #   - the targets give different module sets.
 #
 # Cache: ${XDG_CACHE_HOME:-~/.cache}/sp9-dkms (about 1.8 GB per prepared target); --ls-repo uses an
@@ -177,8 +180,8 @@ modules_of() { # PACKAGE: module conf files of that package
 }
 
 load_module() {
-	NAME= DIR= FILES= PATCHES= UPSTREAM= PUBLIC_HEADERS= GENKSYMS_PATCH= DKMS_PATCHES= KBUILD=
-	KBUILD_DROP= CHECK_CRCS= LS_PATCHES= PACKAGE=main
+	NAME= DIR= FILES= PATCHES= UPSTREAM= ALT_PATCHES= SUPERSEDED= PUBLIC_HEADERS= GENKSYMS_PATCH=
+	DKMS_PATCHES= KBUILD= KBUILD_DROP= CHECK_CRCS= LS_PATCHES= PACKAGE=main
 	. "$1"
 }
 
@@ -219,12 +222,23 @@ module_variant() {
 				die "$T_TAG $NAME: $p is declared in v$up but does not reverse-apply: review it"
 			skipped+=("$p (in v$up)"); continue
 		fi
+		# SUPERSEDED="NNNN=STRING": a target whose files contain STRING has its own version of NNNN.
+		local sup; sup=$(echo " $SUPERSEDED " | grep -oE " $p=[^ ]+ " | cut -d= -f2- | tr -d ' ') || true
+		if [ -n "$sup" ] && grep -rqF -- "$sup" "$w/base"; then
+			skipped+=("$p (superseded in the target: $sup)"); continue
+		fi
 		if GIT_CEILING_DIRECTORIES=$w git -C "$w/a" apply --check "${incl[@]}" "$pf" 2>/dev/null; then
 			GIT_CEILING_DIRECTORIES=$w git -C "$w/a" apply "${incl[@]}" "$pf"
 			applied+=("$p")
 		elif GIT_CEILING_DIRECTORIES=$w git -C "$w/a" apply -R --check "${incl[@]}" "$pf" 2>/dev/null; then
 			skipped+=("$p (already in the target)")
 		else
+			# ALT_PATCHES="NNNN=FILE": dkms/patches/FILE is NNNN for targets whose files changed around it.
+			local alt; alt=$(echo " $ALT_PATCHES " | grep -oE " $p=[^ ]+ " | cut -d= -f2- | tr -d ' ') || true
+			if [ -n "$alt" ] && GIT_CEILING_DIRECTORIES=$w git -C "$w/a" apply --check "${incl[@]}" "$DKMS/patches/$alt" 2>/dev/null; then
+				GIT_CEILING_DIRECTORIES=$w git -C "$w/a" apply "${incl[@]}" "$DKMS/patches/$alt"
+				applied+=("$p (as dkms/patches/$alt)"); continue
+			fi
 			GIT_CEILING_DIRECTORIES=$w git -C "$w/a" apply --check "${incl[@]}" "$pf" || true
 			die "$T_TAG $NAME: kernel/patches/$(basename "$pf") does not apply to the target's files"
 		fi
@@ -248,7 +262,13 @@ module_variant() {
 	# linux-surface (and distribution) patches that change these files.
 	local lsp
 	lsp=$(cd "$w/base" && find . -type f | sed 's|^\./||' | sort >"$w/files"; awk -F'\t' 'NR==FNR { f[$1]; next } ($2 in f) { print $1 }' "$w/files" "$touch" | sed 's|.*/||' | sort -u | tr '\n' ' ' | sed 's/ $//')
-	if [ "$lsp" != "$LS_PATCHES" ]; then
+	# LS_PATCHES may list alternatives separated by "|" (targets before and after a linux-surface change).
+	local ok=0 alt_set
+	local IFS_old=$IFS; IFS='|'
+	for alt_set in ${LS_PATCHES:-}; do [ "$lsp" = "$(echo "$alt_set" | xargs)" ] && ok=1; done
+	IFS=$IFS_old
+	[ -n "$LS_PATCHES" ] || { [ -z "$lsp" ] && ok=1; }
+	if [ $ok = 0 ]; then
 		die "$T_TAG $NAME: the files are changed by [${lsp}], modules/$NAME.conf states LS_PATCHES=\"$LS_PATCHES\": review what those patches do to the files and update LS_PATCHES"
 	fi
 	# Review gate (main package): the target's files must be the reviewed ones.
@@ -328,7 +348,7 @@ H
 		local dp; dp=$(echo "$DKMS_PATCHES ${bundled_pub[*]:+$GENKSYMS_PATCH}" | xargs)
 		[ -z "$dp" ] || echo "  dkms-patches $dp"
 		[ ${#bundled_pub[@]} = 0 ] || echo "  bundled-public ${bundled_pub[*]}"
-		echo "  linux-surface ${LS_PATCHES:-none}"
+		echo "  linux-surface ${lsp:-none}"
 		[ -z "$CHECK_CRCS" ] || echo "  check-crcs $CHECK_CRCS"
 	} >>"$log"
 	echo "$NAME" >>"$2/.modules"

@@ -71,13 +71,17 @@ The per-module definitions are in [`modules/`](modules/). Not shipped, and why:
 2. **Patches.** Per module the files are copied from that source and this repository's patches are
    applied with `git apply` restricted to them (no fuzz). A patch is skipped when the target already has
    it: declared upstream for the target's series (`UPSTREAM=0001=7.4`, confirmed by reverse-applying) or
-   found by reverse-applying. A module with nothing left to apply is not shipped. A patch that neither
-   applies nor reverse-applies stops the generator.
+   found by reverse-applying, or when the target has its own version of it (`SUPERSEDED=0010=adapter_rating_mw`:
+   linux-surface releases from 7.3.5 on read the adapter rating themselves, as `dptf/adapter_rating_mw`).
+   A module with nothing left to apply is not shipped. A patch that neither applies nor reverse-applies is
+   tried as its DKMS-only rebase (`ALT_PATCHES=0012=0012-registry-sp9-dptf.patch`, in
+   [`patches/`](patches/README.md)) and otherwise stops the generator.
 3. **Review gate.** [`lock.tsv`](lock.tsv) holds the sha256 of every file the main package replaces, as
    reviewed. When a target ships a different version of one (a stable or linux-surface change), the
    generator stops and prints the diff against the reviewed version; after reading it,
    `dkms/gen.sh lock TAG` records it. It also stops when the set of linux-surface patches touching a
-   module's files differs from the module's `LS_PATCHES`. `sp9-dkms-bluetooth` has no review gate: its
+   module's files differs from the module's `LS_PATCHES` (alternatives separated by `|` cover releases
+   before and after a linux-surface change). `sp9-dkms-bluetooth` has no review gate: its
    files change in most stable releases and are always that release's own.
 4. **Variants.** Each target gets its own source variant (`variants/<hash>/`; identical results share
    one). `dkms.conf` sets `BUILD_EXCLUSIVE_KERNEL` to exactly the kernel releases in `kernels`, all of one
@@ -239,7 +243,9 @@ A new kernel series (7.4) needs nothing more as long as the patches apply: 0001â
 
 Verified on the development machine (NixOS, nothing loaded or installed on it), with linux-surface's
 `debian-7.3.4-2` and `arch-7.3.4-2` packages, in rootless containers: see the table in
-[kernel/PROVENANCE.md](../kernel/PROVENANCE.md#dkms).
+[kernel/PROVENANCE.md](../kernel/PROVENANCE.md#dkms). The later releases in `targets.tsv` (7.3.5 and 7.3.6) are
+generated and container-tested in CI only. They read the adapter rating themselves (`dptf/adapter_rating_mw`, on devices with the `has_dptf` property) and give the Surface Pro 9 its own registry group: there
+the package does not ship patch 0010, and the helper reads that file instead of `input_power_limit`.
 
 Verified on a Surface Pro 9 with Ubuntu 26.04, linux-surface's `7.3.4-2-surface` and Secure Boot off (one run,
 [docs/test-results.md](../docs/test-results.md#ubuntu-2604-packaged-route)): `sp9-dkms` and `sp9-dkms-bluetooth`

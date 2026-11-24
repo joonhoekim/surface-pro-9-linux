@@ -65,7 +65,7 @@ was checked. 0007 is not shipped (not needed: `ucsi_surface_hid` matches the gen
 shipped (it would rebuild i915; the platform component `psr` replaces it outside NixOS), 0023 and 0024 are the
 separate package `sp9-dkms-bluetooth`, 0027–0031 (IR camera, IPU6 capture path) are not shipped yet (the IR camera needs this repository's kernel); all others are in `sp9-dkms`. Generated from linux-surface `debian-7.3.4-2`
 (`7.3.4-2-surface`) and `arch-7.3.4-2` (`7.3.4-arch1-2-surface`); every patch applied without fuzz to those
-releases' files. Built and checked in rootless containers against linux-surface's own header and kernel
+releases' files. linux-surface's releases from 7.3.5 on (`debian-7.3.5-1`, `debian-7.3.6-1`, `arch-7.3.5-1`) read the adapter rating themselves (`dptf/adapter_rating_mw`, on devices with the `has_dptf` property) and give the Surface Pro 9 its own registry group: there 0010 is skipped and 0012 is applied as `dkms/patches/0012-registry-sp9-dptf.patch`. Those releases are generated and container-tested in CI only, not loaded on the device. Built and checked in rootless containers against linux-surface's own header and kernel
 packages of those releases. On the device, under Ubuntu 26.04 with `7.3.4-2-surface` and Secure Boot off, all 12
 modules built by DKMS loaded from `updates/dkms` in place of the stock ones
 ([docs/test-results.md](../docs/test-results.md#ubuntu-2604-packaged-route)); the Arch build was not loaded anywhere.

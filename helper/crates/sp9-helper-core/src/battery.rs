@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Joonhoe Kim
 //! Battery and adapter from the power supply class (surface_battery `BAT1`, surface_charger
-//! `ADP1` with `input_power_limit` from kernel/patches/0010), and the UEFI "Battery Limit"
+//! `ADP1` with the adapter rating: `input_power_limit` from kernel/patches/0010, or
+//! `dptf/adapter_rating_mw` of linux-surface's kernels from 7.3.5 on), and the UEFI "Battery Limit"
 //! switch read from efivarfs (docs/research/control/battery-charging.md 2). Nothing here writes;
 //! smart charging is in [`crate::ssam`].
 
@@ -37,7 +38,7 @@ impl BatteryInfo {
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct AdapterInfo {
     pub online: bool,
-    /// adapter rating from SAM BAT 0x0f (patch 0010), µW
+    /// adapter rating from SAM BAT 0x0f (patch 0010 or linux-surface's `dptf/adapter_rating_mw`), µW
     pub input_power_limit_uw: Option<u64>,
 }
 
@@ -95,7 +96,11 @@ impl BatteryBackend for SysfsBattery {
         let d = format!("{POWER_SUPPLY}/{n}");
         Some(AdapterInfo {
             online: self.root.read_i64(&format!("{d}/online")) == Some(1),
-            input_power_limit_uw: self.root.read_i64(&format!("{d}/input_power_limit")).map(|v| v.max(0) as u64),
+            input_power_limit_uw: self
+                .root
+                .read_i64(&format!("{d}/input_power_limit"))
+                .or_else(|| self.root.read_i64(&format!("{d}/dptf/adapter_rating_mw")).map(|mw| mw.saturating_mul(1000)))
+                .map(|v| v.max(0) as u64),
         })
     }
 
@@ -159,5 +164,15 @@ mod tests {
         assert_eq!(i.health_pct(), 91.1);
         assert_eq!(s.adapter().unwrap(), AdapterInfo { online: true, input_power_limit_uw: Some(65_000_000) });
         assert_eq!(s.uefi_battery_limit(), Some(false));
+    }
+
+    #[test]
+    fn adapter_rating_of_linux_surface() {
+        let t = FakeTree::new("bat-dptf");
+        t.file(&format!("{POWER_SUPPLY}/ADP1/type"), "Mains\n")
+            .file(&format!("{POWER_SUPPLY}/ADP1/online"), "1\n")
+            .file(&format!("{POWER_SUPPLY}/ADP1/dptf/adapter_rating_mw"), "45000\n");
+        let s = SysfsBattery::new(t.root.clone());
+        assert_eq!(s.adapter().unwrap(), AdapterInfo { online: true, input_power_limit_uw: Some(45_000_000) });
     }
 }
