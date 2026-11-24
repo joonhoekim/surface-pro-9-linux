@@ -623,7 +623,8 @@ Verdict: works.[^battery-open] Test: SAM-6 pass.
 
 - **Measured.** `BAT1` reports status, capacity, energy and power; cycle count and health are readable. At
   100 % on a charger the status reads `Charging`, not `Full` (cosmetic). `ADP1` reports `online` and, with patch 0010,
-  the adapter rating in `input_power_limit` (45 W with the charger used). There is no
+  the adapter rating in `input_power_limit` (45 W with the charger used). linux-surface's kernels from 7.3.5 on
+  report it themselves as `dptf/adapter_rating_mw` (not checked on the device). There is no
   `charge_control_end_threshold`. Through the helper the smart charging state is readable (what the status
   value means is unverified) and the UEFI battery limit variable reads `off`. With smart charging engaged and
   the UEFI limit off, charging stopped at 79 %; the status then reads `Not charging` (power 0, `upower`:

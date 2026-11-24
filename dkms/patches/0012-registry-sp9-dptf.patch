@@ -1,0 +1,31 @@
+DKMS only: patch 0012 for the registry with the has_dptf groups
+
+linux-surface releases from 7.3.5 on give the Surface Pro 9, 10 and 11
+(Intel) their own group, ssam_node_group_sp9_dptf, and rename the old
+group to ssam_node_group_sp12. Kernel patch 0012 does not apply to that
+file; this is the same change for it: the SAM RTC node, added to the
+group the Surface Pro 9 uses.
+
+--- a/drivers/platform/surface/surface_aggregator_registry.c
++++ b/drivers/platform/surface/surface_aggregator_registry.c
+@@ -51,6 +51,12 @@ static const struct software_node ssam_node_hub_base = {
+ 	.parent = &ssam_node_root,
+ };
+ 
++/* Real-time clock. */
++static const struct software_node ssam_node_rtc = {
++	.name = "ssam:01:01:01:00:00",
++	.parent = &ssam_node_root,
++};
++
+ /* Property of the battery and AC adapter devices of an EC with DPTF support. */
+ static const struct property_entry ssam_node_has_dptf[] = {
+ 	PROPERTY_ENTRY_BOOL("has_dptf"),
+@@ -460,6 +466,7 @@ static const struct software_node *ssam_node_group_sp12[] = {
+ static const struct software_node *ssam_node_group_sp9_dptf[] = {
+ 	&ssam_node_root,
+ 	&ssam_node_hub_kip,
++	&ssam_node_rtc,
+ 	&ssam_node_bat_ac_dptf,
+ 	&ssam_node_bat_main_dptf,
+ 	&ssam_node_tmp_perf_profile_with_fan,

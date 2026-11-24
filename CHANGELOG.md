@@ -10,6 +10,11 @@ a release fixes is the set of patches on them.
 
 ### Added
 
+- **DKMS for linux-surface 7.3.5 and 7.3.6** (`debian-7.3.5-1`, `debian-7.3.6-1`, `arch-7.3.5-1`; container-tested
+  only). These releases read the adapter rating themselves (`dptf/adapter_rating_mw`), so `sp9-dkms` leaves out
+  patch 0010 there, and patch 0012 is applied in a form rebased onto their registry. The generator gained
+  `ALT_PATCHES`, `SUPERSEDED` and alternatives in `LS_PATCHES`. The helper reads either adapter rating file.
+
 - **IR camera** (ST VD55G0), with this repository's kernel only (NixOS module or a source build; not in
   `sp9-dkms`): kernel patches 0027 (ipu-bridge entry), 0028 (ST's driver as adapted in linux-surface/kernel#164,
   with Surface Pro 9 changes) and 0029 (IR illuminator on sensor GPIO 1, 10-bit output), and
