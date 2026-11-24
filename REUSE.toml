@@ -77,7 +77,7 @@ path = [
   "kernel/patches/0020-*.patch", "kernel/patches/0021-*.patch", "kernel/patches/0022-*.patch",
   "kernel/patches/0023-*.patch", "kernel/patches/0024-*.patch", "kernel/patches/0025-*.patch",
   "kernel/patches/0026-*.patch", "kernel/patches/0027-*.patch", "kernel/patches/0029-*.patch",
-  "kernel/patches/0030-*.patch", "kernel/patches/0031-*.patch",
+  "kernel/patches/0030-*.patch", "kernel/patches/0031-*.patch", "kernel/patches/0032-*.patch",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Joonhoe Kim <26rote@gmail.com>"
