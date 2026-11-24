@@ -30,7 +30,8 @@ In exactly this order (v7.3.4 → 47 linux-surface commits → 0001–0017) ever
 cleanly without 3-way merging. 0018–0022 were exported from commits on the same tree as the booted kernel
 (`tools/linux/kmod-dev.sh patch`). 0023 comes from the same module development tree, where it was built as
 `bluetooth.ko` and loaded into the booted kernel; 0025 and 0026 were built there as `ov5693.ko` and
-`ov13858.ko` and loaded the same way, and 0029 as `vd55g0.ko`.
+`ov13858.ko` and loaded the same way, 0029 as `vd55g0.ko`, and 0032 as `intel_pmc_core.ko` into the 0001–0031
+kernel.
 
 Build and boot are confirmed through the Nix path: the Surface Pro 9 boots the kernel (`uname -r` = `7.3.4`) that
 [`nix/kernel.nix`](../nix/kernel.nix) builds by applying the 15 linux-surface files and 0001–0022 (37 files in
@@ -164,6 +165,7 @@ create the initramfs and the boot loader entry with the distribution's tools
 | Camera: rear VCM creation | 0022 | The ov13858 probe enables runtime PM before it registers the subdev. This prevents boots without a lens device, which happen when the VCM creation work fails with -EACCES while waking the sensor |
 | Bluetooth: LE legacy OOB pairing | 0023 | LE legacy pairing with a Temporary Key supplied out of band: the 16 B given as `hash192` in the extended form of Add Remote OOB Data are used as the TK (the Slim Pen 2's coupling through the Type Cover's pen slot). In that pairing the host also offers its identity key; a pen that did not receive it does not advertise for reconnection. While a TK is stored for the peer a pairing that would not use it is refused (OOB Not Available) instead of falling back to Just Works; the TK is dropped once a pairing with it has completed. Checked on the device, first as a loaded module and then on a booted kernel built with the patch: cover coupling with LTK and IRK stored, and reconnection after the pen's idle disconnect. The refusal was checked on a booted kernel with `btmon`. The responder path and the path with Secure Connections OOB data are compile-tested only |
 | Bluetooth: reconnection of a device that was paired again | 0024 | When a device is paired again and its IRK changed, the entry in the controller's resolving list is replaced. Without it a device bonded again in the same boot (the Slim Pen 2) advertises from addresses the controller cannot resolve and does not reconnect until the adapter is powered off and on. Checked on a kernel built with it |
+| PMC: low power mode requirements | 0032 | `tgl_l_pmc_dev`, which Alder Lake-L uses, and `tgl_pmc_dev` set no `sub_req_show`, so `pmc_core/substate_requirements` read back empty. With it the file lists the S0i2.0/S0i3.0 requirements with their latched and live status ([standby.md](../docs/research/control/standby.md) section 12). Debugging only; no change in power behaviour |
 | Type Cover backlight | 0017 | `surface::kbd_backlight` LED in `hid-surface`. The levels 0/3/6/12 of Feature 213 (0x517) map to 0–3, writes go through Output 213, reads through Feature 214. When the backlight key (0x515) arrives, Feature 214 is read again and reported through `brightness_hw_changed` |
 
 ## As DKMS modules on linux-surface's kernel
@@ -180,6 +182,7 @@ patches are applied to that release's files, not to the pinned base above.
 | 0008–0010, 0012, 0013, 0015–0022, 0025, 0026 | `sp9-dkms` | `ucsi_surface_hid` (new), `surface_charger`, `surface_aggregator_registry`, `surface_platform_profile`, `intel_skl_int3472_discrete`, `hid-surface`, `ithc`, `dw9719`, `ov13858` |
 | 0014 | not shipped | It would mean rebuilding i915. Outside NixOS the platform component `psr` forces PSR1 through debugfs instead, without a taint ([userspace/platform](../userspace/platform/README.md)) |
 | 0027–0031 | not shipped | The IR camera needs this repository's kernel; without 0030 the packed and 8-bit formats stay truncated, which libcamera does not use. Shipping it would mean a new `vd55g0` module and 0027 in the `ipu-bridge` module, which must not go out without the driver |
+| 0032 | not shipped | A debugfs file only; nothing to gain for users of the packaged kernel |
 | 0023, 0024 | `sp9-dkms-bluetooth` | A separate package: the whole `bluetooth.ko`, built only from the `net/bluetooth` of exactly the running kernel release |
 
 ## What was left out

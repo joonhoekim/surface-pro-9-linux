@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Tue, 24 Nov 2026 02:37:47 +0900
+Subject: [PATCH] platform/x86/intel/pmc: Show substate requirements on Tiger
+ Lake and Alder Lake-L
+
+tgl_l_pmc_dev and tgl_pmc_dev read the low power mode requirement
+registers through the ACPI _DSM (pmc_core_get_tgl_lpm_reqs()), so
+substate_requirements is created, but neither sets sub_req_show. The
+file is created with NULL fops and reads back empty.
+
+Use pmc_core_substate_req_regs_fops, the show function for the
+mode x map layout that the _DSM returns.
+
+Tested on a Surface Pro 9 (i5-1235U, INTEL_ALDERLAKE_L): the file
+lists the S0i2.0/S0i3.0 requirements with latched and live status.
+
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+---
+ drivers/platform/x86/intel/pmc/tgl.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/platform/x86/intel/pmc/tgl.c b/drivers/platform/x86/intel/pmc/tgl.c
+index fc5b4cacc..2f91f439f 100644
+--- a/drivers/platform/x86/intel/pmc/tgl.c
++++ b/drivers/platform/x86/intel/pmc/tgl.c
+@@ -302,6 +302,7 @@ struct pmc_dev_info tgl_l_pmc_dev = {
+ 	.suspend = cnl_suspend,
+ 	.resume = cnl_resume,
+ 	.init = tgl_core_init,
++	.sub_req_show = &pmc_core_substate_req_regs_fops,
+ };
+ 
+ struct pmc_dev_info tgl_pmc_dev = {
+@@ -309,4 +310,5 @@ struct pmc_dev_info tgl_pmc_dev = {
+ 	.suspend = cnl_suspend,
+ 	.resume = cnl_resume,
+ 	.init = tgl_core_init,
++	.sub_req_show = &pmc_core_substate_req_regs_fops,
+ };
