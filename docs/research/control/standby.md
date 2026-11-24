@@ -302,3 +302,75 @@ it is considered the same level as Windows. Below that, find the blocking device
   of device D-states). A person has to press the power button (section 9).
 - While awake, the Type-C PCIe root ports `TRP2/3` are D0 in the Kernel-Pep table, but the Intel PEP root port constraint
   array has D3 values. Check the values during standby and the format of the array.
+
+## 12. Tracking the standby power
+
+On battery Linux s2idle draws about 187 mW, Windows Modern Standby 49–118 mW (PWR-4). The SLP_S0 residency is about 99 % on
+both, so the difference comes from the depth of the SoC state and from consumers outside the SoC, not from residency. The
+cause is not found; this section records what was ruled out.
+
+### 12.1 Means of measurement
+
+| Means | How | Verdict |
+|---|---|---|
+| Battery `power_now` right after resume | Read right after `rtcwake -m freeze`. For about 20 s it holds the discharge rate of the sleep, then updates | Used. Reproducible to 1 mW (186–187 mW, 6 runs) and in line with the one-hour `energy_now` difference (190 mW). One 3-minute suspend is enough to compare |
+| Battery `energy_now` difference | Before and after the suspend | The gauge step is 10 mWh, so ±60 mW over a 10-minute suspend. Only for an hour or more |
+| RAPL `package-0` | `intel-rapl:0/energy_uj` before and after | 6–7 mW over a 10-minute suspend. The 3 s awake around the suspend are included, so shorter suspends read higher |
+| RAPL `psys` | `intel-rapl:1/energy_uj` | About 2/3 of the battery figure while awake (4.3 W against 6.5 W), 12–13 mW over a 10-minute suspend. It does not see the whole device in standby |
+| PMC requirement table | `pmc_core/substate_requirements` (kernel patch 0032). Write `S0i2.0` to `lpm_latch_mode` and suspend: the status columns are then the values at the moment that state was entered | Shows directly what keeps S0i3.0 from being entered |
+
+### 12.2 SoC: S0i3.0 on Windows, S0i2.0 on Linux
+
+In the Windows lid standby of section 8.1, Intel PEP's `ResidencyCounter` gives **S0i3.0 12.06 s (92 %)** and S0i2.0
+1.02 s of 13.08 s SLP_S0. On Linux S0i3.0 is always 0.
+
+By `substate_requirements`, S0i3.0 requires beyond S0i2.0: `MainPLL_OFF`, `Fast_XTAL_Osc_OFF`, `XTAL_USB2PLL_OFF`,
+`ADSP_D3`, `CNVI_REQ`, `ISH_REQ`. Latched at the entry to S0i2.0 during Linux s2idle, **only `MainPLL_OFF` and
+`Fast_XTAL_Osc_OFF` are unmet**; the rest are met. Ruled out:
+
+| Hypothesis | Test | Result |
+|---|---|---|
+| LTR (CNV 646 µs and others) | Ignore XHCI, ME, CNV and THC0 with `ltr_ignore` | S0i3.0 0. `intel_pmc_core` already ignores every LTR during suspend (`ltr_ignore_all_suspend`) |
+| ACPI PM timer (on ADL the crystal stays on while it runs; coreboot turns it off) | Read PWRMBASE+0x18FC | Bit 1 is already 1 (the firmware turned it off) |
+| The GNA (`00:08.0`), which has no driver, stays in D0 | D3hot through PMCSR | S0i3.0 0 |
+| NVMe and root port `00:06.0` in D0 | Turn link ASPM off so that `nvme_suspend` takes the shutdown + D3hot path | With both in D3hot SLP_S0 itself drops to 0 and standby draws 2 W. D0 + L1.2 is right for this root port, not D3hot |
+| `\_SB.SSH` D3 | SSH has no `_PS0`/`_PS3` | An ACPI D3 transition does nothing |
+| Display | i915 `suspend_late` | Already does DC9 and Wa_14010685332 (`SBCLK_RUN_REFCLK_DIS`) |
+| Camera IMGCLKOUT (the INT3472 clock is switched through a `_DSM` and its hardware state cannot be read) | Stream each of the three cameras once so that the clocks are switched off, then suspend | S0i3.0 0 |
+| HPET main counter (left running by the firmware, `ENABLE_CNF` = 1; Linux does not use the HPET because of PC10, but does not stop it either) | Write 0 to 0xFED00010 and suspend; still 0 after resume | S0i3.0 0 |
+| Crystal shutdown qualifiers (PWRM 0x1B4C CPPMVRIC2: HPET 24 MHz request bit 23, audio DSP ROSC 22, USB2 PLL 20, audio PLL 19, all 0 = part of the condition) | Write the four bits as 1 to take them out of the condition, suspend 30 s, restore | S0i3.0 0 |
+| The IPU6 not powering down fully (`psys: Failed to get runtime PM` at every resume) | Unbind the driver, D3hot through PMCSR | S0i3.0 0 |
+| Several at once (wireless rfkill, ithc, IPU6 and GNA in D3hot, HPET counter stopped) | 60 s suspend | S0i3.0 0 |
+| `XHCI._PS3` and `_DSW`, which Windows calls on entry | The RTD3 SSDT has no XHCI `PS3X`, so `_PS3` does nothing; `_DSW` is an empty method | No difference from Linux. NVMe has `_DSD` `StorageD3Enable = 0`, so D0 is what the firmware intends |
+| The Shared SRAM (`14.2`), which has no driver, stays in D0 | D3hot through PMCSR, 60 s suspend on AC | S0i3.0 0 |
+| `UA00._PS3`, which Windows repeats on standby entry | `SOD3`: writes D3 to PMCSR and 0 to BAR0 | Linux also leaves `1e.0` in D3hot during suspend; no power difference expected |
+| Frequent wakes during standby (demotion because the break-even time is not reached) | ftrace (irq, hrtimer, local_timer, cpu_idle) over a 60 s s2idle | 0 events in the 59.8 s between the `timekeeping_freeze` calls: one uninterrupted sleep |
+| Microsoft LPS0 `_DSM` functions skipped ("Duplicate LPS0 _DSM functions") | `s2idle.c` | Only an informational message; both the Intel and the Microsoft functions are called |
+| LPM priority (0x1C7C = 0x01346257, 4 bits per mode: S0i2.0 = 7, S0i3.0 = 6; LPM_EN 0x1C78 = 0x9, only those two modes enabled) | Swap the two to 0x01347256, suspend 60 s, restore | S0i3.0 0 |
+
+PWRM 0x1818 PM_CFG = 0x2b4e0004, so bit 29 `ALLOW_24_OSC_SD` = 1: the BIOS allows the crystal to stop. The register
+meanings follow Intel document 795262 (MTL IOE-P; the offsets match coreboot's ADL `pmc.h`). The same symptom on ADL-P
+(only MainPLL and Fast XTAL unmet, unresolved) is reported in intel/S0ixSelftestTool #43 and #41. The ACPI tables agree:
+the HPET comparator interrupts are all off and the `TIME_SYNC_0` pin is in GPIO mode, the two other conditions the datasheet
+(Intel 763122 Vol 1) names for a crystal that stays on.
+
+### 12.3 Outside the SoC
+
+`power_now` right after resume, 3-minute suspends on battery, screen off, Type Cover attached:
+
+| Change | `power_now` |
+|---|---|
+| None | 187 mW |
+| `rfkill block all` | 187 mW |
+| `ithc` unbound | 187 mW |
+| Keyboard backlight 0, Wi-Fi and Bluetooth modules unloaded | 186 mW |
+| `snd_hda_intel` unbound | 431 mW (without the driver the codec and amplifiers are not powered down) |
+| Type Cover detached (the pen left on the cover); 188 mW with the cover attached in the same session | 180 mW (about 8 mW for the cover and pen charging) |
+| `ithc` unbound + the touch IC power pin (GPP_F9, which `PRTP._ON` switches on) at 0 | 190 mW |
+
+Wireless and the touch IC (even with its power cut) do not show in the standby draw. The touch IC power resource's
+`PRTP._OFF` is empty, so the firmware never cuts the IC's power. ithc sends the IC no sleep command on suspend, but
+since unbinding it changed nothing, the IC is taken to idle by itself (inferred).
+
+What is left: comparing the PMC registers in Windows standby with the ones above (needs a register tool on Windows), and
+the SPI controller `1f.5` in D3 (not tried: it holds the firmware flash, and a hang is likely).

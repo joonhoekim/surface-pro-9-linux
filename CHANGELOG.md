@@ -22,6 +22,10 @@ a release fixes is the set of patches on them.
   illuminator lights a dark room; face sign-in is not provided. Test CAM-8.
 - Kernel patch 0030: the IPU6 captures packed and 8-bit formats intact on this device (they were truncated on
   both camera ports); 0031 offers the IR camera's 8-bit output again.
+- Kernel patch 0032: `intel_pmc_core`'s `substate_requirements` debugfs file reads back on Alder Lake-L (it was
+  empty). Not in `sp9-dkms`.
+- Standby power research ([docs/research/control/standby.md](docs/research/control/standby.md) section 12): what
+  keeps S0i3.0 from being entered (MainPLL and Fast XTAL stay on) and the 17 causes ruled out.
 
 ## [0.1.0] - 2026-11-21
 
