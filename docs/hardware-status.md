@@ -754,7 +754,9 @@ PWR-5 pass, PWR-6 pass, PWR-7 pass, PWR-8 unverified.
   `systemd-shutdown`. No device switched itself on again after power-off, no LED or screen stayed on, and no
   battery was lost while off (PWR-7).[^shutdown-runs]
 - **Unverified.** Entering suspend with the power button: it depends on the desktop's power-key setting (PWR-1).
-  Which devices draw the extra standby power (an open task,
+  What draws the extra standby power (an open task; S0i3.0 is not entered because the main PLL and the fast
+  crystal stay on, 17 causes on the Linux side were ruled out and the Type Cover and pen take about 8 mW:
+  [research/control/standby.md](research/control/standby.md) section 12;
   [research/gaps/display-power.md](research/gaps/display-power.md) difference 6).
 - **Not tested.** Hibernation (PWR-8) is a configuration choice: the tested set-up has only zram swap, so there
   is no disk swap to hold the image.
